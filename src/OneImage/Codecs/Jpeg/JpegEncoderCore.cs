@@ -30,7 +30,7 @@ internal static class JpegEncoderCore
             throw new ImageOperationException("JPEG cannot represent images larger than 65535 pixels in either dimension.");
         }
 
-        using var session = new JpegEncodeSession(frame, request.Metadata, options, destination, ct);
+        using var session = new JpegEncodeSession(frame, request.Metadata, options, destination, frame.Degree, ct);
         session.Run();
     }
 }
@@ -84,14 +84,26 @@ internal sealed class JpegEncodeSession : IDisposable
     private bool _storesAll;
     private readonly bool[] _sentDc = new bool[2];
     private readonly bool[] _sentAc = new bool[2];
+    /// <summary>Baseline images with more pixels than this (64 MP) are transformed twice for optimized tables instead of holding every block.</summary>
+    internal const long MaxStoredPixels = 1L << 26;
+
+    /// <summary>Lowers the stored-pixel limit for the calling thread so tests can reach the two-pass path with small images; 0 means the default.</summary>
+    [ThreadStatic]
+    internal static long StoredPixelLimitForTests;
+
+    private bool _countAc;
+    private readonly long[][] _acFreq = [new long[257], new long[257]];
+    private int _slot;
+    private readonly int _degree;
     private bool _sentRestartInterval;
     private int _restartCounter;
     private int _restartIndex;
 
-    public JpegEncodeSession(ImageFrameReader frame, ImageMetadata meta, JpegEncoderOptions options, Stream dest, CancellationToken ct)
+    public JpegEncodeSession(ImageFrameReader frame, ImageMetadata meta, JpegEncoderOptions options, Stream dest, int degree, CancellationToken ct)
     {
         _frame = frame;
         _meta = meta;
+        _degree = degree;
         _o = options;
         _dest = dest;
         _ct = ct;
@@ -183,7 +195,12 @@ internal sealed class JpegEncodeSession : IDisposable
     {
         bool progressive = _o.Progressive;
         bool optimize = progressive || _o.OptimizeHuffman;
-        _storesAll = optimize;
+
+        // Optimized tables need the statistics of the whole image before the first byte of the scan. Keeping every quantized
+        // block costs about 3 bytes per pixel, so very large baseline images are transformed twice instead (once to count,
+        // once to write) and use memory proportional to the width. Progressive scans always keep the blocks.
+        bool twoPass = optimize && !progressive && (long)_width * _height > (StoredPixelLimitForTests > 0 ? StoredPixelLimitForTests : MaxStoredPixels);
+        _storesAll = optimize && !twoPass;
         WriteHeaders(progressive);
         if (!optimize)
         {
@@ -200,12 +217,16 @@ internal sealed class JpegEncodeSession : IDisposable
         }
         else
         {
-            foreach (Comp c in _comps)
+            if (_storesAll)
             {
-                c.Blocks = ArrayPool<short>.Shared.Rent(checked(c.BlocksPerLine * c.BlockRows * 64));
+                foreach (Comp c in _comps)
+                {
+                    c.Blocks = ArrayPool<short>.Shared.Rent(checked(c.BlocksPerLine * c.BlockRows * 64));
+                }
+
+                ProduceBlocks(mcuRowDone: null);
             }
 
-            ProduceBlocks(mcuRowDone: null);
             if (progressive)
             {
                 foreach (ScanSpec s in ProgressiveScript())
@@ -281,12 +302,26 @@ internal sealed class JpegEncodeSession : IDisposable
 
     private void WriteMetadata()
     {
-        if (_meta.Exif.Length is > 0 and <= 65535 - 8)
+        // Dimension tags are corrected to the written size; the orientation tag keeps the metadata's value because
+        // the pixels handed to the encoder have not been rotated by it. A malformed blob is carried through verbatim.
+        ReadOnlyMemory<byte> exif = _meta.Exif;
+        if (!exif.IsEmpty)
+        {
+            try
+            {
+                exif = _meta.ExifForOutput(_width, _height, _meta.Orientation);
+            }
+            catch (ImageFormatException)
+            {
+            }
+        }
+
+        if (exif.Length is > 0 and <= 65535 - 8)
         {
             _w.WriteMarker(JpegConstants.App1);
-            _w.WriteUInt16(2 + 6 + _meta.Exif.Length);
+            _w.WriteUInt16(2 + 6 + exif.Length);
             _w.WriteBytes("Exif\0\0"u8);
-            _w.WriteBytes(_meta.Exif.Span);
+            _w.WriteBytes(exif.Span);
         }
 
         ReadOnlySpan<byte> xmpId = "http://ns.adobe.com/xap/1.0/\0"u8;
@@ -417,80 +452,175 @@ internal sealed class JpegEncodeSession : IDisposable
 
     // ---- pixel pipeline: rows -> component planes -> quantized blocks ----
 
+    /// <summary>Per-worker buffers for turning one MCU row of pixels into quantized blocks.</summary>
+    private sealed class RowScratch
+    {
+        public byte[][] Full = [];
+        public byte[][] Planes = [];
+        public int[] Coef = new int[64];
+        public long[][] AcFreq = [new long[257], new long[257]];
+    }
+
+    /// <summary>
+    /// Produces the quantized blocks of every MCU row. Pixels are read in order, a batch of MCU rows at a time; the batch's rows
+    /// are transformed in parallel (each row is independent) and handed to <paramref name="mcuRowDone"/> in order. The bytes
+    /// produced do not depend on the degree of parallelism.
+    /// </summary>
     private void ProduceBlocks(Action<int>? mcuRowDone)
     {
+        _countAc = _storesAll && !_o.Progressive;
         int rowsPerMcu = 8 * _vmax;
         int fw = _mcusX * 8 * _hmax;
         int channels = _frame.Format.ChannelCount;
-        byte[] input = ArrayPool<byte>.Shared.Rent(Math.Max(1, _width * channels * rowsPerMcu));
-        var full = new byte[_comps.Length][];
-        var planes = new byte[_comps.Length][];
-        int[] coef = new int[64];
+        int workers = Math.Max(1, Math.Min(_degree, _mcusY));
+        int batch = workers == 1 ? 1 : workers * 2;
+        int inputBytes = Math.Max(1, _width * channels * rowsPerMcu);
+        var inputs = new byte[batch][];
+        var scratch = new RowScratch[workers];
+        short[][] streamBlocks = new short[_comps.Length][];
         try
         {
-            for (int i = 0; i < _comps.Length; i++)
+            for (int i = 0; i < batch; i++)
             {
-                full[i] = ArrayPool<byte>.Shared.Rent(fw * rowsPerMcu);
-                planes[i] = ArrayPool<byte>.Shared.Rent(_comps[i].BlocksPerLine * 8 * 8 * _comps[i].V);
+                inputs[i] = ArrayPool<byte>.Shared.Rent(inputBytes);
             }
 
-            // One MCU row of blocks for the streaming path.
-            short[][] streamBlocks = new short[_comps.Length][];
+            for (int w = 0; w < workers; w++)
+            {
+                var sc = new RowScratch { Full = new byte[_comps.Length][], Planes = new byte[_comps.Length][] };
+                scratch[w] = sc;
+                for (int i = 0; i < _comps.Length; i++)
+                {
+                    sc.Full[i] = ArrayPool<byte>.Shared.Rent(fw * rowsPerMcu);
+                    sc.Planes[i] = ArrayPool<byte>.Shared.Rent(_comps[i].BlocksPerLine * 8 * 8 * _comps[i].V);
+                }
+            }
+
+            // The streaming path holds one batch of MCU rows of blocks.
             if (!_storesAll)
             {
                 for (int i = 0; i < _comps.Length; i++)
                 {
-                    streamBlocks[i] = ArrayPool<short>.Shared.Rent(_comps[i].BlocksPerLine * _comps[i].V * 64);
+                    streamBlocks[i] = ArrayPool<short>.Shared.Rent(checked(_comps[i].BlocksPerLine * _comps[i].V * 64 * batch));
                     _comps[i].Blocks = streamBlocks[i];
                 }
             }
 
-            try
+            for (int first = 0; first < _mcusY; first += batch)
             {
-                for (int my = 0; my < _mcusY; my++)
+                _ct.ThrowIfCancellationRequested();
+                int count = Math.Min(batch, _mcusY - first);
+                for (int k = 0; k < count; k++)
                 {
-                    _ct.ThrowIfCancellationRequested();
-                    int y0 = my * rowsPerMcu;
-                    int avail = Math.Min(rowsPerMcu, _height - y0);
-                    _frame.ReadRows(y0, avail, input);
+                    int y0 = (first + k) * rowsPerMcu;
+                    _frame.ReadRows(y0, Math.Min(rowsPerMcu, _height - y0), inputs[k]);
+                }
+
+                void DoRow(int k, RowScratch sc)
+                {
+                    int my = first + k;
+                    int avail = Math.Min(rowsPerMcu, _height - (my * rowsPerMcu));
                     int groups = (avail + _vmax - 1) / _vmax;
                     int usable = groups * _vmax;
-                    ConvertRows(input, avail, usable, full, fw);
+                    ConvertRows(inputs[k], avail, usable, sc.Full, fw);
                     for (int ci = 0; ci < _comps.Length; ci++)
                     {
-                        Comp c = _comps[ci];
-                        Downsample(full[ci], fw, usable, c, planes[ci], groups);
-                        QuantizeRow(c, ci, my, planes[ci], coef);
+                        Downsample(sc.Full[ci], fw, usable, _comps[ci], sc.Planes[ci], groups);
+                        QuantizeRow(_comps[ci], my, k, sc.Planes[ci], sc.Coef);
+                        if (_countAc)
+                        {
+                            CountRowAc(_comps[ci], my, sc.AcFreq[_comps[ci].Tq]);
+                        }
                     }
+                }
 
-                    mcuRowDone?.Invoke(my);
+                if (workers == 1 || count == 1)
+                {
+                    for (int k = 0; k < count; k++)
+                    {
+                        DoRow(k, scratch[0]);
+                    }
+                }
+                else
+                {
+                    int used = Math.Min(workers, count);
+                    Parallel.For(0, used, new ParallelOptions { MaxDegreeOfParallelism = used, CancellationToken = _ct }, w =>
+                    {
+                        for (int k = w; k < count; k += used)
+                        {
+                            DoRow(k, scratch[w]);
+                        }
+                    });
+                }
+
+                if (mcuRowDone is not null)
+                {
+                    for (int k = 0; k < count; k++)
+                    {
+                        _slot = k;
+                        mcuRowDone(first + k);
+                    }
                 }
             }
-            finally
+
+            if (_countAc)
             {
-                if (!_storesAll)
+                foreach (RowScratch sc in scratch)
                 {
-                    for (int i = 0; i < _comps.Length; i++)
+                    for (int t = 0; t < 2; t++)
                     {
-                        ArrayPool<short>.Shared.Return(streamBlocks[i]);
-                        _comps[i].Blocks = [];
+                        for (int i = 0; i < 257; i++)
+                        {
+                            _acFreq[t][i] += sc.AcFreq[t][i];
+                        }
                     }
                 }
             }
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(input);
-            for (int i = 0; i < _comps.Length; i++)
+            foreach (byte[]? b in inputs)
             {
-                if (full[i] is not null)
+                if (b is not null)
                 {
-                    ArrayPool<byte>.Shared.Return(full[i]);
+                    ArrayPool<byte>.Shared.Return(b);
+                }
+            }
+
+            foreach (RowScratch? sc in scratch)
+            {
+                if (sc is null)
+                {
+                    continue;
                 }
 
-                if (planes[i] is not null)
+                foreach (byte[]? b in sc.Full)
                 {
-                    ArrayPool<byte>.Shared.Return(planes[i]);
+                    if (b is not null)
+                    {
+                        ArrayPool<byte>.Shared.Return(b);
+                    }
+                }
+
+                foreach (byte[]? b in sc.Planes)
+                {
+                    if (b is not null)
+                    {
+                        ArrayPool<byte>.Shared.Return(b);
+                    }
+                }
+            }
+
+            if (!_storesAll)
+            {
+                for (int i = 0; i < _comps.Length; i++)
+                {
+                    if (streamBlocks[i] is not null)
+                    {
+                        ArrayPool<short>.Shared.Return(streamBlocks[i]);
+                    }
+
+                    _comps[i].Blocks = [];
                 }
             }
         }
@@ -600,14 +730,14 @@ internal sealed class JpegEncodeSession : IDisposable
     /// Transforms and quantizes one MCU row of a component. Blocks wholly outside the component's real extent are
     /// "dummy" blocks: no AC data and the DC of the block before them, so they cost almost nothing to code.
     /// </summary>
-    private void QuantizeRow(Comp c, int ci, int my, byte[] plane, int[] coef)
+    private void QuantizeRow(Comp c, int my, int slot, byte[] plane, int[] coef)
     {
         int table = c.Tq;
         int pw = c.BlocksPerLine * 8;
         for (int by = 0; by < c.V; by++)
         {
             int absRow = (my * c.V) + by;
-            int rowIndex = _storesAll ? absRow : by;
+            int rowIndex = _storesAll ? absRow : (slot * c.V) + by;
             Span<short> row = c.Blocks.AsSpan(rowIndex * c.BlocksPerLine * 64, c.BlocksPerLine * 64);
             bool realRow = absRow < c.HeightInBlocks;
             for (int bx = 0; bx < c.BlocksPerLine; bx++)
@@ -615,8 +745,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 Span<short> blk = row.Slice(bx * 64, 64);
                 if (realRow && bx < c.WidthInBlocks)
                 {
-                    JpegFdct.Forward(plane.AsSpan((by * 8 * pw) + (bx * 8)), pw, coef);
-                    JpegFdct.Quantize(coef, _quant[table], _recip[table], JpegConstants.Zigzag, blk);
+                    JpegFdct.ForwardQuantize(plane.AsSpan((by * 8 * pw) + (bx * 8)), pw, _quant[table], _recip[table], JpegConstants.Zigzag, blk);
                 }
                 else
                 {
@@ -636,7 +765,26 @@ internal sealed class JpegEncodeSession : IDisposable
             }
         }
 
-        _ = ci;
+    }
+
+    /// <summary>Adds the AC symbol counts of one MCU row of freshly quantized blocks (the same blocks, in any order, that the scan will code).</summary>
+    private void CountRowAc(Comp c, int my, long[] freq)
+    {
+        for (int by = 0; by < c.V; by++)
+        {
+            int absRow = (my * c.V) + by;
+            if (_comps.Length == 1 && absRow >= c.HeightInBlocks)
+            {
+                continue;
+            }
+
+            int cols = _comps.Length == 1 ? c.WidthInBlocks : c.BlocksPerLine;
+            Span<short> row = c.Blocks.AsSpan(absRow * c.BlocksPerLine * 64, c.BlocksPerLine * 64);
+            for (int bx = 0; bx < cols; bx++)
+            {
+                JpegEntropyEncoder.CountAc(row.Slice(bx * 64, 64), freq);
+            }
+        }
     }
 
     // ---- entropy coding ----
@@ -708,7 +856,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     for (int bx = 0; bx < c.H; bx++)
                     {
-                        int idx = ((by * c.BlocksPerLine) + (mx * c.H) + bx) * 64;
+                        int idx = ((((_slot * c.V) + by) * c.BlocksPerLine) + (mx * c.H) + bx) * 64;
                         _enc.EncodeBaseline(c.Blocks.AsSpan(idx, 64), ref c.Pred, _dc[c.DcTable], _ac[c.AcTable]);
                     }
                 }
@@ -742,8 +890,21 @@ internal sealed class JpegEncodeSession : IDisposable
         }
 
         _w.Counting = true;
+        _enc.DcOnly = _countAc;
         EncodeStoredScan(s, progressive);
+        _enc.DcOnly = false;
         _w.Counting = false;
+        if (_countAc)
+        {
+            // The AC symbols were counted while the blocks were produced.
+            for (int t = 0; t < 2; t++)
+            {
+                for (int i = 0; i < 257; i++)
+                {
+                    _ac[t].Freq[i] += _acFreq[t][i];
+                }
+            }
+        }
 
         bool dc0 = false, dc1 = false, ac0 = false, ac1 = false;
         foreach (int ci in s.Comps)
@@ -797,12 +958,93 @@ internal sealed class JpegEncodeSession : IDisposable
         Array.Clear(_sentAc);
         EmitScanTables(s, progressive);
         WriteScanHeader(s, progressive);
-        EncodeStoredScan(s, progressive);
+        if (!progressive && _storesAll && _comps.Length > 1 && _o.RestartInterval == 0 && _degree > 1 && _mcusY >= 8)
+        {
+            EncodeStoredScanParallel();
+        }
+        else
+        {
+            EncodeStoredScan(s, progressive);
+        }
+    }
+
+    /// <summary>
+    /// Codes the stored blocks of a baseline interleaved scan in parallel: bands of MCU rows are coded into private raw bit
+    /// buffers (the first DC predictor of a band is the DC of the block coded just before it) and appended in order, where
+    /// byte stuffing is applied. The bytes equal those of the sequential coder.
+    /// </summary>
+    private void EncodeStoredScanParallel()
+    {
+        BeginScan();
+        int bands = Math.Min(_mcusY, _degree * 4);
+        var raw = new JpegBitWriter[bands];
+        try
+        {
+            Parallel.For(0, bands, new ParallelOptions { MaxDegreeOfParallelism = _degree, CancellationToken = _ct }, b =>
+            {
+                int my0 = (int)((long)_mcusY * b / bands);
+                int my1 = (int)((long)_mcusY * (b + 1) / bands);
+                var w = new JpegBitWriter();
+                raw[b] = w;
+                var enc = new JpegEntropyEncoder(w);
+                var pred = new int[_comps.Length];
+                if (my0 > 0)
+                {
+                    for (int ci = 0; ci < _comps.Length; ci++)
+                    {
+                        Comp c = _comps[ci];
+                        pred[ci] = c.Blocks[((((my0 * c.V) - 1) * c.BlocksPerLine) + c.BlocksPerLine - 1) * 64];
+                    }
+                }
+
+                for (int my = my0; my < my1; my++)
+                {
+                    for (int mx = 0; mx < _mcusX; mx++)
+                    {
+                        for (int ci = 0; ci < _comps.Length; ci++)
+                        {
+                            Comp c = _comps[ci];
+                            for (int by = 0; by < c.V; by++)
+                            {
+                                for (int bx = 0; bx < c.H; bx++)
+                                {
+                                    int idx = ((((my * c.V) + by) * c.BlocksPerLine) + (mx * c.H) + bx) * 64;
+                                    enc.EncodeBaseline(c.Blocks.AsSpan(idx, 64), ref pred[ci], _dc[c.DcTable], _ac[c.AcTable]);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            for (int b = 0; b < bands; b++)
+            {
+                _w.AppendRaw(raw[b]);
+                raw[b].Dispose();
+                raw[b] = null!;
+            }
+        }
+        finally
+        {
+            foreach (JpegBitWriter? w in raw)
+            {
+                w?.Dispose();
+            }
+        }
+
+        EndScan(null);
     }
 
     private void EncodeStoredScan(ScanSpec s, bool progressive)
     {
         BeginScan();
+        if (!_storesAll)
+        {
+            ProduceBlocks(mcuRowDone: EncodeMcuRowSequential);
+            EndScan(null);
+            return;
+        }
+
         bool interleaved = s.Comps.Length > 1;
         JpegHuffmanEncodeTable? lastAc = null;
         int rows;

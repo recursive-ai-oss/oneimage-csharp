@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Buffers.Binary;
+using System.Runtime.Intrinsics;
 using System.Numerics;
 
 namespace OneImage.Codecs.Jpeg;
@@ -176,11 +178,14 @@ internal sealed class JpegHuffmanEncodeTable
 /// </summary>
 internal sealed class JpegBitWriter : IDisposable
 {
-    private readonly Stream _stream;
+    private readonly Stream? _stream;
     private byte[] _buf;
     private int _pos;
-    private ulong _acc;
-    private int _n;
+    /// <summary>Pending bits, right-aligned; the encoder's inner loop keeps a local copy of these two and stores them back.</summary>
+    public ulong Acc;
+
+    /// <summary>Number of valid bits in <see cref="Acc"/> (below 32 between calls).</summary>
+    public int Bits;
 
     public JpegBitWriter(Stream stream)
     {
@@ -188,8 +193,37 @@ internal sealed class JpegBitWriter : IDisposable
         _buf = ArrayPool<byte>.Shared.Rent(1 << 16);
     }
 
+    /// <summary>
+    /// Creates a writer that collects raw bits in memory (no byte stuffing, whole 32-bit words in <see cref="RawWords"/>, the
+    /// remaining bits in <see cref="Acc"/>/<see cref="Bits"/>). Segments coded this way in parallel are appended to the real
+    /// writer in order with <see cref="AppendRaw"/>.
+    /// </summary>
+    public JpegBitWriter()
+    {
+        _buf = ArrayPool<byte>.Shared.Rent(1 << 16);
+    }
+
     public bool Counting { get; set; }
 
+    /// <summary>The 32-bit words written so far by a raw-mode writer, big-endian.</summary>
+    public ReadOnlySpan<byte> RawWords => _buf.AsSpan(0, _pos);
+
+    /// <summary>Appends everything a raw-mode writer collected: its whole words, then its remaining bits.</summary>
+    public void AppendRaw(JpegBitWriter raw)
+    {
+        ReadOnlySpan<byte> words = raw.RawWords;
+        for (int i = 0; i + 4 <= words.Length; i += 4)
+        {
+            PutBits(BinaryPrimitives.ReadUInt32BigEndian(words.Slice(i, 4)), 32);
+        }
+
+        if (raw.Bits > 0)
+        {
+            PutBits((uint)(raw.Acc & ((1UL << raw.Bits) - 1)), raw.Bits);
+        }
+    }
+
+    /// <summary>Appends <paramref name="size"/> (0..32) bits of <paramref name="code"/>; nothing is written while <see cref="Counting"/>.</summary>
     public void PutBits(uint code, int size)
     {
         if (Counting || size == 0)
@@ -197,17 +231,52 @@ internal sealed class JpegBitWriter : IDisposable
             return;
         }
 
-        _acc = (_acc << size) | code;
-        _n += size;
-        while (_n >= 8)
+        Acc = (Acc << size) | code;
+        Bits += size;
+        if (Bits >= 32)
         {
-            _n -= 8;
-            byte b = (byte)(_acc >> _n);
-            if (_pos + 2 > _buf.Length)
+            WriteWord();
+        }
+    }
+
+    /// <summary>Moves the oldest 32 pending bits to the output, stuffing a zero after every 0xFF byte (T.81 F.1.2.3).</summary>
+    public void WriteWord()
+    {
+        if (_pos + 8 > _buf.Length)
+        {
+            if (_stream is null)
+            {
+                byte[] bigger = ArrayPool<byte>.Shared.Rent(checked(_buf.Length * 2));
+                _buf.AsSpan(0, _pos).CopyTo(bigger);
+                ArrayPool<byte>.Shared.Return(_buf);
+                _buf = bigger;
+            }
+            else
             {
                 Flush();
             }
+        }
 
+        Bits -= 32;
+        uint w = (uint)(Acc >> Bits);
+        if (_stream is null)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(_buf.AsSpan(_pos), w);
+            _pos += 4;
+            return;
+        }
+
+        uint inv = ~w;
+        if (((inv - 0x01010101u) & ~inv & 0x80808080u) == 0)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(_buf.AsSpan(_pos), w);
+            _pos += 4;
+            return;
+        }
+
+        for (int shift = 24; shift >= 0; shift -= 8)
+        {
+            byte b = (byte)(w >> shift);
             _buf[_pos++] = b;
             if (b == 0xFF)
             {
@@ -216,12 +285,35 @@ internal sealed class JpegBitWriter : IDisposable
         }
     }
 
-    /// <summary>Pads the last byte with 1 bits (T.81 F.1.2.3).</summary>
+    /// <summary>Pads the last byte with 1 bits (T.81 F.1.2.3) and moves every pending byte to the output.</summary>
     public void AlignWithOnes()
     {
-        if (!Counting && _n > 0)
+        if (Counting)
         {
-            PutBits((1u << (8 - _n)) - 1, 8 - _n);
+            return;
+        }
+
+        int pad = (8 - (Bits & 7)) & 7;
+        if (pad > 0)
+        {
+            Acc = (Acc << pad) | ((1u << pad) - 1);
+            Bits += pad;
+        }
+
+        if (_pos + 16 > _buf.Length)
+        {
+            Flush();
+        }
+
+        while (Bits > 0)
+        {
+            Bits -= 8;
+            byte b = (byte)(Acc >> Bits);
+            _buf[_pos++] = b;
+            if (b == 0xFF)
+            {
+                _buf[_pos++] = 0;
+            }
         }
     }
 
@@ -267,7 +359,7 @@ internal sealed class JpegBitWriter : IDisposable
     {
         if (_pos > 0)
         {
-            _stream.Write(_buf, 0, _pos);
+            _stream!.Write(_buf, 0, _pos);
             _pos = 0;
         }
     }
@@ -325,45 +417,174 @@ internal sealed class JpegEntropyEncoder
 
     private static int BitLength(int v) => 32 - BitOperations.LeadingZeroCount((uint)v);
 
+    /// <summary>One bit per coefficient, set where the coefficient is not zero.</summary>
+    private static ulong NonZeroMask(ReadOnlySpan<short> block)
+    {
+        ulong m = 0;
+        if (Vector256.IsHardwareAccelerated)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                uint zero = Vector256.Equals(Vector256.Create(block.Slice(i * 16, 16)), Vector256<short>.Zero).ExtractMostSignificantBits();
+                m |= (ulong)(~zero & 0xFFFFu) << (i * 16);
+            }
+
+            return m;
+        }
+
+        for (int k = 0; k < 64; k++)
+        {
+            if (block[k] != 0)
+            {
+                m |= 1UL << k;
+            }
+        }
+
+        return m;
+    }
+
+    /// <summary>While counting, skip the AC symbols (they were counted elsewhere, in parallel).</summary>
+    public bool DcOnly { get; set; }
+
+    /// <summary>Adds the AC symbols a baseline block produces to <paramref name="freq"/>; <paramref name="nonZero"/> is the mask of its non-zero AC coefficients.</summary>
+    public static void CountAc(ReadOnlySpan<short> block, ulong nonZero, long[] freq)
+    {
+        int last = 0;
+        while (nonZero != 0)
+        {
+            int idx = BitOperations.TrailingZeroCount(nonZero);
+            nonZero &= nonZero - 1;
+            int run = idx - last - 1;
+            while (run > 15)
+            {
+                freq[0xF0]++;
+                run -= 16;
+            }
+
+            int v = block[idx];
+            freq[(run << 4) | BitLength(v < 0 ? -v : v)]++;
+            last = idx;
+        }
+
+        if (last < 63)
+        {
+            freq[0]++;
+        }
+    }
+
+    /// <summary>Counts one whole block's AC symbols.</summary>
+    public static void CountAc(ReadOnlySpan<short> block, long[] freq) => CountAc(block[..64], NonZeroMask(block) & ~1UL, freq);
+
     public void EncodeBaseline(ReadOnlySpan<short> block, ref int pred, JpegHuffmanEncodeTable dc, JpegHuffmanEncodeTable ac)
     {
+        block = block[..64];
         int diff = block[0] - pred;
         pred = block[0];
         int mag = diff < 0 ? -diff : diff;
         int nbits = BitLength(mag);
-        Symbol(dc, nbits);
-        if (nbits > 0)
+        ulong m = NonZeroMask(block) & ~1UL;
+        bool counting = _w.Counting;
+        if (counting)
         {
-            _w.PutBits((uint)(diff < 0 ? diff - 1 : diff) & ((1u << nbits) - 1), nbits);
-        }
-
-        int run = 0;
-        for (int k = 1; k < 64; k++)
-        {
-            int v = block[k];
-            if (v == 0)
+            dc.Freq[nbits]++;
+            if (!DcOnly)
             {
-                run++;
-                continue;
+                CountAc(block, m, ac.Freq);
             }
 
+            return;
+        }
+
+        int dsize = dc.Size[nbits];
+        if (dsize == 0)
+        {
+            throw new ImageOperationException("JPEG encoder produced a symbol without a Huffman code.");
+        }
+
+        uint[] codes = ac.Code;
+        byte[] sizes = ac.Size;
+        ulong acc = (_w.Acc << dsize + nbits) | (dc.Code[nbits] << nbits) | ((uint)(diff < 0 ? diff - 1 : diff) & ((1u << nbits) - 1));
+        int bits = _w.Bits + dsize + nbits;
+        if (bits >= 32)
+        {
+            Store(acc, bits);
+            acc = _w.Acc;
+            bits = _w.Bits;
+        }
+
+        int prev = 0;
+        while (m != 0)
+        {
+            int idx = BitOperations.TrailingZeroCount(m);
+            m &= m - 1;
+            int run = idx - prev - 1;
             while (run > 15)
             {
-                Symbol(ac, 0xF0);
+                int zs = sizes[0xF0];
+                if (zs == 0)
+                {
+                    throw new ImageOperationException("JPEG encoder produced a symbol without a Huffman code.");
+                }
+
+                acc = (acc << zs) | codes[0xF0];
+                bits += zs;
+                if (bits >= 32)
+                {
+                    Store(acc, bits);
+                    acc = _w.Acc;
+                    bits = _w.Bits;
+                }
+
                 run -= 16;
             }
 
-            int m = v < 0 ? -v : v;
-            int nb = BitLength(m);
-            Symbol(ac, (run << 4) | nb);
-            _w.PutBits((uint)(v < 0 ? v - 1 : v) & ((1u << nb) - 1), nb);
-            run = 0;
+            int v = block[idx];
+            int nb = BitLength(v < 0 ? -v : v);
+            int sym = (run << 4) | nb;
+            int size = sizes[sym];
+            if (size == 0)
+            {
+                throw new ImageOperationException("JPEG encoder produced a symbol without a Huffman code.");
+            }
+
+            acc = (acc << (size + nb)) | (codes[sym] << nb) | ((uint)(v < 0 ? v - 1 : v) & ((1u << nb) - 1));
+            bits += size + nb;
+            if (bits >= 32)
+            {
+                Store(acc, bits);
+                acc = _w.Acc;
+                bits = _w.Bits;
+            }
+
+            prev = idx;
         }
 
-        if (run > 0)
+        if (prev < 63)
         {
-            Symbol(ac, 0);
+            int size = sizes[0];
+            if (size == 0)
+            {
+                throw new ImageOperationException("JPEG encoder produced a symbol without a Huffman code.");
+            }
+
+            acc = (acc << size) | codes[0];
+            bits += size;
         }
+
+        _w.Acc = acc;
+        _w.Bits = bits;
+        if (bits >= 32)
+        {
+            _w.WriteWord();
+        }
+    }
+
+    /// <summary>Hands the inner loop's pending bits to the writer, which moves whole words out and returns the remainder in its fields.</summary>
+    private void Store(ulong acc, int bits)
+    {
+        _w.Acc = acc;
+        _w.Bits = bits;
+        _w.WriteWord();
     }
 
     public void EncodeDcFirst(ReadOnlySpan<short> block, ref int pred, JpegHuffmanEncodeTable dc, int al)

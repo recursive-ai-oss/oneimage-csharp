@@ -191,4 +191,60 @@ public class JpegKernelTests
             }
         }
     }
+
+    /// <summary>The vector transform and quantizer give exactly the scalar results, for random, flat and extreme blocks and odd strides.</summary>
+    [Fact]
+    public void ForwardQuantizeVectorEqualsScalar()
+    {
+        var rnd = new Random(11);
+        for (int iter = 0; iter < 20000; iter++)
+        {
+            int stride = 8 + (iter % 5 * 3);
+            byte[] plane = new byte[(8 * stride) + 8];
+            switch (iter % 4)
+            {
+                case 0:
+                    rnd.NextBytes(plane);
+                    break;
+                case 1:
+                    Array.Fill(plane, (byte)rnd.Next(256));
+                    break;
+                case 2:
+                    for (int i = 0; i < plane.Length; i++)
+                    {
+                        plane[i] = (byte)(((i + (i / stride)) & 1) * 255);
+                    }
+
+                    break;
+                default:
+                    for (int i = 0; i < plane.Length; i++)
+                    {
+                        plane[i] = (byte)Math.Clamp(128 + rnd.Next(-3, 4) + (i % stride * 9), 0, 255);
+                    }
+
+                    break;
+            }
+
+            int[] q = Quant(rnd, iter % 7 == 0);
+            if (iter % 11 == 0)
+            {
+                Array.Fill(q, 255);
+            }
+
+            uint[] recip = q.Select(JpegFdct.Reciprocal).ToArray();
+            short[] expected = new short[64];
+            int[] coef = new int[64];
+            JpegFdct.Forward(plane, stride, coef);
+            JpegFdct.Quantize(coef, q, recip, OneImage.Codecs.Jpeg.JpegConstants.Zigzag, expected);
+            short[] actual = new short[64];
+            JpegFdct.ForwardQuantize(plane, stride, q, recip, OneImage.Codecs.Jpeg.JpegConstants.Zigzag, actual);
+            Assert.True(expected.AsSpan().SequenceEqual(actual), $"iteration {iter}");
+            if (Avx2.IsSupported)
+            {
+                int[] vec = new int[64];
+                JpegFdct.ForwardAvx2(plane, stride, vec);
+                Assert.True(coef.AsSpan().SequenceEqual(vec), $"iteration {iter} (transform)");
+            }
+        }
+    }
 }

@@ -202,6 +202,9 @@ public sealed class ImageFrameReader
         }
     }
 
+    /// <summary>Gets the parallel degree the caller allows (at least 1); encoders may use it for their own parallel stages.</summary>
+    internal int Degree => Math.Max(1, _context.Degree);
+
     /// <summary>Computes and copies a rectangle.</summary>
     /// <param name="region">The rectangle, inside the frame.</param>
     /// <param name="destination">Receives the pixels.</param>

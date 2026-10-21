@@ -70,6 +70,11 @@ public sealed class JpegFormat : IImageFormat, IImageDecoder, IImageEncoder
         JpegFrame f = h.Frame!;
         var plan = JpegColorPlan.Decide(f, h);
         var meta = new ImageMetadata { IccProfile = h.Icc, Exif = h.Exif, Xmp = h.Xmp, Iptc = h.Iptc };
+        if (meta.TryReadExif(out ExifData? exif) && exif!.Orientation is >= 1 and <= 8 and int o)
+        {
+            meta = new ImageMetadata { IccProfile = h.Icc, Exif = h.Exif, Xmp = h.Xmp, Iptc = h.Iptc, Orientation = o };
+        }
+
         return new ImageInfo(this, [new FrameInfo(f.Width, f.Height, plan.Format(f.Precision))], 0, meta);
     }
 
