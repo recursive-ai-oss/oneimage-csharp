@@ -271,7 +271,9 @@ internal static class WebPContainer
 
         if (icc != null || exif != null || xmp != null)
         {
-            info.Metadata = new ImageMetadata { IccProfile = icc, Exif = exif, Xmp = xmp };
+            var parsed = new ImageMetadata { IccProfile = icc, Exif = exif, Xmp = xmp };
+            int orientation = parsed.TryReadExif(out ExifData? tags) && tags?.Orientation is int o ? o : 1;
+            info.Metadata = parsed.WithOrientation(orientation);
         }
 
         return info;

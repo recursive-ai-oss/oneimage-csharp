@@ -30,6 +30,16 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         }
 
         ImageMetadata meta = request.Metadata;
+        // EXIF carries pixel dimensions and orientation: correct them for this output. A malformed blob is written verbatim.
+        byte[] exifBlob;
+        try
+        {
+            exifBlob = meta.Exif.IsEmpty ? [] : meta.ExifForOutput(first.Width, first.Height, Math.Clamp(meta.Orientation, 1, 8)).ToArray();
+        }
+        catch (ImageFormatException)
+        {
+            exifBlob = meta.Exif.ToArray();
+        }
         bool animated = frames.Count > 1;
         var chunks = new List<(uint fourCc, byte[] data)>();
         bool anyAlpha = false;
@@ -82,7 +92,7 @@ internal sealed class WebPEncoderImpl : IImageEncoder
             _ = canvas;
         }
 
-        bool needExtended = animated || meta.IccProfile.Length > 0 || meta.Exif.Length > 0 || meta.Xmp.Length > 0 || chunks.Exists(c => c.fourCc == Alph);
+        bool needExtended = animated || meta.IccProfile.Length > 0 || exifBlob.Length > 0 || meta.Xmp.Length > 0 || chunks.Exists(c => c.fourCc == Alph);
         var output = new List<byte>(1024);
         output.AddRange("RIFF"u8);
         output.AddRange(new byte[4]);
@@ -100,7 +110,7 @@ internal sealed class WebPEncoderImpl : IImageEncoder
                 flags |= 0x10;
             }
 
-            if (meta.Exif.Length > 0)
+            if (exifBlob.Length > 0)
             {
                 flags |= 0x08;
             }
@@ -140,9 +150,9 @@ internal sealed class WebPEncoderImpl : IImageEncoder
 
         if (needExtended)
         {
-            if (meta.Exif.Length > 0)
+            if (exifBlob.Length > 0)
             {
-                AppendChunk(output, Exif, meta.Exif.ToArray());
+                AppendChunk(output, Exif, exifBlob);
             }
 
             if (meta.Xmp.Length > 0)
