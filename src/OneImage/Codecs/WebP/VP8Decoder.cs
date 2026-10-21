@@ -10,9 +10,9 @@ namespace OneImage.Codecs.WebP;
 internal sealed class VP8Decoder
 {
     internal const int Bps = 32;
-    private const int YOff = Bps + 8;
-    private const int UOff = YOff + (Bps * 16) + Bps;
-    private const int VOff = UOff + 16;
+    internal const int YOff = Bps + 8;
+    internal const int UOff = YOff + (Bps * 16) + Bps;
+    internal const int VOff = UOff + 16;
 
     // Sub-block mode ids follow the RFC enumeration.
     internal const int BDc = 0;
@@ -35,6 +35,8 @@ internal sealed class VP8Decoder
     private static readonly sbyte[] BModeTree = [-BDc, 1, -BTm, 2, -BVe, 3, 4, 6, -BHe, 5, -BRd, -BVr, -BLd, 7, -BVl, 8, -BHd, -BHu];
     private static readonly byte[] Zigzag = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
     private static readonly byte[] Bands = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
+    internal static readonly sbyte[] BModeTreeShared = BModeTree;
+
     private static readonly byte[] Cat3 = [173, 148, 140];
     private static readonly byte[] Cat4 = [176, 155, 140, 135];
     private static readonly byte[] Cat5 = [180, 157, 141, 134, 130];
@@ -669,7 +671,7 @@ internal sealed class VP8Decoder
     }
 
     // Inverse Walsh-Hadamard transform of the Y2 block into the DC of the 16 luma blocks (RFC 6386 section 14.3).
-    private static void TransformWht(ReadOnlySpan<short> input, Span<short> output)
+    internal static void TransformWht(ReadOnlySpan<short> input, Span<short> output)
     {
         Span<int> tmp = stackalloc int[16];
         for (int i = 0; i < 4; i++)
@@ -756,79 +758,8 @@ internal sealed class VP8Decoder
         }
     }
 
-    // Fills the work buffer's top row, left column and corner. Beyond the frame the specification fixes the values:
-    // 127 above the first row, 129 left of the first column (RFC 6386 section 12.2).
-    private void PrepareBorders(int mbx, int mby)
-    {
-        byte[] w = _work;
-        if (mby > 0)
-        {
-            int rowY = ((mby * 16) - 1) * _yStride;
-            _y.AsSpan(rowY + (mbx * 16), 16).CopyTo(w.AsSpan(YOff - Bps, 16));
-            if (mbx < _mbw - 1)
-            {
-                _y.AsSpan(rowY + (mbx * 16) + 16, 4).CopyTo(w.AsSpan(YOff - Bps + 16, 4));
-            }
-            else
-            {
-                w.AsSpan(YOff - Bps + 16, 4).Fill(_y[rowY + (mbx * 16) + 15]);
-            }
-
-            int rowUv = ((mby * 8) - 1) * _uvStride;
-            _u.AsSpan(rowUv + (mbx * 8), 8).CopyTo(w.AsSpan(UOff - Bps, 8));
-            _v.AsSpan(rowUv + (mbx * 8), 8).CopyTo(w.AsSpan(VOff - Bps, 8));
-        }
-        else
-        {
-            w.AsSpan(YOff - Bps - 1, 16 + 4 + 1).Fill(127);
-            w.AsSpan(UOff - Bps - 1, 8 + 1).Fill(127);
-            w.AsSpan(VOff - Bps - 1, 8 + 1).Fill(127);
-        }
-
-        if (mbx > 0)
-        {
-            // Left column = right column of the macroblock to the left, read back from the planes.
-            for (int j = 0; j < 16; j++)
-            {
-                w[YOff + (j * Bps) - 1] = _y[((((mby * 16) + j) * _yStride) + (mbx * 16)) - 1];
-            }
-
-            for (int j = 0; j < 8; j++)
-            {
-                int src = ((((mby * 8) + j) * _uvStride) + (mbx * 8)) - 1;
-                w[UOff + (j * Bps) - 1] = _u[src];
-                w[VOff + (j * Bps) - 1] = _v[src];
-            }
-
-            if (mby > 0)
-            {
-                w[YOff - Bps - 1] = _y[((((mby * 16) - 1) * _yStride) + (mbx * 16)) - 1];
-                int s = ((((mby * 8) - 1) * _uvStride) + (mbx * 8)) - 1;
-                w[UOff - Bps - 1] = _u[s];
-                w[VOff - Bps - 1] = _v[s];
-            }
-        }
-        else
-        {
-            for (int j = 0; j < 16; j++)
-            {
-                w[YOff + (j * Bps) - 1] = 129;
-            }
-
-            for (int j = 0; j < 8; j++)
-            {
-                w[UOff + (j * Bps) - 1] = 129;
-                w[VOff + (j * Bps) - 1] = 129;
-            }
-
-            if (mby > 0)
-            {
-                w[YOff - Bps - 1] = 129;
-                w[UOff - Bps - 1] = 129;
-                w[VOff - Bps - 1] = 129;
-            }
-        }
-    }
+    private void PrepareBorders(int mbx, int mby) =>
+        VP8Borders.Prepare(_work, _y, _u, _v, _yStride, _uvStride, mbx, mby, _mbw);
 
     private static void AddBlock(byte[] dst, int off, ReadOnlySpan<short> coeffs, uint code)
     {

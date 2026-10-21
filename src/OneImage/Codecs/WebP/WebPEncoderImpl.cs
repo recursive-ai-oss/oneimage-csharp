@@ -282,13 +282,97 @@ internal sealed class WebPEncoderImpl : IImageEncoder
 
     private static EncodedFrame LossyEncode(byte[] rgba, int w, int h, bool hasAlpha, WebPEncoderOptions options, CancellationToken token)
     {
-        _ = rgba;
-        _ = w;
-        _ = h;
-        _ = hasAlpha;
-        _ = options;
-        _ = token;
-        throw new NotSupportedException("Lossy WebP encoding is not available yet.");
+        byte[] data = VP8Encoder.Encode(rgba, w, h, options.Quality, options.Effort, token);
+        byte[]? alpha = null;
+        if (hasAlpha)
+        {
+            alpha = EncodeAlpha(rgba, w, h, options.Effort, token);
+        }
+
+        return new EncodedFrame { Data = data, Alpha = alpha, Lossless = false, HasAlpha = hasAlpha };
+    }
+
+    // Alpha of a lossy image: a prediction-filtered plane coded with the lossless coder, or stored raw when that is smaller.
+    private static byte[] EncodeAlpha(byte[] rgba, int w, int h, int effort, CancellationToken token)
+    {
+        byte[] plane = new byte[w * h];
+        for (int i = 0; i < plane.Length; i++)
+        {
+            plane[i] = rgba[(i * 4) + 3];
+        }
+
+        byte[]? best = null;
+        int bestFilter = 0;
+        byte[] filtered = new byte[plane.Length];
+        var lo = new VP8LEncodeOptions { Effort = Math.Min(effort, 4) };
+        for (int filter = 0; filter < 4; filter++)
+        {
+            if (effort < 2 && filter != 0 && filter != 3)
+            {
+                continue;
+            }
+
+            ApplyAlphaFilter(filter, plane, filtered, w, h);
+            byte[] enc = VP8LEncoder.EncodePlane(filtered, w, h, lo, token);
+            if (best == null || enc.Length < best.Length)
+            {
+                best = enc;
+                bestFilter = filter;
+            }
+        }
+
+        byte[] result;
+        if (best!.Length >= plane.Length)
+        {
+            result = new byte[1 + plane.Length];
+            plane.CopyTo(result, 1);
+        }
+        else
+        {
+            result = new byte[1 + best.Length];
+            result[0] = (byte)(1 | (bestFilter << 2));
+            best.CopyTo(result, 1);
+        }
+
+        return result;
+    }
+
+    private static void ApplyAlphaFilter(int filter, byte[] src, byte[] dst, int w, int h)
+    {
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w) + x;
+                int pred;
+                if (filter == 0)
+                {
+                    pred = 0;
+                }
+                else if (y == 0)
+                {
+                    pred = x == 0 ? 0 : src[i - 1];
+                }
+                else if (x == 0)
+                {
+                    pred = src[i - w];
+                }
+                else if (filter == 1)
+                {
+                    pred = src[i - 1];
+                }
+                else if (filter == 2)
+                {
+                    pred = src[i - w];
+                }
+                else
+                {
+                    pred = Math.Clamp(src[i - 1] + src[i - w] - src[i - w - 1], 0, 255);
+                }
+
+                dst[i] = (byte)(src[i] - pred);
+            }
+        }
     }
 
     // Finds the smallest even-aligned rectangle covering the pixels that differ from the previous frame.

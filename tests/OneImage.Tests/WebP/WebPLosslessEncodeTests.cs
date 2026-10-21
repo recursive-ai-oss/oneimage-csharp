@@ -17,6 +17,18 @@ public sealed class WebPLosslessEncodeTests
         return file;
     }
 
+    internal static byte[] WrapChunk(ReadOnlySpan<byte> fourCc, byte[] payload)
+    {
+        byte[] file = new byte[12 + 8 + payload.Length + (payload.Length & 1)];
+        "RIFF"u8.CopyTo(file);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), (uint)(file.Length - 8));
+        "WEBP"u8.CopyTo(file.AsSpan(8));
+        fourCc.CopyTo(file.AsSpan(12));
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(16), (uint)payload.Length);
+        payload.CopyTo(file.AsSpan(20));
+        return file;
+    }
+
     internal static uint[] ToArgb(byte[] rgba)
     {
         uint[] a = new uint[rgba.Length / 4];
