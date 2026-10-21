@@ -115,6 +115,7 @@ internal static class DefaultCodecs
     public static void Register(ImageConfiguration configuration)
     {
         configuration.Add(TiffFormat.Instance);
+        configuration.Add(JpegFormat.Instance);
     }
 }
 

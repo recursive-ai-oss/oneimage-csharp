@@ -37,6 +37,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="../testdata/**" Link="testdata/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/OneImage/OneImage.csproj" />
   </ItemGroup>
 
