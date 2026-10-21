@@ -4,6 +4,7 @@ using OneImage.Compression;
 
 namespace OneImage.Tests.Compression;
 
+[Collection(MemoryMeasurement.Name)]
 public class InflateTests
 {
     private static readonly int[] TwoDist = { 1, 1 };

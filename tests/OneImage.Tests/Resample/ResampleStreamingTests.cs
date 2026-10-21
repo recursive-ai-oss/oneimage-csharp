@@ -3,6 +3,7 @@ using Xunit;
 
 namespace OneImage.Tests.Resample;
 
+[Collection(MemoryMeasurement.Name)]
 public class ResampleStreamingTests
 {
     private static Image LoadGen(int w, int h) =>

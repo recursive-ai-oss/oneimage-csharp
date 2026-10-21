@@ -89,6 +89,7 @@ public class GeometryLocalityTests
     }
 }
 
+[Collection(MemoryMeasurement.Name)]
 public sealed class GeometryStreamingTests : IDisposable
 {
     private readonly long _saved = DecodeSourceNode.StreamingMinBytes;

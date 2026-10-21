@@ -2,6 +2,7 @@ using System.Diagnostics;
 
 namespace OneImage.Tests;
 
+[Collection(MemoryMeasurement.Name)]
 public sealed class StreamingTests : IDisposable
 {
     private readonly long _savedThreshold = DecodeSourceNode.StreamingMinBytes;
