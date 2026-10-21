@@ -114,7 +114,7 @@ internal static class DefaultCodecs
 {
     public static void Register(ImageConfiguration configuration)
     {
-        _ = configuration;
+        configuration.Add(TiffFormat.Instance);
     }
 }
 

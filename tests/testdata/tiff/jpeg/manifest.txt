@@ -1,0 +1,3 @@
+jpeg_gray|53|37|Gray8
+jpeg_rgb|53|37|Rgb8
+jpeg_cmyk|53|37|Cmyk8

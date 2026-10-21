@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.IO;
 using OneImage;
 using OneImage.Compression;
 
@@ -91,6 +92,25 @@ if (!colorOk)
 {
     Console.Error.WriteLine("color smoke failed");
     return 1;
+}
+
+// TIFF: write with each compression (classic and BigTIFF), read back through the default configuration, and read a region.
+Rgba32[] original = snapshot.Crop(0, 0, 300, 200).ToArray<Rgba32>();
+foreach (TiffCompression compression in new[] { TiffCompression.None, TiffCompression.Lzw, TiffCompression.Deflate, TiffCompression.PackBits })
+{
+    foreach (bool bigTiff in new[] { false, true })
+    {
+        using var tiff = new MemoryStream();
+        snapshot.Save(tiff, TiffFormat.Instance, new SaveOptions { EncoderOptions = new TiffEncoderOptions { Compression = compression, BigTiff = bigTiff } });
+        Image reread = Image.Load(tiff.ToArray());
+        Rgba32[] again = reread.ToArray<Rgba32>();
+        Rgba32[] region = reread.Crop(100, 100, 50, 40).ToArray<Rgba32>();
+        if (reread.SourceFormat?.Name != "tiff" || !again.AsSpan().SequenceEqual(original) || region[0] != original[(100 * 300) + 100])
+        {
+            Console.Error.WriteLine("tiff smoke failed: " + compression + " " + bigTiff);
+            return 1;
+        }
+    }
 }
 
 Console.WriteLine("smoke ok: " + Library.Name);
