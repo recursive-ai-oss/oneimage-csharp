@@ -82,6 +82,9 @@ internal sealed class JpegEncodeSession : IDisposable
     private readonly bool _color;
     private readonly bool _cmyk;
     private bool _storesAll;
+    private readonly bool[] _sentDc = new bool[2];
+    private readonly bool[] _sentAc = new bool[2];
+    private bool _sentRestartInterval;
     private int _restartCounter;
     private int _restartIndex;
 
@@ -188,8 +191,9 @@ internal sealed class JpegEncodeSession : IDisposable
             _dc[1].Build(JpegConstants.DcChromaBits, JpegConstants.DcChromaVals);
             _ac[0].Build(JpegConstants.AcLumaBits, JpegConstants.AcLumaVals);
             _ac[1].Build(JpegConstants.AcChromaBits, JpegConstants.AcChromaVals);
-            WriteHuffmanTables(true, true, true, true);
-            WriteScanHeader(new ScanSpec { Comps = Enumerable.Range(0, _comps.Length).ToArray(), Se = 63 }, false);
+            var scan = new ScanSpec { Comps = Enumerable.Range(0, _comps.Length).ToArray(), Se = 63 };
+            EmitScanTables(scan, false);
+            WriteScanHeader(scan, false);
             BeginScan();
             ProduceBlocks(mcuRowDone: row => EncodeMcuRowSequential(row));
             EndScan(null);
@@ -273,13 +277,6 @@ internal sealed class JpegEncodeSession : IDisposable
             _w.WriteByte((_comps[i].H << 4) | _comps[i].V);
             _w.WriteByte(_comps[i].Tq);
         }
-
-        if (_o.RestartInterval > 0)
-        {
-            _w.WriteMarker(JpegConstants.Dri);
-            _w.WriteUInt16(4);
-            _w.WriteUInt16(_o.RestartInterval);
-        }
     }
 
     private void WriteMetadata()
@@ -343,26 +340,25 @@ internal sealed class JpegEncodeSession : IDisposable
         }
     }
 
-    private void WriteHuffmanTables(bool dc0, bool dc1, bool ac0, bool ac1)
+    /// <summary>Writes the Huffman tables a scan needs that the decoder does not have yet, in component order (DC then AC for each).</summary>
+    private void EmitScanTables(ScanSpec s, bool progressive)
     {
-        if (dc0)
+        bool needDc = !progressive || (s.Ss == 0 && s.Ah == 0);
+        bool needAc = !progressive || s.Ss > 0;
+        foreach (int ci in s.Comps)
         {
-            WriteDht(0x00, _dc[0]);
-        }
+            Comp c = _comps[ci];
+            if (needDc && !_sentDc[c.DcTable])
+            {
+                WriteDht(c.DcTable, _dc[c.DcTable]);
+                _sentDc[c.DcTable] = true;
+            }
 
-        if (dc1)
-        {
-            WriteDht(0x01, _dc[1]);
-        }
-
-        if (ac0)
-        {
-            WriteDht(0x10, _ac[0]);
-        }
-
-        if (ac1)
-        {
-            WriteDht(0x11, _ac[1]);
+            if (needAc && !_sentAc[c.AcTable])
+            {
+                WriteDht(0x10 | c.AcTable, _ac[c.AcTable]);
+                _sentAc[c.AcTable] = true;
+            }
         }
     }
 
@@ -381,13 +377,37 @@ internal sealed class JpegEncodeSession : IDisposable
 
     private void WriteScanHeader(ScanSpec s, bool progressive)
     {
+        if (_o.RestartInterval > 0 && !_sentRestartInterval)
+        {
+            _w.WriteMarker(JpegConstants.Dri);
+            _w.WriteUInt16(4);
+            _w.WriteUInt16(_o.RestartInterval);
+            _sentRestartInterval = true;
+        }
+
         _w.WriteMarker(JpegConstants.Sos);
         _w.WriteUInt16(6 + (2 * s.Comps.Length));
         _w.WriteByte(s.Comps.Length);
         foreach (int ci in s.Comps)
         {
             _w.WriteByte(ci + 1);
-            _w.WriteByte((_comps[ci].DcTable << 4) | _comps[ci].AcTable);
+            int td = _comps[ci].DcTable;
+            int ta = _comps[ci].AcTable;
+            if (progressive)
+            {
+                // A progressive scan uses only DC or only AC tables; the unused selector is written as zero.
+                if (s.Ss == 0)
+                {
+                    td = s.Ah == 0 ? td : 0;
+                    ta = 0;
+                }
+                else
+                {
+                    td = 0;
+                }
+            }
+
+            _w.WriteByte((td << 4) | ta);
         }
 
         _w.WriteByte(s.Ss);
@@ -563,11 +583,9 @@ internal sealed class JpegEncodeSession : IDisposable
             {
                 ReadOnlySpan<byte> a = src.AsSpan(2 * oy * fw, fw);
                 ReadOnlySpan<byte> b = src.AsSpan(((2 * oy) + 1) * fw, fw);
-                int bias = 1;
                 for (int x = 0; x < pw; x++)
                 {
-                    dst[x] = (byte)((a[x] + b[x] + bias) >> 1);
-                    bias ^= 3;
+                    dst[x] = (byte)((a[x] + b[x] + 1) >> 1);
                 }
             }
         }
@@ -775,7 +793,9 @@ internal sealed class JpegEncodeSession : IDisposable
             _ac[1].BuildOptimal();
         }
 
-        WriteHuffmanTables(dc0, dc1, ac0, ac1);
+        Array.Clear(_sentDc);
+        Array.Clear(_sentAc);
+        EmitScanTables(s, progressive);
         WriteScanHeader(s, progressive);
         EncodeStoredScan(s, progressive);
     }

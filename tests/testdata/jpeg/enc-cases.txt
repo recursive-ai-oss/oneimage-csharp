@@ -1,0 +1,17 @@
+q75-420 enc-src-a.ppm 75 2x2 0 0 0
+q90-444 enc-src-a.ppm 90 1x1 0 0 0
+q50-422 enc-src-a.ppm 50 2x1 0 0 0
+q20-440 enc-src-a.ppm 20 1x2 0 0 0
+q1-420 enc-src-a.ppm 1 2x2 0 0 0
+q100-444 enc-src-a.ppm 100 1x1 0 0 0
+q75-420-opt enc-src-a.ppm 75 2x2 1 0 0
+q75-420-prog enc-src-a.ppm 75 2x2 0 1 0
+q90-444-prog enc-src-a.ppm 90 1x1 0 1 0
+q75-420-restart enc-src-a.ppm 75 2x2 0 0 4
+q75-420-prog-restart enc-src-a.ppm 75 2x2 0 1 5
+q85-420-b enc-src-b.ppm 85 2x2 0 0 0
+q85-420-b-prog enc-src-b.ppm 85 2x2 0 1 0
+q85-422-b-opt enc-src-b.ppm 85 2x1 1 0 0
+gray-q75 enc-src-gray.pgm 75 gray 0 0 0
+gray-q75-prog enc-src-gray.pgm 75 gray 0 1 0
+gray-q60-opt enc-src-gray.pgm 60 gray 1 0 0

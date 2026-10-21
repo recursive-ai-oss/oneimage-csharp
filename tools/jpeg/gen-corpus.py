@@ -123,6 +123,47 @@ for kind in ("cmyk", "ycck"):
     run([mkcmyk, raw, str(W), str(H), kind, "90", jpg])
     reference(kind, jpg)
 
+# Encoder references: what cjpeg writes for the same pixels. The library's encoder is expected to match byte for byte.
+write_pnm(os.path.join(out, "enc-src-a.ppm"), photo(67, 45, 1))
+write_pnm(os.path.join(out, "enc-src-b.ppm"), photo(131, 77, 7))
+write_pnm(os.path.join(out, "enc-src-gray.pgm"), photo(67, 45, 2)[:, :, 0])
+cases = [
+    # name, source, quality, sampling, optimize, progressive, restart (MCUs; 0 = none)
+    ("q75-420", "a", 75, "2x2", 0, 0, 0),
+    ("q90-444", "a", 90, "1x1", 0, 0, 0),
+    ("q50-422", "a", 50, "2x1", 0, 0, 0),
+    ("q20-440", "a", 20, "1x2", 0, 0, 0),
+    ("q1-420", "a", 1, "2x2", 0, 0, 0),
+    ("q100-444", "a", 100, "1x1", 0, 0, 0),
+    ("q75-420-opt", "a", 75, "2x2", 1, 0, 0),
+    ("q75-420-prog", "a", 75, "2x2", 0, 1, 0),
+    ("q90-444-prog", "a", 90, "1x1", 0, 1, 0),
+    ("q75-420-restart", "a", 75, "2x2", 0, 0, 4),
+    ("q75-420-prog-restart", "a", 75, "2x2", 0, 1, 5),
+    ("q85-420-b", "b", 85, "2x2", 0, 0, 0),
+    ("q85-420-b-prog", "b", 85, "2x2", 0, 1, 0),
+    ("q85-422-b-opt", "b", 85, "2x1", 1, 0, 0),
+    ("gray-q75", "gray", 75, "gray", 0, 0, 0),
+    ("gray-q75-prog", "gray", 75, "gray", 0, 1, 0),
+    ("gray-q60-opt", "gray", 60, "gray", 1, 0, 0),
+]
+with open(os.path.join(out, "enc-cases.txt"), "w") as m:
+    for name, src, q, samp, opt, prog, rst in cases:
+        path = os.path.join(out, "enc-src-%s.%s" % (src, "pgm" if src == "gray" else "ppm"))
+        args = ["-quality", str(q), "-dct", "int", "-baseline"]
+        if samp == "gray":
+            args += ["-grayscale"]
+        else:
+            args += ["-sample", samp + ",1x1,1x1"]
+        if opt:
+            args += ["-optimize"]
+        if prog:
+            args += ["-progressive"]
+        if rst:
+            args += ["-restart", "%dB" % rst]
+        run([os.path.join(bindir, "cjpeg"), *args, "-outfile", os.path.join(out, "enc-ref-%s.jpg" % name), path])
+        m.write("%s %s %d %s %d %d %d\n" % (name, os.path.basename(path), q, samp, opt, prog, rst))
+
 for f in os.listdir(tmp):
     os.remove(os.path.join(tmp, f))
 os.rmdir(tmp)
