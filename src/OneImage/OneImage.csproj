@@ -5,6 +5,7 @@
     <RootNamespace>$(LibName)</RootNamespace>
     <PackageId>$(LibName)</PackageId>
     <Description>A pure-managed image library: tiled, lazy, streaming image processing and codecs.</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

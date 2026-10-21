@@ -3,7 +3,8 @@ using System.Buffers;
 namespace OneImage.Kernels;
 
 /// <summary>
-/// Row-wise pixel format conversion. Scalar reference implementation going through float32.
+/// Row-wise pixel format conversion. The reference implementation goes through float32; common 8/16-bit pairs take the
+/// integer paths in <see cref="ConvertFast"/> first (same results, see there).
 /// Rounding: integer results are round-half-up of the exact scaled value, clamped to the type's range; NaN becomes 0.
 /// Gray to RGB replicates; RGB to gray uses Rec. 709 luma weights (0.2126, 0.7152, 0.0722) on the stored values without
 /// linearization (color-managed conversion is a separate op). Dropping alpha discards it without flattening.
@@ -34,6 +35,17 @@ internal static class ConvertKernel
             return;
         }
 
+        if (ConvertFast.TryConvert(src, sourceFormat, dst, destinationFormat, width))
+        {
+            return;
+        }
+
+        ConvertViaFloat(src, sourceFormat, dst, destinationFormat, width);
+    }
+
+    /// <summary>The float32 reference path for same-model and gray/RGB conversions (what the integer fast paths must match).</summary>
+    public static void ConvertViaFloat(ReadOnlySpan<byte> src, PixelFormat sourceFormat, Span<byte> dst, PixelFormat destinationFormat, int width)
+    {
         int sch = sourceFormat.ChannelCount;
         int dch = destinationFormat.ChannelCount;
         float[] sbuf = ArrayPool<float>.Shared.Rent(width * sch);

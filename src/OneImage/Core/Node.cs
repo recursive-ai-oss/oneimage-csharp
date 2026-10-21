@@ -1,3 +1,4 @@
+using OneImage.Kernels;
 using System.Runtime.ExceptionServices;
 
 namespace OneImage;
@@ -128,91 +129,116 @@ internal static class Render
             throw new ArgumentException("Destination is too small for the region.", nameof(destination));
         }
 
-        int sbpp = node.Format.BytesPerPixel;
-        bool convert = node.Format != destinationFormat;
-        ConvertRowKernel? converter = convert ? KernelRegistry.Get<ConvertRowKernel>("convert") : null;
+        var job = new CopyJob(node, region, destinationStride, destinationFormat, node.Format != destinationFormat ? KernelRegistry.Get<ConvertRowKernel>("convert") : null);
         int tx0 = region.X >> Tile.Shift;
         int tx1 = (region.Right - 1) >> Tile.Shift;
         int ty0 = region.Y >> Tile.Shift;
         int ty1 = (region.Bottom - 1) >> Tile.Shift;
         int perRow = tx1 - tx0 + 1;
-        int degree = context.Degree;
-        int chunkRows = degree > 1 ? Math.Max(1, (2 * degree) / perRow) : 1;
-        if (node.Streaming)
+        int totalTiles = perRow * (ty1 - ty0 + 1);
+        if (context.Degree <= 1 || totalTiles == 1)
         {
-            // A streaming source keeps a few tile rows; never ask for more rows at once than that window covers.
-            chunkRows = Math.Min(chunkRows, 2);
-        }
-
-        var leases = new Tile?[perRow * chunkRows];
-        try
-        {
-            for (int cy = ty0; cy <= ty1; cy += chunkRows)
+            for (int ty = ty0; ty <= ty1; ty++)
             {
-                int rows = Math.Min(chunkRows, ty1 - cy + 1);
-                int count = rows * perRow;
-                Fetch(node, leases, count, tx0, perRow, cy, context);
-                for (int i = 0; i < count; i++)
+                for (int tx = tx0; tx <= tx1; tx++)
                 {
-                    int tx = tx0 + (i % perRow);
-                    int ty = cy + (i / perRow);
-                    Tile tile = leases[i]!;
-                    ImageRect part = region.Intersect(new ImageRect(tx << Tile.Shift, ty << Tile.Shift, Tile.Size, Tile.Size));
-                    ReadOnlySpan<byte> src = tile.Span;
-                    int tileX = part.X - (tx << Tile.Shift);
-                    int tileY = part.Y - (ty << Tile.Shift);
-                    for (int r = 0; r < part.Height; r++)
-                    {
-                        ReadOnlySpan<byte> srow = src.Slice((((tileY + r) << Tile.Shift) + tileX) * sbpp, part.Width * sbpp);
-                        int doff = ((part.Y - region.Y + r) * destinationStride) + ((part.X - region.X) * dbpp);
-                        Span<byte> drow = destination.Slice(doff, part.Width * dbpp);
-                        if (converter == null)
-                        {
-                            srow.CopyTo(drow);
-                        }
-                        else
-                        {
-                            converter(srow, node.Format, drow, destinationFormat, part.Width);
-                        }
-                    }
-
-                    tile.Release();
-                    leases[i] = null;
+                    job.CopyTile(tx, ty, destination, node.GetTile(tx, ty, context));
                 }
-            }
-        }
-        finally
-        {
-            foreach (Tile? t in leases)
-            {
-                t?.Release();
-            }
-        }
-    }
-
-    private static void Fetch(Node node, Tile?[] leases, int count, int tx0, int perRow, int ty0, RenderContext context)
-    {
-        if (context.Degree <= 1 || count == 1)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                leases[i] = node.GetTile(tx0 + (i % perRow), ty0 + (i / perRow), context);
             }
 
             return;
         }
 
+        // Each worker fetches a tile and copies it straight into its own disjoint rectangle of the destination, so the copy-out
+        // runs in parallel and the bytes written never depend on scheduling. A streaming source keeps only a few tile rows, so
+        // those are walked two tile rows at a time.
+        int chunkRows = node.Streaming ? 2 : ty1 - ty0 + 1;
         RenderContext nested = context.Nested;
         var options = new ParallelOptions { MaxDegreeOfParallelism = context.Degree, CancellationToken = context.CancellationToken };
         try
         {
-            Parallel.For(0, count, options, i => leases[i] = node.GetTile(tx0 + (i % perRow), ty0 + (i / perRow), nested));
+            PinnedDestination.Run(destination, 0, (pinned, _) =>
+            {
+                for (int cy = ty0; cy <= ty1; cy += chunkRows)
+                {
+                    int first = cy;
+                    int count = Math.Min(chunkRows, ty1 - cy + 1) * perRow;
+                    Parallel.For(0, count, options, i =>
+                    {
+                        int tx = tx0 + (i % perRow);
+                        int ty = first + (i / perRow);
+                        job.CopyTile(tx, ty, pinned, node.GetTile(tx, ty, nested));
+                    });
+                }
+            });
         }
         catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
         {
             // Surface the real error (format, limit, cancellation) rather than the wrapper.
             ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
             throw;
+        }
+    }
+
+    /// <summary>What copying one tile into the destination needs; shared by all workers (read-only).</summary>
+    private sealed class CopyJob(Node node, ImageRect region, int stride, PixelFormat destinationFormat, ConvertRowKernel? converter)
+    {
+        private readonly int _sbpp = node.Format.BytesPerPixel;
+        private readonly int _dbpp = destinationFormat.BytesPerPixel;
+
+        /// <summary>Copies (and converts) the part of <paramref name="tile"/> inside the region, then releases the tile.</summary>
+        public void CopyTile(int tx, int ty, Span<byte> destination, Tile tile)
+        {
+            try
+            {
+                Prepare(tx, ty, out ImageRect part, out int first, out int length);
+                Copy(tile, tx, ty, part, destination.Slice(first, length));
+            }
+            finally
+            {
+                tile.Release();
+            }
+        }
+
+        public void CopyTile(int tx, int ty, PinnedDestination destination, Tile tile)
+        {
+            try
+            {
+                Prepare(tx, ty, out ImageRect part, out int first, out int length);
+                Copy(tile, tx, ty, part, destination.Slice(first, length));
+            }
+            finally
+            {
+                tile.Release();
+            }
+        }
+
+        private void Prepare(int tx, int ty, out ImageRect part, out int first, out int length)
+        {
+            part = region.Intersect(new ImageRect(tx << Tile.Shift, ty << Tile.Shift, Tile.Size, Tile.Size));
+            first = ((part.Y - region.Y) * stride) + ((part.X - region.X) * _dbpp);
+            length = ((part.Height - 1) * stride) + (part.Width * _dbpp);
+        }
+
+        private void Copy(Tile tile, int tx, int ty, ImageRect part, Span<byte> block)
+        {
+            ReadOnlySpan<byte> src = tile.Span;
+            int tileX = part.X - (tx << Tile.Shift);
+            int tileY = part.Y - (ty << Tile.Shift);
+            int rowBytes = part.Width * _dbpp;
+            for (int r = 0; r < part.Height; r++)
+            {
+                ReadOnlySpan<byte> srow = src.Slice((((tileY + r) << Tile.Shift) + tileX) * _sbpp, part.Width * _sbpp);
+                Span<byte> drow = block.Slice(r * stride, rowBytes);
+                if (converter == null)
+                {
+                    srow.CopyTo(drow);
+                }
+                else
+                {
+                    converter(srow, node.Format, drow, destinationFormat, part.Width);
+                }
+            }
         }
     }
 }
