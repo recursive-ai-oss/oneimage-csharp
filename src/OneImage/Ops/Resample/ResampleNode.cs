@@ -20,6 +20,15 @@ internal sealed class ResampleNode : Node
     private readonly int _fx;
     private readonly int _fy;
 
+    // State of the streaming path (see StreamTile); all of it is guarded by _streamGate.
+    private readonly object _streamGate = new();
+    private readonly Dictionary<int, Tile?[]> _stash = [];
+    private float[] _carry = [];
+    private int _carryStart;
+    private int _carryRows;
+    private int _carryWidth;
+    private int _lastRow = -1;
+
     private ResampleNode(Node input, int width, int height, ResamplingFilter filterX, ResamplingFilter filterY, bool linear, int fx, int fy)
         : base(
             width,
@@ -77,21 +86,104 @@ internal sealed class ResampleNode : Node
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)
     {
-        ImageRect o = TileRect(tx, ty);
+        if (!Inputs[0].Streaming)
+        {
+            return ComputeBlock(tx, tx + 1, ty, stream: false, context)[0];
+        }
+
+        return StreamTile(tx, ty, context);
+    }
+
+    /// <summary>
+    /// A streaming input can only be read forward, a few tile rows deep. So one thread at a time computes a whole output tile row
+    /// (all columns) with a single forward pass over the input, keeps the finished tiles for the other columns' requests, and
+    /// carries the horizontally filtered rows the next output row still needs, so input rows are never read twice.
+    /// A row requested right after the next expected one first computes the expected one, because the scheduler may ask for two
+    /// rows at once in either order.
+    /// </summary>
+    private Tile StreamTile(int tx, int ty, RenderContext context)
+    {
+        lock (_streamGate)
+        {
+            if (TakeStashed(tx, ty) is { } ready)
+            {
+                return ready;
+            }
+
+            if (ty == _lastRow + 2 || (_lastRow < 0 && ty == 1))
+            {
+                ComputeRowIntoStash(_lastRow + 1, context);
+            }
+
+            ComputeRowIntoStash(ty, context);
+            return TakeStashed(tx, ty) ?? throw new ImageOperationException("Resample row was not produced.");
+        }
+    }
+
+    private Tile? TakeStashed(int tx, int ty)
+    {
+        if (_stash.TryGetValue(ty, out Tile?[]? row) && row[tx] is { } tile)
+        {
+            row[tx] = null;
+            return tile;
+        }
+
+        return null;
+    }
+
+    private void ComputeRowIntoStash(int ty, RenderContext context)
+    {
+        if (_stash.Remove(ty, out Tile?[]? stale))
+        {
+            ReleaseAll(stale);
+        }
+
+        Tile[] row = ComputeBlock(0, TilesX, ty, stream: true, context);
+        _stash[ty] = row;
+        _lastRow = ty;
+        foreach (int old in _stash.Keys.Where(k => k < ty - 1).ToArray())
+        {
+            _stash.Remove(old, out Tile?[]? gone);
+            ReleaseAll(gone!);
+        }
+    }
+
+    private static void ReleaseAll(Tile?[] tiles)
+    {
+        foreach (Tile? t in tiles)
+        {
+            t?.Release();
+        }
+    }
+
+    /// <summary>Computes output tiles [tx0, tx1) of row <paramref name="ty"/> together.</summary>
+    private Tile[] ComputeBlock(int tx0, int tx1, int ty, bool stream, RenderContext context)
+    {
+        int x0 = tx0 << Tile.Shift;
+        int y0 = ty << Tile.Shift;
+        var o = new ImageRect(x0, y0, Math.Min(Width, tx1 << Tile.Shift) - x0, Math.Min(Height, (ty + 1) << Tile.Shift) - y0);
         (int cs, int ce) = _wx.SourceRange(o.X, o.Right);
         (int rs, int re) = _wy.SourceRange(o.Y, o.Bottom);
         Node input = Inputs[0];
         int p = _layout.Stride;
         int srcX0 = cs * _fx;
         int srcX1 = Math.Min(ce * _fx, input.Width);
-        int srcY0 = rs * _fy;
         int srcY1 = Math.Min(re * _fy, input.Height);
         int srcPix = srcX1 - srcX0;
         int redCols = ce - cs;
         int redRows = re - rs;
         int ibpp = input.Format.BytesPerPixel;
-        int bandRows = Math.Min(Tile.Size, srcY1 - srcY0);
         int hstride = o.Width * p;
+
+        // Reduced rows the previous streamed row left behind are reused instead of reading the input again.
+        int have = 0;
+        if (stream && _carryRows > 0 && _carryStart <= rs && rs < _carryStart + _carryRows && _carryWidth == o.Width)
+        {
+            have = Math.Min(_carryStart + _carryRows, re) - rs;
+        }
+
+        int srcY0 = (rs + have) * _fy;
+        int bandRows = Math.Max(1, Math.Min(Tile.Size, srcY1 - srcY0));
 
         byte[]? bytes = null;
         float[]? hbuf = null;
@@ -99,81 +191,107 @@ internal sealed class ResampleNode : Node
         float[]? red = null;
         float[]? acc = null;
         float[]? outF = null;
-        Tile? tile = null;
+        var tiles = new Tile?[tx1 - tx0];
         try
         {
-            bytes = ArrayPool<byte>.Shared.Rent(bandRows * srcPix * ibpp);
             hbuf = ArrayPool<float>.Shared.Rent(redRows * hstride);
-            rowF = ArrayPool<float>.Shared.Rent(srcPix * p);
-            red = _fx > 1 ? ArrayPool<float>.Shared.Rent(redCols * p) : null;
-            acc = _fy > 1 ? ArrayPool<float>.Shared.Rent(redCols * p) : null;
-            outF = ArrayPool<float>.Shared.Rent(hstride);
-
-            int j = 0;
-            int count = 0;
-            for (int y = srcY0, n; y < srcY1; y += n)
+            if (have > 0)
             {
-                context.CancellationToken.ThrowIfCancellationRequested();
-                // Bands stop at tile-row boundaries so every input tile is fetched once per output tile.
-                n = Math.Min(Tile.Size - (y & (Tile.Size - 1)), srcY1 - y);
-                Render.ReadRegion(input, new ImageRect(srcX0, y, srcPix, n), bytes, srcPix * ibpp, input.Format, context);
-                for (int r = 0; r < n; r++)
+                _carry.AsSpan((rs - _carryStart) * hstride, have * hstride).CopyTo(hbuf);
+            }
+
+            int j = have;
+            if (srcY0 < srcY1)
+            {
+                bytes = ArrayPool<byte>.Shared.Rent(bandRows * srcPix * ibpp);
+                rowF = ArrayPool<float>.Shared.Rent(srcPix * p);
+                red = _fx > 1 ? ArrayPool<float>.Shared.Rent(redCols * p) : null;
+                acc = _fy > 1 ? ArrayPool<float>.Shared.Rent(redCols * p) : null;
+                int count = 0;
+                for (int y = srcY0, n; y < srcY1; y += n)
                 {
-                    int yy = y + r;
-                    ResampleKernel.UnpackRow(bytes.AsSpan(r * srcPix * ibpp, srcPix * ibpp), rowF, srcPix, _layout);
-                    Span<float> cur = rowF.AsSpan(0, srcPix * p);
-                    if (_fx > 1)
-                    {
-                        ResampleKernel.ReduceRow(cur, red, p, _fx, srcPix, redCols);
-                        cur = red.AsSpan(0, redCols * p);
-                    }
+                    context.CancellationToken.ThrowIfCancellationRequested();
 
-                    if (_fy == 1)
+                    // Bands stop at tile-row boundaries so every input tile is fetched once per output tile.
+                    n = Math.Min(Tile.Size - (y & (Tile.Size - 1)), srcY1 - y);
+                    Render.ReadRegion(input, new ImageRect(srcX0, y, srcPix, n), bytes, srcPix * ibpp, input.Format, context);
+                    for (int r = 0; r < n; r++)
                     {
-                        Horizontal(cur, cs, o, hbuf.AsSpan(j * hstride, hstride));
-                        j++;
-                        continue;
-                    }
+                        int yy = y + r;
+                        ResampleKernel.UnpackRow(bytes.AsSpan(r * srcPix * ibpp, srcPix * ibpp), rowF, srcPix, _layout);
+                        Span<float> cur = rowF.AsSpan(0, srcPix * p);
+                        if (_fx > 1)
+                        {
+                            ResampleKernel.ReduceRow(cur, red!, p, _fx, srcPix, redCols);
+                            cur = red.AsSpan(0, redCols * p);
+                        }
 
-                    if (count == 0)
-                    {
-                        cur.CopyTo(acc);
-                    }
-                    else
-                    {
-                        ResampleKernel.AddRow(cur, acc.AsSpan(0, redCols * p));
-                    }
+                        if (_fy == 1)
+                        {
+                            Horizontal(cur, cs, o, hbuf.AsSpan(j * hstride, hstride));
+                            j++;
+                            continue;
+                        }
 
-                    count++;
-                    if (((yy + 1) % _fy) == 0 || yy == input.Height - 1)
-                    {
-                        Span<float> block = acc.AsSpan(0, redCols * p);
-                        ResampleKernel.ScaleRow(block, 1f / count);
-                        Horizontal(block, cs, o, hbuf.AsSpan(j * hstride, hstride));
-                        j++;
-                        count = 0;
+                        if (count == 0)
+                        {
+                            cur.CopyTo(acc!);
+                        }
+                        else
+                        {
+                            ResampleKernel.AddRow(cur, acc.AsSpan(0, redCols * p));
+                        }
+
+                        count++;
+                        if (((yy + 1) % _fy) == 0 || yy == input.Height - 1)
+                        {
+                            Span<float> block = acc.AsSpan(0, redCols * p);
+                            ResampleKernel.ScaleRow(block, 1f / count);
+                            Horizontal(block, cs, o, hbuf.AsSpan(j * hstride, hstride));
+                            j++;
+                            count = 0;
+                        }
                     }
                 }
             }
 
-            tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
+            outF = ArrayPool<float>.Shared.Rent(hstride);
             int obpp = Format.BytesPerPixel;
+            for (int i = 0; i < tiles.Length; i++)
+            {
+                tiles[i] = Tile.Rent(Tile.ByteSize(Format), clear: false);
+            }
+
             ReadOnlySpan<float> rows = hbuf.AsSpan(0, redRows * hstride);
             for (int row = 0; row < o.Height; row++)
             {
                 int oy = o.Y + row;
                 ReadOnlySpan<float> w = _wy.Weights.AsSpan(_wy.Offset[oy], _wy.Count[oy]);
                 ResampleKernel.VerticalFilter(rows, hstride, _wy.Start[oy] - rs, w, outF.AsSpan(0, hstride));
-                ResampleKernel.PackRow(outF, tile.Span.Slice(row * Tile.Size * obpp, o.Width * obpp), o.Width, _layout);
+                for (int i = 0; i < tiles.Length; i++)
+                {
+                    int tw = Math.Min(Tile.Size, o.Width - (i << Tile.Shift));
+                    ResampleKernel.PackRow(outF.AsSpan(i * Tile.Size * p, tw * p), tiles[i]!.Span.Slice(row * Tile.Size * obpp, tw * obpp), tw, _layout);
+                }
             }
 
-            Tile result = tile;
-            tile = null;
+            if (stream)
+            {
+                SaveCarry(hbuf, hstride, ty, rs, re, o.Width);
+            }
+
+            var result = new Tile[tiles.Length];
+            for (int i = 0; i < tiles.Length; i++)
+            {
+                result[i] = tiles[i]!;
+                tiles[i] = null;
+            }
+
             return result;
         }
         finally
         {
-            tile?.Release();
+            ReleaseAll(tiles);
             Return(bytes);
             Return(hbuf);
             Return(rowF);
@@ -181,6 +299,34 @@ internal sealed class ResampleNode : Node
             Return(acc);
             Return(outF);
         }
+    }
+
+    // Keeps the reduced rows the next output tile row will start with.
+    private void SaveCarry(float[] hbuf, int hstride, int ty, int rs, int re, int width)
+    {
+        int nextY = (ty + 1) << Tile.Shift;
+        _carryRows = 0;
+        if (nextY >= Height)
+        {
+            return;
+        }
+
+        (int nextFirst, _) = _wy.SourceRange(nextY, Math.Min(Height, nextY + Tile.Size));
+        if (nextFirst >= re || nextFirst < rs)
+        {
+            return;
+        }
+
+        int rows = re - nextFirst;
+        if (_carry.Length < rows * hstride)
+        {
+            _carry = new float[rows * hstride];
+        }
+
+        hbuf.AsSpan((nextFirst - rs) * hstride, rows * hstride).CopyTo(_carry);
+        _carryStart = nextFirst;
+        _carryRows = rows;
+        _carryWidth = width;
     }
 
     private static void Return<T>(T[]? array)
