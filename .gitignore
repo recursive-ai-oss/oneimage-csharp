@@ -16,6 +16,8 @@
 !/fuzz/
 !/tools/
 !/testdata/
+!/data/
+!/THIRD-PARTY-NOTICES.md
 
 bin/
 obj/

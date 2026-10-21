@@ -114,18 +114,27 @@ public sealed partial class Image
 
     /// <summary>
     /// Converts the pixel format (lazy). Rounding is half up and clamped; gray to RGB replicates, RGB to gray uses Rec. 709 weights
-    /// on stored values; dropping alpha discards it, adding alpha makes pixels opaque; CMYK and Lab only convert to themselves.
+    /// on stored values; dropping alpha discards it, adding alpha makes pixels opaque; CMYK and Lab convert to and from the other models through the
+    /// default ICC profiles (sRGB, gray, the generic CMYK profile, Lab D50) with relative colorimetric intent and black point compensation. Use
+    /// <see cref="ConvertColor"/> to control profile and intent. Lab pixels must be 32-bit float.
     /// </summary>
     /// <param name="format">The target format.</param>
     /// <returns>The converted image.</returns>
     /// <exception cref="ImageOperationException">The conversion is not supported.</exception>
     public Image ConvertTo(PixelFormat format)
     {
+        ColorModel from = _frames[0].Format.Model;
+        if (from != format.Model && !(from is ColorModel.Gray or ColorModel.Rgb && format.Model is ColorModel.Gray or ColorModel.Rgb))
+        {
+            // Crossing into or out of CMYK/Lab is a color-managed conversion that honors the embedded source profile.
+            return ConvertColorCore(ColorProfile.DefaultFor(format.Model), RenderingIntent.RelativeColorimetric, true, format.Sample).ConvertTo(format);
+        }
+
         foreach (ImageFrame f in _frames)
         {
             PixelFormat s = f.Format;
-            bool ok = s.Model == format.Model || (s.Model is ColorModel.Gray or ColorModel.Rgb && format.Model is ColorModel.Gray or ColorModel.Rgb);
-            if (!ok)
+            bool lab = (s.Model == ColorModel.Lab && s.Sample != SampleType.F32) || (format.Model == ColorModel.Lab && format.Sample != SampleType.F32);
+            if (lab)
             {
                 throw new ImageOperationException($"Cannot convert {s} to {format}.");
             }

@@ -7,7 +7,8 @@ namespace OneImage.Kernels;
 /// Rounding: integer results are round-half-up of the exact scaled value, clamped to the type's range; NaN becomes 0.
 /// Gray to RGB replicates; RGB to gray uses Rec. 709 luma weights (0.2126, 0.7152, 0.0722) on the stored values without
 /// linearization (color-managed conversion is a separate op). Dropping alpha discards it without flattening.
-/// Adding alpha makes pixels opaque. CMYK and Lab only convert to the same model.
+/// Adding alpha makes pixels opaque. CMYK and Lab convert to and from the other models through the default ICC profiles
+/// (see <see cref="ColorTransform"/>); Lab pixels must be 32-bit float.
 /// </summary>
 internal static class ConvertKernel
 {
@@ -28,7 +29,9 @@ internal static class ConvertKernel
             || (sourceFormat.Model == ColorModel.Rgb && destinationFormat.Model == ColorModel.Gray);
         if (!sameModel && !grayRgb)
         {
-            throw new ImageOperationException($"Cannot convert {sourceFormat} to {destinationFormat}: use a color-management op for CMYK and Lab.");
+            // CMYK and Lab cross models through the default profiles (relative colorimetric, black point compensation).
+            ColorTransform.Default(sourceFormat.Model, destinationFormat.Model).ConvertRow(source, sourceFormat, destination, destinationFormat, width);
+            return;
         }
 
         int sch = sourceFormat.ChannelCount;

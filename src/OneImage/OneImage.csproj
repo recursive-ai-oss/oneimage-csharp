@@ -21,9 +21,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Color/Data/generic-cmyk.bin" LogicalName="generic-cmyk.bin" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="$(LibName).Tests" />
     <InternalsVisibleTo Include="$(LibName).Benchmarks" />
     <InternalsVisibleTo Include="$(LibName).AotSmoke" />
+    <InternalsVisibleTo Include="$(LibName).Tools" />
   </ItemGroup>
 
   <ItemGroup>

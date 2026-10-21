@@ -1,7 +1,7 @@
 namespace OneImage;
 
-/// <summary>Metadata carried alongside pixels. Blobs are kept verbatim; typed reads arrive with the metadata model.</summary>
-public sealed class ImageMetadata
+/// <summary>Metadata carried alongside pixels. Blobs are kept verbatim; typed reads are available through <see cref="ReadExif"/> and <see cref="EmbeddedColorProfile"/>.</summary>
+public sealed partial class ImageMetadata
 {
     /// <summary>Gets an instance with no metadata.</summary>
     public static ImageMetadata Empty { get; } = new();
@@ -18,7 +18,7 @@ public sealed class ImageMetadata
     /// <summary>Gets the raw IPTC blob, if any.</summary>
     public ReadOnlyMemory<byte> Iptc { get; init; }
 
-    /// <summary>Gets the EXIF orientation (1..8). 1 means upright. The core does not apply it.</summary>
+    /// <summary>Gets the EXIF orientation (1..8). 1 means upright. Pixels are not rotated until auto-orientation is applied.</summary>
     public int Orientation { get; init; } = 1;
 
     /// <summary>Gets the total size of all blobs in bytes.</summary>
