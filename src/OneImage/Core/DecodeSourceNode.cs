@@ -21,20 +21,35 @@ internal sealed class DecodeSession
 }
 
 /// <summary>
-/// A frame decoded on demand. Decoders that report <see cref="DecoderCapabilities.RandomAccess"/> are asked for one tile
-/// at a time (cached, recomputed after eviction). Others decode the frame once, on first pull, through the
-/// <see cref="StripToTileBuffer"/> into tiles this node owns for its lifetime. The node can be re-created with a
-/// region (crop push-down) or a scale (shrink-on-load) when the decoder supports them.
+/// A frame decoded on demand, in one of three modes picked from the decoder's capabilities and the frame size:
+/// <list type="bullet">
+/// <item><b>Random access</b> (<see cref="DecoderCapabilities.RandomAccess"/>): the decoder is asked for one tile at a time; tiles are cached and recomputed after eviction.</item>
+/// <item><b>Streaming</b> (sequential decoder, frame of at least <see cref="StreamingMinBytes"/>): one decoder pass runs on its own thread in lock step
+/// with the consumer and only a sliding window of tile rows is kept (see <see cref="StreamingSession"/>), so memory depends on width, not height.
+/// A consumer that needs a row that already left the window starts a new pass from the top (the first <see cref="MaxRestarts"/> times);
+/// after that the frame is decoded once into tiles this node keeps for its lifetime, like the next mode.</item>
+/// <item><b>Materialized</b> (sequential decoder, small frame): decoded once into tiles kept for the node's lifetime, through the <see cref="StripToTileBuffer"/>.</item>
+/// </list>
+/// The node can be re-created with a region (crop push-down) or a scale (shrink-on-load) when the decoder supports them.
 /// </summary>
 internal sealed class DecodeSourceNode : Node
 {
+    /// <summary>Frames of at least this many bytes stream instead of materializing. Settable so tests can exercise streaming on small images.</summary>
+    public static long StreamingMinBytes { get; set; } = 16L * 1024 * 1024;
+
+    /// <summary>How many extra passes a streaming node starts for consumers that go back before it materializes the frame.</summary>
+    public const int MaxRestarts = 2;
+
     private readonly DecodeSession _session;
     private readonly int _frame;
     private readonly int _scale;
     private readonly ImageRect _region;
     private readonly bool _randomAccess;
+    private readonly bool _streaming;
     private readonly object _gate = new();
     private TileGrid? _grid;
+    private StreamingSessionHandle? _stream;
+    private int _restarts;
 
     public DecodeSourceNode(DecodeSession session, int frame, int scale = 1, ImageRect? region = null)
         : this(session, frame, scale, region ?? FullRegion(session, frame, scale), 0)
@@ -63,9 +78,12 @@ internal sealed class DecodeSourceNode : Node
         _region = region;
         DecoderCapabilities caps = session.Decoder.Capabilities;
         _randomAccess = (caps & DecoderCapabilities.RandomAccess) == DecoderCapabilities.RandomAccess;
+        _streaming = !_randomAccess && (long)region.Width * region.Height * Format.BytesPerPixel >= StreamingMinBytes;
     }
 
     public override bool Cacheable => _randomAccess;
+
+    public override bool Streaming => _streaming;
 
     private bool SupportsRegion => (_session.Decoder.Capabilities & DecoderCapabilities.Region) != 0;
 
@@ -96,10 +114,10 @@ internal sealed class DecodeSourceNode : Node
         return new DecodeSourceNode(_session, _frame, combined);
     }
 
-    /// <summary>Decodes everything now so errors surface (the fail-up-front mode of load).</summary>
+    /// <summary>Decodes everything now so errors surface (the fail-up-front mode of load). Small sequential frames keep the result; others decode once and discard it.</summary>
     public void Validate(CancellationToken cancellationToken)
     {
-        if (!_randomAccess)
+        if (!_randomAccess && !_streaming)
         {
             EnsureGrid(cancellationToken);
             return;
@@ -107,18 +125,45 @@ internal sealed class DecodeSourceNode : Node
 
         using Stream s = _session.Source.Open();
         var sink = new NullRowSink(Width, Height, Format);
-        _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(_region, _scale), sink, _session.Limits, cancellationToken);
+        _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
         CheckComplete(sink.RowsWritten, Height);
     }
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)
     {
-        if (!_randomAccess)
+        if (_randomAccess)
         {
-            TileGrid grid = EnsureGrid(context.CancellationToken);
-            return grid.Tiles[(ty * grid.TilesX) + tx]!.Retain();
+            return DecodeOneTile(tx, ty, context);
         }
 
+        if (_streaming)
+        {
+            return StreamTile(tx, ty, context.CancellationToken);
+        }
+
+        TileGrid grid = EnsureGrid(context.CancellationToken);
+        return grid.Tiles[(ty * grid.TilesX) + tx]!.Retain();
+    }
+
+    private static ImageRect FullRegion(DecodeSession session, int frame, int scale)
+    {
+        FrameInfo f = session.Info.Frames[frame];
+        return new ImageRect(0, 0, (f.Width + scale - 1) / scale, (f.Height + scale - 1) / scale);
+    }
+
+    private static void CheckComplete(int delivered, int expected)
+    {
+        if (delivered != expected)
+        {
+            throw new ImageFormatException($"Image data ended after {delivered} of {expected} rows.");
+        }
+    }
+
+    /// <summary>The region handed to a sequential decoder: only decoders that honor regions get anything but the whole frame.</summary>
+    private ImageRect RequestRegion() => SupportsRegion ? _region : new ImageRect(0, 0, Width, Height);
+
+    private Tile DecodeOneTile(int tx, int ty, RenderContext context)
+    {
         ImageRect tr = TileRect(tx, ty);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
@@ -136,17 +181,66 @@ internal sealed class DecodeSourceNode : Node
         }
     }
 
-    private static ImageRect FullRegion(DecodeSession session, int frame, int scale)
+    private Tile StreamTile(int tx, int ty, CancellationToken cancellationToken)
     {
-        FrameInfo f = session.Info.Frames[frame];
-        return new ImageRect(0, 0, (f.Width + scale - 1) / scale, (f.Height + scale - 1) / scale);
+        while (true)
+        {
+            TileGrid? grid = Volatile.Read(ref _grid);
+            if (grid != null)
+            {
+                return grid.Tiles[(ty * grid.TilesX) + tx]!.Retain();
+            }
+
+            StreamingSessionHandle? handle = CurrentSession(ty);
+            if (handle == null)
+            {
+                continue;
+            }
+
+            Tile? tile = handle.Session.TryGetTile(tx, ty, cancellationToken);
+            if (tile != null)
+            {
+                return tile;
+            }
+
+            Recover(handle, cancellationToken);
+        }
     }
 
-    private static void CheckComplete(int delivered, int expected)
+    private StreamingSessionHandle? CurrentSession(int startRow)
     {
-        if (delivered != expected)
+        StreamingSessionHandle? h = Volatile.Read(ref _stream);
+        if (h != null)
         {
-            throw new ImageFormatException($"Image data ended after {delivered} of {expected} rows.");
+            return h;
+        }
+
+        lock (_gate)
+        {
+            // Null once the frame has been materialized: the caller then reads the grid.
+            return _grid != null ? null : _stream ??= StartPass(startRow);
+        }
+    }
+
+    private StreamingSessionHandle StartPass(int startRow) =>
+        new(new StreamingSession(_session, _frame, _scale, RequestRegion(), Width, Height, Format, startRow));
+
+    /// <summary>A consumer needed a row that left the window: decode again from the top, or keep the whole frame once restarts run out.</summary>
+    private void Recover(StreamingSessionHandle failed, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_stream, failed))
+            {
+                return;
+            }
+
+            failed.Dispose();
+            _stream = null;
+            if (++_restarts > MaxRestarts)
+            {
+                MaterializeLocked(cancellationToken);
+            }
         }
     }
 
@@ -160,21 +254,26 @@ internal sealed class DecodeSourceNode : Node
 
         lock (_gate)
         {
-            if (_grid != null)
-            {
-                return _grid;
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            using Stream s = _session.Source.Open();
-            var grid = new TileGrid(Width, Height, Format, null);
-            using var sink = new StripToTileBuffer(grid);
-            DecoderCapabilities caps = _session.Decoder.Capabilities;
-            ImageRect request = (caps & DecoderCapabilities.Region) != 0 ? _region : new ImageRect(0, 0, Width, Height);
-            _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(request, _scale), sink, _session.Limits, cancellationToken);
-            CheckComplete(sink.RowsWritten, Height);
-            Volatile.Write(ref _grid, grid);
-            return grid;
+            return MaterializeLocked(cancellationToken);
         }
+    }
+
+    private TileGrid MaterializeLocked(CancellationToken cancellationToken)
+    {
+        if (_grid != null)
+        {
+            return _grid;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        using Stream s = _session.Source.Open();
+        var grid = new TileGrid(Width, Height, Format, null);
+        using var sink = new StripToTileBuffer(grid);
+        _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+        CheckComplete(sink.RowsWritten, Height);
+        _stream?.Dispose();
+        _stream = null;
+        Volatile.Write(ref _grid, grid);
+        return grid;
     }
 }

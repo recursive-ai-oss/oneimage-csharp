@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Collections.Concurrent;
 
 namespace OneImage;
@@ -19,15 +18,15 @@ internal sealed class Tile
     private static long s_returned;
     private static long s_copied;
 
-    private readonly bool _pooled;
+    private readonly ITileStore? _store;
     private byte[] _buffer;
     private int _refs;
 
-    private Tile(byte[] buffer, int length, bool pooled, int refs)
+    private Tile(byte[] buffer, int length, ITileStore? store, int refs)
     {
         _buffer = buffer;
         Length = length;
-        _pooled = pooled;
+        _store = store;
         _refs = refs;
     }
 
@@ -45,25 +44,22 @@ internal sealed class Tile
 
     public int Length { get; }
 
+    /// <summary>Gets the tile's bytes. Every read and write of tile memory goes through here, so a store that spills tiles can make them resident at this point.</summary>
     public Span<byte> Span => _buffer.AsSpan(0, Length);
 
     public static int ByteSize(PixelFormat format) => Size * Size * format.BytesPerPixel;
 
     public static Tile Rent(int length, bool clear)
     {
-        byte[] buf = ArrayPool<byte>.Shared.Rent(length);
-        if (clear)
-        {
-            buf.AsSpan(0, length).Clear();
-        }
-
+        ITileStore store = TileStores.Current;
+        byte[] buf = store.Rent(length, clear);
         Interlocked.Increment(ref s_rented);
-        return new Tile(buf, length, pooled: true, refs: 1);
+        return new Tile(buf, length, store, refs: 1);
     }
 
     /// <summary>Returns a shared, never-written all-zero tile (the content of sparse regions).</summary>
     public static Tile Zero(PixelFormat format) =>
-        s_zero.GetOrAdd(format, static f => new Tile(new byte[ByteSize(f)], ByteSize(f), pooled: false, refs: 1 << 30));
+        s_zero.GetOrAdd(format, static f => new Tile(new byte[ByteSize(f)], ByteSize(f), store: null, refs: 1 << 30));
 
     public Tile CopyForWrite(object owner)
     {
@@ -82,11 +78,11 @@ internal sealed class Tile
 
     public void Release()
     {
-        if (Interlocked.Decrement(ref _refs) == 0 && _pooled)
+        if (Interlocked.Decrement(ref _refs) == 0 && _store != null)
         {
             byte[] buf = _buffer;
             _buffer = [];
-            ArrayPool<byte>.Shared.Return(buf);
+            _store.Return(buf);
             Interlocked.Increment(ref s_returned);
         }
     }
@@ -108,6 +104,9 @@ internal sealed class TileCache
     public TileCache(long budget) => _budget = budget;
 
     public static TileCache Global { get; } = new(256L * 1024 * 1024);
+
+    /// <summary>Gets the cache for tiles derived from streaming decodes: just enough to share tiles between neighbouring renders.</summary>
+    public static TileCache Streaming { get; } = new(8L * 1024 * 1024);
 
     public long Budget
     {
@@ -327,10 +326,16 @@ internal sealed class RenderContext
     private RenderContext? _nested;
 
     public RenderContext(int degree, TileCache cache, CancellationToken cancellationToken)
+        : this(degree, cache, cache, cancellationToken)
+    {
+    }
+
+    public RenderContext(int degree, TileCache cache, TileCache streamCache, CancellationToken cancellationToken)
     {
         Degree = degree;
         CancellationToken = cancellationToken;
         Cache = cache;
+        StreamCache = streamCache;
     }
 
     public int Degree { get; }
@@ -339,9 +344,14 @@ internal sealed class RenderContext
 
     public TileCache Cache { get; }
 
+    /// <summary>Gets the small cache for tiles derived from a streaming decode, so they never compete with (or outgrow) the global budget.</summary>
+    public TileCache StreamCache { get; }
+
+    public TileCache CacheFor(Node node) => node.Streaming ? StreamCache : Cache;
+
     /// <summary>Gets the context for work done inside an already-parallel tile computation: same token and cache, degree 1.</summary>
-    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, CancellationToken);
+    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken);
 
     public static RenderContext Create(int maxDegree, CancellationToken cancellationToken) =>
-        new(ImageEngine.ResolveDegree(maxDegree), TileCache.Global, cancellationToken);
+        new(ImageEngine.ResolveDegree(maxDegree), TileCache.Global, TileCache.Streaming, cancellationToken);
 }

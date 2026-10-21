@@ -466,7 +466,17 @@ public sealed partial class Image
             readers[i] = ImageFrameReader.Create(_frames[i], ChooseFormat(_frames[i].Format, encoder.SupportedFormats), context);
         }
 
-        encoder.Encode(new ImageEncodeRequest(readers, LoopCount, Metadata, options?.EncoderOptions, limits), destination, cancellationToken);
+        try
+        {
+            encoder.Encode(new ImageEncodeRequest(readers, LoopCount, Metadata, options?.EncoderOptions, limits), destination, cancellationToken);
+        }
+        finally
+        {
+            foreach (ImageFrameReader r in readers)
+            {
+                r.ReleaseBuffers();
+            }
+        }
     }
 
     private static PixelFormat ChooseFormat(PixelFormat frame, IReadOnlyList<PixelFormat> supported)

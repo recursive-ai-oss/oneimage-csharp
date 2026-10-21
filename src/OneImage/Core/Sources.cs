@@ -1,4 +1,5 @@
 using System.Buffers;
+using Microsoft.Win32.SafeHandles;
 
 namespace OneImage;
 
@@ -9,11 +10,20 @@ internal abstract class ImageSource
     public abstract Stream Open();
 }
 
+/// <summary>
+/// A file opened once per image. Every <see cref="Open"/> checks size and modification time against the values recorded at
+/// load (a cheap stat, no open) and then returns a private, buffered view over one shared read-only handle, so parallel tile
+/// decodes do not reopen the file. The handle is closed by its finalizer when the image is unreachable; it is opened
+/// with delete and write sharing so it never blocks other programs from replacing the file.
+/// </summary>
 internal sealed class FileImageSource : ImageSource
 {
+    private static long s_opens;
     private readonly string _path;
     private readonly long _length;
     private readonly DateTime _lastWriteUtc;
+    private readonly object _gate = new();
+    private SafeFileHandle? _handle;
 
     public FileImageSource(string path)
     {
@@ -28,6 +38,9 @@ internal sealed class FileImageSource : ImageSource
         _lastWriteUtc = info.LastWriteTimeUtc;
     }
 
+    /// <summary>Gets the number of file handles opened by all file sources so far (test statistic).</summary>
+    public static long OpenCount => Interlocked.Read(ref s_opens);
+
     public override Stream Open()
     {
         var info = new FileInfo(_path);
@@ -36,7 +49,147 @@ internal sealed class FileImageSource : ImageSource
             throw new ImageSourceChangedException($"'{_path}' changed after it was loaded.");
         }
 
-        return new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.RandomAccess);
+        return new HandleStream(Volatile.Read(ref _handle) ?? OpenHandle(), _length);
+    }
+
+    private SafeFileHandle OpenHandle()
+    {
+        lock (_gate)
+        {
+            if (_handle != null)
+            {
+                return _handle;
+            }
+
+            SafeFileHandle h = File.OpenHandle(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, FileOptions.RandomAccess);
+            Interlocked.Increment(ref s_opens);
+            if (RandomAccess.GetLength(h) != _length)
+            {
+                h.Dispose();
+                throw new ImageSourceChangedException($"'{_path}' changed after it was loaded.");
+            }
+
+            Volatile.Write(ref _handle, h);
+            return h;
+        }
+    }
+}
+
+/// <summary>
+/// A read-only, seekable, independently positioned view of a shared file handle (positional reads, so any number of views
+/// can read concurrently). Reads are buffered in small pooled blocks because decoders issue many tiny reads. Disposing a
+/// view never closes the handle.
+/// </summary>
+internal sealed class HandleStream : Stream
+{
+    private const int BlockSize = 4096;
+    private readonly SafeFileHandle _handle;
+    private readonly long _length;
+    private long _position;
+    private byte[]? _block;
+    private long _blockStart;
+    private int _blockLength;
+
+    public HandleStream(SafeFileHandle handle, long length)
+    {
+        _handle = handle;
+        _length = length;
+    }
+
+    public override bool CanRead => true;
+
+    public override bool CanSeek => true;
+
+    public override bool CanWrite => false;
+
+    public override long Length => _length;
+
+    public override long Position
+    {
+        get => _position;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            _position = value;
+        }
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+    public override int Read(Span<byte> buffer)
+    {
+        long remaining = _length - _position;
+        if (buffer.Length == 0 || remaining <= 0)
+        {
+            return 0;
+        }
+
+        if (buffer.Length > remaining)
+        {
+            buffer = buffer[..(int)remaining];
+        }
+
+        int n;
+        if (_blockLength > 0 && _position >= _blockStart && _position < _blockStart + _blockLength)
+        {
+            n = (int)Math.Min(buffer.Length, _blockStart + _blockLength - _position);
+            _block.AsSpan((int)(_position - _blockStart), n).CopyTo(buffer);
+        }
+        else if (buffer.Length >= BlockSize)
+        {
+            n = RandomAccess.Read(_handle, buffer, _position);
+        }
+        else
+        {
+            _block ??= ArrayPool<byte>.Shared.Rent(BlockSize);
+            _blockLength = 0;
+            int got = RandomAccess.Read(_handle, _block.AsSpan(0, BlockSize), _position);
+            _blockStart = _position;
+            _blockLength = got;
+            n = Math.Min(buffer.Length, got);
+            _block.AsSpan(0, n).CopyTo(buffer);
+        }
+
+        _position += n;
+        return n;
+    }
+
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        long target = origin switch
+        {
+            SeekOrigin.Begin => offset,
+            SeekOrigin.Current => _position + offset,
+            _ => _length + offset,
+        };
+        if (target < 0)
+        {
+            throw new IOException("Seek before the start of the stream.");
+        }
+
+        _position = target;
+        return target;
+    }
+
+    public override void Flush()
+    {
+    }
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        byte[]? b = _block;
+        _block = null;
+        _blockLength = 0;
+        if (b != null)
+        {
+            ArrayPool<byte>.Shared.Return(b);
+        }
+
+        base.Dispose(disposing);
     }
 }
 

@@ -40,6 +40,26 @@ internal abstract class Node
     /// <summary>Gets a value indicating whether computed tiles are kept in the shared cache. Nodes that own their storage say no.</summary>
     public virtual bool Cacheable => true;
 
+    /// <summary>
+    /// Gets a value indicating whether this node's pixels come from a streaming decode, directly or through its inputs. Streaming
+    /// results use the small streaming cache and are rendered a couple of tile rows at a time so memory stays independent of image height.
+    /// </summary>
+    public virtual bool Streaming
+    {
+        get
+        {
+            foreach (Node input in Inputs)
+            {
+                if (input.Streaming)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
     /// <summary>The input region needed to compute <paramref name="output"/> (in this node's coordinates) from input <paramref name="inputIndex"/>. Defaults to the same region; ops with margins or offsets override it.</summary>
     public virtual ImageRect RequiredInput(int inputIndex, ImageRect output) => output;
 
@@ -65,7 +85,7 @@ internal abstract class Node
             return ComputeTile(tx, ty, context);
         }
 
-        return context.Cache.GetOrCompute(Id, tx, ty, (Node: this, tx, ty, context), static s => s.Node.ComputeTile(s.tx, s.ty, s.context), context.CancellationToken);
+        return context.CacheFor(this).GetOrCompute(Id, tx, ty, (Node: this, tx, ty, context), static s => s.Node.ComputeTile(s.tx, s.ty, s.context), context.CancellationToken);
     }
 
     /// <summary>Computes a tile. The result carries one reference owned by the caller. Must be deterministic.</summary>
@@ -118,6 +138,12 @@ internal static class Render
         int perRow = tx1 - tx0 + 1;
         int degree = context.Degree;
         int chunkRows = degree > 1 ? Math.Max(1, (2 * degree) / perRow) : 1;
+        if (node.Streaming)
+        {
+            // A streaming source keeps a few tile rows; never ask for more rows at once than that window covers.
+            chunkRows = Math.Min(chunkRows, 2);
+        }
+
         var leases = new Tile?[perRow * chunkRows];
         try
         {

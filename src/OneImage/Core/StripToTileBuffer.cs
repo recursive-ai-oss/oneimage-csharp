@@ -9,7 +9,8 @@ namespace OneImage;
 /// </summary>
 internal sealed class StripToTileBuffer : IRowSink, IDisposable
 {
-    private readonly TileGrid _grid;
+    private readonly ITileRowReceiver _receiver;
+    private readonly int _tilesX;
     private readonly int _rowBytes;
     private byte[]? _band;
     private int _nextRow;
@@ -17,11 +18,18 @@ internal sealed class StripToTileBuffer : IRowSink, IDisposable
 
     /// <summary>Creates a buffer filling <paramref name="grid"/> (whose size is the sink size).</summary>
     public StripToTileBuffer(TileGrid grid)
+        : this(grid.Width, grid.Height, grid.Format, new GridReceiver(grid))
     {
-        _grid = grid;
-        Width = grid.Width;
-        Height = grid.Height;
-        Format = grid.Format;
+    }
+
+    /// <summary>Creates a buffer that hands each completed tile row to <paramref name="receiver"/>.</summary>
+    public StripToTileBuffer(int width, int height, PixelFormat format, ITileRowReceiver receiver)
+    {
+        _receiver = receiver;
+        _tilesX = (width + Tile.Size - 1) >> Tile.Shift;
+        Width = width;
+        Height = height;
+        Format = format;
         _rowBytes = checked(Width * Format.BytesPerPixel);
         _band = ArrayPool<byte>.Shared.Rent(checked(_rowBytes * Tile.Size));
     }
@@ -77,21 +85,48 @@ internal sealed class StripToTileBuffer : IRowSink, IDisposable
         int bpp = Format.BytesPerPixel;
         int ty = (_nextRow - _bandRows) >> Tile.Shift;
         int tileStride = Tile.Size * bpp;
-        for (int tx = 0; tx < _grid.TilesX; tx++)
+        var row = new Tile[_tilesX];
+        int made = 0;
+        try
         {
-            int x0 = tx << Tile.Shift;
-            int w = Math.Min(Tile.Size, Width - x0);
-            Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
-            for (int r = 0; r < _bandRows; r++)
+            for (int tx = 0; tx < _tilesX; tx++)
             {
-                _band.AsSpan((r * _rowBytes) + (x0 * bpp), w * bpp).CopyTo(tile.Span.Slice(r * tileStride));
+                int x0 = tx << Tile.Shift;
+                int w = Math.Min(Tile.Size, Width - x0);
+                Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
+                row[made++] = tile;
+                for (int r = 0; r < _bandRows; r++)
+                {
+                    _band.AsSpan((r * _rowBytes) + (x0 * bpp), w * bpp).CopyTo(tile.Span.Slice(r * tileStride));
+                }
+            }
+        }
+        catch
+        {
+            for (int i = 0; i < made; i++)
+            {
+                row[i].Release();
             }
 
-            _grid.Tiles[(ty * _grid.TilesX) + tx] = tile;
+            throw;
         }
 
         _bandRows = 0;
+
+        // The receiver owns the tiles from here on, including when it throws.
+        _receiver.Accept(ty, row);
     }
+
+    private sealed class GridReceiver(TileGrid grid) : ITileRowReceiver
+    {
+        public void Accept(int ty, Tile[] tiles) => tiles.CopyTo(grid.Tiles, ty * grid.TilesX);
+    }
+}
+
+/// <summary>Takes ownership of a finished row of tiles. When it throws it must already have released them.</summary>
+internal interface ITileRowReceiver
+{
+    void Accept(int ty, Tile[] tiles);
 }
 
 /// <summary>Writes the rows of a small region (one tile) straight into a tile buffer.</summary>

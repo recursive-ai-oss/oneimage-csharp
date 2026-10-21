@@ -114,11 +114,16 @@ public abstract class ImageEncoderOptions
     }
 }
 
-/// <summary>Pulls rows of one frame for an encoder, in the pixel format the encoder asked for.</summary>
+/// <summary>
+/// Pulls rows of one frame for an encoder, in the pixel format the encoder asked for. Not thread-safe: call it from the encoder's thread.
+/// Reading top to bottom is the cheap order and, for frames from sequential decoders, keeps memory independent of the image height.
+/// </summary>
 public sealed class ImageFrameReader
 {
     private readonly Node _node;
     private readonly RenderContext _context;
+    private byte[]? _band;
+    private int _bandRow = -1;
 
     internal ImageFrameReader(Node node, PixelFormat format, TimeSpan delay, RenderContext context)
     {
@@ -146,8 +151,56 @@ public sealed class ImageFrameReader
     /// <param name="destination">Receives <paramref name="count"/> tightly packed rows of <c>Width * Format.BytesPerPixel</c> bytes.</param>
     /// <exception cref="ArgumentOutOfRangeException">The rows lie outside the frame.</exception>
     /// <exception cref="ArgumentException"><paramref name="destination"/> is too small.</exception>
-    public void ReadRows(int y, int count, Span<byte> destination) =>
-        ReadRegion(new ImageRect(0, y, Width, count), destination, 0);
+    public void ReadRows(int y, int count, Span<byte> destination)
+    {
+        if (!_node.Streaming || count <= 0)
+        {
+            ReadRegion(new ImageRect(0, y, Width, count), destination, 0);
+            return;
+        }
+
+        // Streaming frames are rendered one whole tile row at a time into a band, so asking for a few rows at a time
+        // does not re-render the tiles of the same tile row again for every call.
+        int rowBytes = checked(Width * Format.BytesPerPixel);
+        if (y < 0 || count > Height - y)
+        {
+            throw new ArgumentOutOfRangeException(nameof(y), "The rows lie outside the frame.");
+        }
+
+        if ((long)count * rowBytes > destination.Length)
+        {
+            throw new ArgumentException("Destination is too small for the rows.", nameof(destination));
+        }
+
+        int done = 0;
+        while (done < count)
+        {
+            int bandRow = (y + done) >> Tile.Shift;
+            int bandTop = bandRow << Tile.Shift;
+            if (_bandRow != bandRow)
+            {
+                _band ??= System.Buffers.ArrayPool<byte>.Shared.Rent(checked(rowBytes * Tile.Size));
+                _bandRow = -1;
+                Render.ReadRegion(_node, new ImageRect(0, bandTop, Width, Math.Min(Tile.Size, Height - bandTop)), _band, rowBytes, Format, _context);
+                _bandRow = bandRow;
+            }
+
+            int n = Math.Min(count - done, Math.Min(Tile.Size, Height - bandTop) - (y + done - bandTop));
+            _band.AsSpan((y + done - bandTop) * rowBytes, n * rowBytes).CopyTo(destination.Slice(done * rowBytes));
+            done += n;
+        }
+    }
+
+    internal void ReleaseBuffers()
+    {
+        byte[]? b = _band;
+        _band = null;
+        _bandRow = -1;
+        if (b != null)
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(b);
+        }
+    }
 
     /// <summary>Computes and copies a rectangle.</summary>
     /// <param name="region">The rectangle, inside the frame.</param>
