@@ -3,6 +3,7 @@ using OneImage.Codecs.Tiff;
 
 namespace OneImage.Tests.Tiff;
 
+[Collection("TiffJpegSeam")]
 public sealed class TiffRobustnessTests
 {
     // ---- random access ---------------------------------------------------------------------------------------------
@@ -135,8 +136,9 @@ public sealed class TiffRobustnessTests
         var b = new TiffBuilder { Bits = 8, Spp = 1, Compression = 7, BlockOverride = _ => strip };
         b.MakeSamples(1);
         byte[] file = b.Build();
-        Assert.Throws<ImageFormatException>(() => TiffTestUtil.Decode(file));
+        Assert.ThrowsAny<ImageFormatException>(() => TiffTestUtil.Decode(file));
         int calls = 0;
+        JpegBlockDecoder? previous = TiffJpegSeam.DecodeJpeg;
         TiffJpegSeam.DecodeJpeg = (jpeg, w, h, comps, ycc, dest) =>
         {
             calls++;
@@ -149,7 +151,7 @@ public sealed class TiffRobustnessTests
         }
         finally
         {
-            TiffJpegSeam.DecodeJpeg = null;
+            TiffJpegSeam.DecodeJpeg = previous;
         }
     }
 

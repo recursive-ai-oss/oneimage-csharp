@@ -3,7 +3,7 @@ namespace OneImage.Codecs.Jpeg;
 /// <summary>Drives a full decode: headers, scans, and the output pipeline.</summary>
 internal static class JpegDecoderCore
 {
-    public static void Decode(Stream source, in DecodeRequest request, IRowSink sink, ImageLimits limits, CancellationToken ct)
+    public static void Decode(Stream source, in DecodeRequest request, IRowSink sink, ImageLimits limits, CancellationToken ct, Func<JpegFrame, JpegHeaders, JpegColorPlan>? planOverride = null)
     {
         int scale = request.ScaleDenominator;
         if (scale is not (1 or 2 or 4 or 8))
@@ -15,7 +15,7 @@ internal static class JpegDecoderCore
         var tables = new JpegTables();
         JpegHeaders h = JpegParser.ReadHeaders(reader, limits, tables, collectMetadata: false);
         JpegFrame f = h.Frame!;
-        var plan = JpegColorPlan.Decide(f, h);
+        var plan = planOverride is null ? JpegColorPlan.Decide(f, h) : planOverride(f, h);
         if (f.Precision == 8)
         {
             Run<byte>(reader, h, f, plan, tables, request, sink, limits, ct);

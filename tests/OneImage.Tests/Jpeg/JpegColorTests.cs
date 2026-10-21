@@ -72,7 +72,7 @@ public class JpegColorTests
         using var canvas = new Canvas(20, 10, PixelFormat.Rgb8);
         Image src = canvas.Snapshot();
         var meta = new ImageMetadata { Exif = exif, Orientation = 6 };
-        Image back = Image.Load(JpegEncodeTests.Encode(src.WithMetadata(meta), new JpegEncoderOptions()));
+        Image back = Image.Load(JpegEncodeTests.Encode(src.WithMetadata(meta), new JpegEncoderOptions()), new LoadOptions { AutoOrient = false });
         Assert.Equal(6, back.Metadata.Orientation);
         ExifData e = back.Metadata.ReadExif()!;
         Assert.Equal(6, e.Orientation);

@@ -302,20 +302,8 @@ internal sealed class JpegEncodeSession : IDisposable
 
     private void WriteMetadata()
     {
-        // Dimension tags are corrected to the written size; the orientation tag keeps the metadata's value because
-        // the pixels handed to the encoder have not been rotated by it. A malformed blob is carried through verbatim.
+        // The core has already corrected the dimension and orientation tags for the pixels being written.
         ReadOnlyMemory<byte> exif = _meta.Exif;
-        if (!exif.IsEmpty)
-        {
-            try
-            {
-                exif = _meta.ExifForOutput(_width, _height, _meta.Orientation);
-            }
-            catch (ImageFormatException)
-            {
-            }
-        }
-
         if (exif.Length is > 0 and <= 65535 - 8)
         {
             _w.WriteMarker(JpegConstants.App1);

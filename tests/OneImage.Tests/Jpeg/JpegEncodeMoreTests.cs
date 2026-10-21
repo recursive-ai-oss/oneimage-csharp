@@ -23,7 +23,7 @@ public class JpegEncodeMoreTests
     {
         byte[] baseFile = JpegTestSupport.Read("base-420");
         byte[] icc = Blob(150_001, 1);
-        byte[] exif = Blob(300, 2);
+        byte[] exif = [(byte)'I', (byte)'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
         byte[] xmp = Blob(1000, 3);
         byte[] iptc = Blob(101, 4);
         var ms = new MemoryStream();
@@ -58,7 +58,9 @@ public class JpegEncodeMoreTests
         byte[] saved = JpegEncodeTests.Encode(img, new JpegEncoderOptions());
         Image again = Image.Load(saved);
         Assert.True(icc.AsSpan().SequenceEqual(again.Metadata.IccProfile.Span));
-        Assert.True(exif.AsSpan().SequenceEqual(again.Metadata.Exif.Span));
+        // The core rewrites the dimension tags on save, so the blob is compared by meaning, not bytes.
+        Assert.Equal(1, again.Metadata.ReadExif()!.Orientation);
+        Assert.Equal(img.Width, again.Metadata.ReadExif()!.PixelWidth);
         Assert.True(xmp.AsSpan().SequenceEqual(again.Metadata.Xmp.Span));
         Assert.True(iptc.AsSpan().SequenceEqual(again.Metadata.Iptc.Span));
     }

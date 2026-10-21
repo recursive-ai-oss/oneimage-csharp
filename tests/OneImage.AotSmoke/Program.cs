@@ -113,5 +113,22 @@ foreach (TiffCompression compression in new[] { TiffCompression.None, TiffCompre
     }
 }
 
+// JPEG: encode (optimized and progressive), decode through the default configuration, a 1/8 shrink-on-load resize, a crop,
+// and JPEG inside TIFF.
+foreach (JpegEncoderOptions jo in new[] { new JpegEncoderOptions { Quality = 85 }, new JpegEncoderOptions { Quality = 85, Progressive = true, Subsampling = JpegSubsampling.Yuv444 } })
+{
+    using var jpg = new MemoryStream();
+    snapshot.ConvertTo(PixelFormat.Rgb8).Save(jpg, JpegFormat.Instance, new SaveOptions { EncoderOptions = jo });
+    Image jr = Image.Load(jpg.ToArray());
+    Rgb24[] jpx = jr.ToArray<Rgb24>();
+    Rgb24[] jsmall = jr.Resize(width: 40).ToArray<Rgb24>();
+    Rgb24[] jcrop = jr.Crop(16, 16, 32, 32).ToArray<Rgb24>();
+    if (jr.SourceFormat?.Name != "jpeg" || jpx.Length != 300 * 200 || jsmall.Length != 40 * 27 || jcrop.Length != 32 * 32)
+    {
+        Console.Error.WriteLine("jpeg smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

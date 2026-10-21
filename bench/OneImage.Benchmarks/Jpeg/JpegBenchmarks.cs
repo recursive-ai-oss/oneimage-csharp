@@ -215,7 +215,11 @@ public class JpegEncodeBenchmarks : IDisposable
     public int ImageSharp()
     {
         using var ms = new MemoryStream(8 << 20);
+#if IMAGESHARP4
+        _sharp.Save(ms, new JpegEncoder { Quality = 90, ColorType = JpegColorType.YCbCrRatio420 });
+#else
         _sharp.Save(ms, new JpegEncoder { Quality = 90, ColorType = JpegEncodingColor.YCbCrRatio420 });
+#endif
         return (int)ms.Length;
     }
 
