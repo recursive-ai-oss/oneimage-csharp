@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>$(LibName).Fuzz</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- The target runs under libFuzzer with SharpFuzz coverage instrumentation, not as a trimmed app. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpFuzz" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneImage/OneImage.csproj" />
+  </ItemGroup>
+
+</Project>

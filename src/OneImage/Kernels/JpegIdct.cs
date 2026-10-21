@@ -281,6 +281,20 @@ internal static class JpegIdct
     /// <summary>Scalar two-pass transform; output is the descaled, uncentered samples.</summary>
     private static void Core8(ReadOnlySpan<short> coef, ReadOnlySpan<int> quant, Span<int> output, int pass1Bits)
     {
+        // A block with no AC coefficients is flat. Taking this shortcut (as the reference decoder does) also keeps huge
+        // DC values from overflowing the 32-bit intermediate, identically in the scalar and vector paths.
+        bool flat = true;
+        for (int i = 1; i < 64 && flat; i++)
+        {
+            flat = coef[i] == 0;
+        }
+
+        if (flat)
+        {
+            output[..64].Fill(Descale((coef[0] * quant[0]) << pass1Bits, pass1Bits + 3));
+            return;
+        }
+
         Span<int> ws = stackalloc int[64];
         for (int c = 0; c < 8; c++)
         {

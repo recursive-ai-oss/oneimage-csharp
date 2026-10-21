@@ -29,6 +29,9 @@
     <!-- libvips as an independent reference for the geometry ops. -->
     <PackageReference Include="NetVips" />
     <PackageReference Include="NetVips.Native.linux-x64" />
+    <!-- libjpeg-turbo behind SkiaSharp is the JPEG oracle for the interoperability tests. -->
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
   </ItemGroup>
 
   <ItemGroup>

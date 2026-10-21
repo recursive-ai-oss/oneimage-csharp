@@ -22,6 +22,7 @@
     <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
     <PackageVersion Include="NetVips" Version="3.2.0" />
     <PackageVersion Include="NetVips.Native.linux-x64" Version="8.18.7" />
+    <PackageVersion Include="SharpFuzz" Version="2.2.0" />
     <PackageVersion Include="SixLabors.ImageSharp" Version="$(ImageSharpVersion)" />
   </ItemGroup>
 </Project>

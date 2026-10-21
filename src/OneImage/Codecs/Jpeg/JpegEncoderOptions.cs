@@ -36,10 +36,12 @@ public sealed class JpegEncoderOptions : ImageEncoderOptions
     public bool Progressive { get; set; }
 
     /// <summary>
-    /// Gets or sets whether to compute Huffman tables from the actual data (smaller files, one extra pass and the whole
-    /// coefficient set in memory) instead of the standard tables (streaming). Ignored when <see cref="Progressive"/> is set. Default <see langword="false"/>.
+    /// Gets or sets whether to compute Huffman tables from the actual data instead of using the standard tables from the
+    /// specification. Optimized files are about 5-10% smaller at identical quality, at the cost of one extra pass and the
+    /// whole set of quantized coefficients in memory (about 3 bytes per pixel in 4:2:0); the standard tables stream with
+    /// memory proportional to the image width. Always on when <see cref="Progressive"/> is set. Default <see langword="true"/>.
     /// </summary>
-    public bool OptimizeHuffman { get; set; }
+    public bool OptimizeHuffman { get; set; } = true;
 
     /// <summary>Gets or sets the restart interval in MCUs (0 for none). Restart markers cost a few bytes each and limit damage from corruption. Default 0.</summary>
     public int RestartInterval { get; set; }

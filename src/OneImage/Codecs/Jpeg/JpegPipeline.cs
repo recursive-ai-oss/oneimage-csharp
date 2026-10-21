@@ -59,6 +59,18 @@ internal readonly record struct JpegColorPlan(JpegColorKind Kind, bool Invert)
     }
 }
 
+/// <summary>Per-thread counters the tests read to prove which transform sizes a decode used.</summary>
+internal static class JpegDiagnostics
+{
+    /// <summary>Gets or sets the number of full 8x8 inverse transforms run on this thread.</summary>
+    [ThreadStatic]
+    public static long FullBlocks;
+
+    /// <summary>Gets or sets the number of reduced (4x4, 2x2, 1x1) inverse transforms run on this thread.</summary>
+    [ThreadStatic]
+    public static long ReducedBlocks;
+}
+
 /// <summary>
 /// Turns decoded coefficient rows into output rows: inverse DCT (possibly reduced for shrink-on-load) into
 /// per-component sample planes, chroma upsampling, color conversion, and delivery to the row sink. Only the rows
@@ -248,6 +260,15 @@ internal sealed class JpegPipeline<T> : IDisposable
             {
                 Span<short> row = store.Row(p.Src, (r * p.Src.V) + br);
                 int rowBase = ((slot * p.RowsPerMcu) + (br * p.Ss)) * p.PlaneW;
+                if (p.Ss == 8)
+                {
+                    JpegDiagnostics.FullBlocks += p.BxHi - p.BxLo;
+                }
+                else
+                {
+                    JpegDiagnostics.ReducedBlocks += p.BxHi - p.BxLo;
+                }
+
                 for (int bx = p.BxLo; bx < p.BxHi; bx++)
                 {
                     JpegIdct.Block(row.Slice(bx * 64, 64), quant, p.Ring.AsSpan(rowBase + (bx * p.Ss)), p.PlaneW, p.Ss, _precision);
