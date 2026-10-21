@@ -118,7 +118,7 @@ public sealed partial class Image
         if (plan.NeedsPad)
         {
             (int x, int y) = ResizePlan.Place(a.Anchor, plan.PadWidth, plan.PadHeight, cur.Width, cur.Height);
-            cur = new PadNode(cur, plan.PadWidth, plan.PadHeight, x, y, a.Background);
+            cur = new ExtendNode(cur, x, y, plan.PadWidth, plan.PadHeight, EdgeMode.Constant, a.Background);
         }
 
         return cur;

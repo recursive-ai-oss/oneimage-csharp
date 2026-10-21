@@ -26,6 +26,9 @@
     <!-- Reference implementations for the compression tests only; the library depends on nothing. -->
     <PackageReference Include="Magick.NET-Q8-AnyCPU" />
     <PackageReference Include="System.IO.Hashing" />
+    <!-- libvips as an independent reference for the geometry ops. -->
+    <PackageReference Include="NetVips" />
+    <PackageReference Include="NetVips.Native.linux-x64" />
   </ItemGroup>
 
   <ItemGroup>

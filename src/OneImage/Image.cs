@@ -65,7 +65,7 @@ public sealed partial class Image
         return canvas.Snapshot();
     }
 
-    /// <summary>Crops to a rectangle (lazy). Tiles outside the rectangle are never computed. Decoders that support it decode only the rectangle.</summary>
+    /// <summary>Crops (extracts) a rectangle (lazy). Coordinates are zero-based from the top-left; the right and bottom edges are exclusive; the rectangle must lie fully inside the image (use <see cref="Pad"/> first to extract beyond the edge). Tiles outside the rectangle are never computed. Decoders that support it decode only the rectangle.</summary>
     /// <param name="x">Left edge in source pixels.</param>
     /// <param name="y">Top edge.</param>
     /// <param name="width">Width, positive.</param>
