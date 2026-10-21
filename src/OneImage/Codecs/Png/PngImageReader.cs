@@ -19,6 +19,9 @@ internal static class PngImageReader
 
     private const int BatchBytes = 1 << 16;
 
+    // The inflater decodes a little ahead of what is asked for (its window); the cap must not fire on that read-ahead.
+    private const long InflateSlack = 1 << 20;
+
     // Decodes the image whose data starts at fd and sends its rows to target. Non-interlaced images stop after rowsWanted rows.
     public static void Decode(Stream src, PngInfo st, in PngFrameDesc fd, IPngRowTarget target, int rowsWanted, ImageLimits limits, CancellationToken ct)
     {
@@ -60,7 +63,7 @@ internal static class PngImageReader
         byte[]? prev = null;
         byte[]? outBuf = null;
         byte[]? frame = null;
-        using var reader = new PngDataReader(src, fd.DataOffset, fd.IsFdat, total, limits.MaxExpansionRatio);
+        using var reader = new PngDataReader(src, fd.DataOffset, fd.IsFdat, total + InflateSlack, limits.MaxExpansionRatio);
         try
         {
             raw = ArrayPool<byte>.Shared.Rent(checked(batchRows * rawRowLen));
@@ -76,6 +79,11 @@ internal static class PngImageReader
                     int n = Math.Min(batchRows, rows - y0);
                     Batch(reader, st, w, n, rawRowLen, bpp, raw, prev, outBuf, outRowMax);
                     target.Rows(y0, outBuf, n);
+                }
+
+                if (rows == h)
+                {
+                    reader.VerifyCurrentChunk();
                 }
 
                 return;
@@ -117,6 +125,7 @@ internal static class PngImageReader
                 }
             }
 
+            reader.VerifyCurrentChunk();
             target.Rows(0, frame.AsSpan(0, (int)frameBytes), h);
         }
         finally

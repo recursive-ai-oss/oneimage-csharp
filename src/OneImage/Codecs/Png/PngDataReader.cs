@@ -64,6 +64,39 @@ internal sealed class PngDataReader : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads the rest of the chunk the last byte came from and checks its CRC, so a damaged chunk is noticed even when
+    /// every row was complete before its end.
+    /// </summary>
+    public void VerifyCurrentChunk()
+    {
+        byte[]? buf = _in;
+        if (buf == null)
+        {
+            return;
+        }
+
+        while (_chunkOpen && _remaining > 0)
+        {
+            int n = (int)Math.Min(_remaining, buf.Length);
+            ContainerIo.ReadFully(_s, buf.AsSpan(0, n));
+            _crc = Crc32.Update(_crc, buf.AsSpan(0, n));
+            _remaining -= n;
+        }
+
+        if (_chunkOpen)
+        {
+            Span<byte> tail = stackalloc byte[4];
+            ContainerIo.ReadFully(_s, tail);
+            if (ContainerIo.U32Be(tail) != _crc)
+            {
+                throw new ImageFormatException("CRC mismatch in image data.");
+            }
+
+            _chunkOpen = false;
+        }
+    }
+
     public void Dispose()
     {
         _inflater?.Dispose();
