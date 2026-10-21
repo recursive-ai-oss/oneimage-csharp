@@ -165,7 +165,7 @@ public class GraphTests
         string text = img.DescribeGraph();
         Assert.Contains("convert(", text, StringComparison.Ordinal);
         Assert.Contains("crop(x=1, y=1, width=50, height=50)", text, StringComparison.Ordinal);
-        Assert.Throws<ImageOperationException>(() => img.ConvertTo(PixelFormat.Cmyk8));
+        Assert.Throws<ImageOperationException>(() => img.ConvertTo(new PixelFormat(ColorModel.Lab, SampleType.U8)));
     }
 
     [Fact]

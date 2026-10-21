@@ -32,7 +32,7 @@ internal sealed class Grid
             }
 
             entries = checked(entries * d);
-            if (entries > (1 << 24))
+            if (entries > (1 << 22))
             {
                 throw new ImageLimitException("Lookup table is too large.");
             }

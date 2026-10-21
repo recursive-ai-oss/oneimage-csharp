@@ -117,7 +117,10 @@ public class KernelTests
         ConvertKernel.ConvertRow([77], PixelFormat.Gray8, g3, PixelFormat.Rgb8, 1);
         Assert.Equal(new byte[] { 77, 77, 77 }, g3);
 
-        Assert.Throws<ImageOperationException>(() => ConvertKernel.ConvertRow([1, 2, 3, 4], PixelFormat.Cmyk8, new byte[3], PixelFormat.Rgb8, 1));
+        // CMYK crosses to RGB through the default ICC profiles: no ink is paper white.
+        byte[] white = new byte[3];
+        ConvertKernel.ConvertRow([0, 0, 0, 0], PixelFormat.Cmyk8, white, PixelFormat.Rgb8, 1);
+        Assert.Equal(new byte[] { 255, 255, 255 }, white);
     }
 
     [Fact]

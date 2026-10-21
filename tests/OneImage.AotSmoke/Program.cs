@@ -67,5 +67,21 @@ if (status != InflateStatus.Done || produced != sample.Length || !unzipped.AsSpa
     return 1;
 }
 
+// Color management and metadata: built-in profiles (including the embedded CMYK tables), conversions, EXIF.
+Image p3 = snapshot.ConvertColor(ColorProfile.DisplayP3);
+Rgba32[] p3px = p3.ToArray<Rgba32>();
+Image cmykImage = snapshot.Crop(0, 0, 8, 8).ConvertTo(PixelFormat.Cmyk8);
+Image lab = snapshot.Crop(0, 0, 8, 8).ConvertTo(PixelFormat.LabF32);
+byte[] exif = [(byte)'I', (byte)'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0];
+ExifData e = ExifData.Parse(exif);
+bool colorOk = p3px.Length == 300 * 200 && cmykImage.Format == PixelFormat.Cmyk8 && lab.ToArray<LabFloat>().Length == 64
+    && e.Orientation == 6 && ColorProfile.GenericCmyk.Description.Contains("FOGRA39", StringComparison.Ordinal)
+    && ColorProfile.Srgb.LinearVariant is { IsLinear: true } && snapshot.StripMetadata().Metadata.Exif.IsEmpty;
+if (!colorOk)
+{
+    Console.Error.WriteLine("color smoke failed");
+    return 1;
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

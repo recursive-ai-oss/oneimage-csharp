@@ -12,7 +12,7 @@ namespace OneImage;
 /// </summary>
 internal sealed class IccData
 {
-    public const int MaxProfileBytes = 1 << 26;
+    public const int MaxProfileBytes = 1 << 24;
     private const int MaxTags = 4096;
 
     private static readonly uint s_acsp = Sig("acsp");
@@ -519,7 +519,7 @@ internal sealed class IccData
         for (int i = 0; i < inCh; i++)
         {
             clutEntries *= grid;
-            if (clutEntries > (1 << 24))
+            if (clutEntries > (1 << 22))
             {
                 throw new ImageLimitException("ICC lookup table is too large.");
             }
@@ -664,7 +664,7 @@ internal sealed class IccData
                 }
 
                 entries *= dims[i];
-                if (entries > (1 << 24))
+                if (entries > (1 << 22))
                 {
                     throw new ImageLimitException("ICC lookup table is too large.");
                 }
