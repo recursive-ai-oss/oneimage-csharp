@@ -17,6 +17,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       ONEIMAGE_ARTIFACTS: ${{ runner.temp }}/artifacts
+      # Optional. When set, the comparison tests and benchmarks build against the current ImageSharp release.
+      SixLaborsLicenseKey: ${{ secrets.SIXLABORS_LICENSE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
