@@ -63,6 +63,12 @@ internal static class ResampleKernel
         if (l.Sample == SampleType.U8)
         {
             float[] lut = l.Linear ? SrgbTables.ToLinear8 : SrgbTables.Identity8;
+            if (BitConverter.IsLittleEndian && l.Colors == 3 && !l.PremultipliedStorage)
+            {
+                UnpackRgb8(src, dst, width, lut, l.HasAlpha);
+                return;
+            }
+
             ReadOnlySpan<byte> s = src[..(width * c)];
             Span<float> d = dst[..(width * p)];
             if (!l.HasAlpha)
@@ -140,6 +146,12 @@ internal static class ResampleKernel
         if (l.Sample == SampleType.U8)
         {
             byte[] enc = SrgbTables.FromLinear8;
+            if (l.Colors == 3 && !l.PremultipliedStorage)
+            {
+                PackRgb8(src, dst, width, l.Linear, l.HasAlpha, enc);
+                return;
+            }
+
             ReadOnlySpan<float> s = src[..(width * p)];
             Span<byte> d = dst[..(width * c)];
             for (int x = 0; x < width; x++)
@@ -179,6 +191,81 @@ internal static class ResampleKernel
         }
 
         PackWide(src, dst, width, l);
+    }
+
+    // Fast paths for 8-bit RGB / RGBA (the common case). They compute exactly what the generic loops compute, one pixel per vector.
+    private static void UnpackRgb8(ReadOnlySpan<byte> src, Span<float> dst, int width, float[] lut, bool alpha)
+    {
+        int c = alpha ? 4 : 3;
+        if (src.Length < width * c || dst.Length < width * 4)
+        {
+            throw new ArgumentException("Row buffers are too small.");
+        }
+
+        ref byte s = ref MemoryMarshal.GetReference(src);
+        ref float d = ref MemoryMarshal.GetReference(dst);
+        ref float t = ref MemoryMarshal.GetArrayDataReference(lut);
+        if (alpha)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                uint v = Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref s, x * 4));
+                float a = (v >> 24) * (1f / 255f);
+                var px = Vector128.Create(Unsafe.Add(ref t, (int)(v & 255)), Unsafe.Add(ref t, (int)((v >> 8) & 255)), Unsafe.Add(ref t, (int)((v >> 16) & 255)), 1f);
+                (px * a).StoreUnsafe(ref d, (nuint)(x * 4));
+            }
+
+            return;
+        }
+
+        for (int x = 0; x < width; x++)
+        {
+            ref byte p = ref Unsafe.Add(ref s, x * 3);
+            Vector128.Create(Unsafe.Add(ref t, p), Unsafe.Add(ref t, Unsafe.Add(ref p, 1)), Unsafe.Add(ref t, Unsafe.Add(ref p, 2)), 0f).StoreUnsafe(ref d, (nuint)(x * 4));
+        }
+    }
+
+    private static void PackRgb8(ReadOnlySpan<float> src, Span<byte> dst, int width, bool linear, bool alpha, byte[] enc)
+    {
+        int c = alpha ? 4 : 3;
+        if (src.Length < width * 4 || dst.Length < width * c)
+        {
+            throw new ArgumentException("Row buffers are too small.");
+        }
+
+        ref float s = ref MemoryMarshal.GetReference(src);
+        ref byte d = ref MemoryMarshal.GetReference(dst);
+        ref byte e = ref MemoryMarshal.GetArrayDataReference(enc);
+        float scale = linear ? 65535f : 255f;
+        int max = linear ? 65535 : 255;
+        var vScale = Vector128.Create(scale);
+        var vHalf = Vector128.Create(0.5f);
+        var vMax = Vector128.Create(max);
+        for (int x = 0; x < width; x++)
+        {
+            Vector128<float> px = Vector128.LoadUnsafe(ref s, (nuint)(x * 4));
+            float a = alpha ? px.GetElement(3) : 1f;
+            float inv = a > 0 ? 1f / a : 0f;
+            Vector128<int> idx = Vector128.Min(Vector128.Max(Vector128.ConvertToInt32((px * inv * vScale) + vHalf), Vector128<int>.Zero), vMax);
+            ref byte o = ref Unsafe.Add(ref d, x * c);
+            if (linear)
+            {
+                o = Unsafe.Add(ref e, idx.GetElement(0));
+                Unsafe.Add(ref o, 1) = Unsafe.Add(ref e, idx.GetElement(1));
+                Unsafe.Add(ref o, 2) = Unsafe.Add(ref e, idx.GetElement(2));
+            }
+            else
+            {
+                o = (byte)idx.GetElement(0);
+                Unsafe.Add(ref o, 1) = (byte)idx.GetElement(1);
+                Unsafe.Add(ref o, 2) = (byte)idx.GetElement(2);
+            }
+
+            if (alpha)
+            {
+                Unsafe.Add(ref o, 3) = (byte)Math.Clamp((int)((a * 255f) + 0.5f), 0, 255);
+            }
+        }
     }
 
     private static int EncodedIndex(float v) => Math.Clamp((int)((v * 65535f) + 0.5f), 0, 65535);

@@ -64,9 +64,14 @@ public class DownscaleBenchmarks : IDisposable
 {
     private ResizeSources _src = null!;
     private const int TargetWidth = 400;
+    private OneImage.Rgba32[] _buffer = [];
 
     [GlobalSetup]
-    public void Setup() => _src = new ResizeSources(6000, 4000);
+    public void Setup()
+    {
+        _src = new ResizeSources(6000, 4000);
+        _buffer = new OneImage.Rgba32[TargetWidth * 267];
+    }
 
     [GlobalCleanup]
     public void Dispose()
@@ -78,6 +83,14 @@ public class DownscaleBenchmarks : IDisposable
     [Benchmark(Description = "oneimage Lanczos3 (linear)")]
     public OneImage.Rgba32[] OursLinear() =>
         _src.Ours.Resize(width: TargetWidth, filter: ResamplingFilter.Lanczos3).ToArray<OneImage.Rgba32>();
+
+    [Benchmark(Description = "oneimage Lanczos3 (linear) into caller buffer")]
+    public int OursLinearIntoBuffer()
+    {
+        OneImage.Image r = _src.Ours.Resize(width: TargetWidth, filter: ResamplingFilter.Lanczos3);
+        r.CopyPixelsTo<OneImage.Rgba32>(_buffer, new ImageRect(0, 0, r.Width, r.Height));
+        return r.Width;
+    }
 
     [Benchmark(Description = "oneimage Lanczos3 (encoded space)")]
     public OneImage.Rgba32[] OursEncoded() =>
@@ -109,9 +122,14 @@ public class DownscaleBenchmarks : IDisposable
 [ShortRunJob]
 public class UpscaleBenchmarks : IDisposable
 {
+    private OneImage.Rgba32[] _buffer = [];
     private ResizeSources _src = null!;
     [GlobalSetup]
-    public void Setup() => _src = new ResizeSources(1000, 1000);
+    public void Setup()
+    {
+        _src = new ResizeSources(1000, 1000);
+        _buffer = new OneImage.Rgba32[2000 * 2000];
+    }
 
     [GlobalCleanup]
     public void Dispose()
@@ -123,6 +141,14 @@ public class UpscaleBenchmarks : IDisposable
     [Benchmark(Description = "oneimage Catmull-Rom (linear)")]
     public OneImage.Rgba32[] OursLinear() =>
         _src.Ours.Resize(2000, 2000, Fit.Stretch, filter: ResamplingFilter.CatmullRom).ToArray<OneImage.Rgba32>();
+
+    [Benchmark(Description = "oneimage Catmull-Rom (linear) into caller buffer")]
+    public int OursLinearIntoBuffer()
+    {
+        OneImage.Image r = _src.Ours.Resize(2000, 2000, Fit.Stretch, filter: ResamplingFilter.CatmullRom);
+        r.CopyPixelsTo<OneImage.Rgba32>(_buffer, new ImageRect(0, 0, 2000, 2000));
+        return r.Width;
+    }
 
     [Benchmark(Description = "oneimage Catmull-Rom (encoded space)")]
     public OneImage.Rgba32[] OursEncoded() =>
