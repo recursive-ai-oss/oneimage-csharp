@@ -17,6 +17,11 @@
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
     <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
+    <PackageReference Include="NetVips" />
+    <PackageReference Include="NetVips.Native.linux-x64" />
   </ItemGroup>
 
   <ItemGroup>
