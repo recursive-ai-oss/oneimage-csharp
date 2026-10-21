@@ -114,7 +114,7 @@ public class DownscaleBenchmarks : IDisposable
     public int NetVipsResize()
     {
         using VipsImage r = _src.Vips.Resize((double)TargetWidth / _src.Width, kernel: NetVips.Enums.Kernel.Lanczos3);
-        return r.WriteToMemory().Length;
+        return r.WriteToMemory<byte>().Length;
     }
 }
 
@@ -173,6 +173,6 @@ public class UpscaleBenchmarks : IDisposable
     {
         // libvips has no Catmull-Rom kernel name; its cubic kernel is the Catmull-Rom spline.
         using VipsImage r = _src.Vips.Resize(2.0, kernel: NetVips.Enums.Kernel.Cubic);
-        return r.WriteToMemory().Length;
+        return r.WriteToMemory<byte>().Length;
     }
 }
