@@ -1,0 +1,36 @@
+<Project>
+
+  <PropertyGroup Label="Name">
+    <!-- The one place the project name lives. Renaming = change this value plus the folder/file names. -->
+    <LibName>OneImage</LibName>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Output">
+    <!-- Build output stays outside the checkout. Set ONEIMAGE_ARTIFACTS to choose where; the default is a sibling directory of the repo. -->
+    <ArtifactsPath Condition="'$(ONEIMAGE_ARTIFACTS)' != ''">$(ONEIMAGE_ARTIFACTS)</ArtifactsPath>
+    <ArtifactsPath Condition="'$(ONEIMAGE_ARTIFACTS)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../$(LibName)-artifacts'))</ArtifactsPath>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Language and analysis">
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package metadata">
+    <Authors>Recursive AI, LLC</Authors>
+    <Company>Recursive AI, LLC</Company>
+    <Copyright>Copyright (c) Recursive AI, LLC</Copyright>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <Version>0.0.1-dev</Version>
+  </PropertyGroup>
+
+</Project>

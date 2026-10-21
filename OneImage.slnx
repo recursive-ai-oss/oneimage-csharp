@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OneImage/OneImage.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OneImage.Tests/OneImage.Tests.csproj" />
+    <Project Path="tests/OneImage.AotSmoke/OneImage.AotSmoke.csproj" />
+  </Folder>
+  <Folder Name="/bench/">
+    <Project Path="bench/OneImage.Benchmarks/OneImage.Benchmarks.csproj" />
+  </Folder>
+</Solution>
