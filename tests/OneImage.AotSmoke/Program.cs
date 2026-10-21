@@ -35,6 +35,16 @@ if (!ok)
     return 1;
 }
 
+// Resize: shrink with the default filter, cover-crop with the smart anchor, pad.
+Rgba32[] small = snapshot.Resize(width: 60).ToArray<Rgba32>();
+Image padded = snapshot.Resize(100, 100, Fit.Pad, Anchor.TopLeft);
+Image smart = snapshot.Resize(50, 50, Fit.Cover, Anchor.Smart);
+if (small.Length != 60 * 40 || padded.Width != 100 || smart.ToArray<Rgba32>().Length != 2500)
+{
+    Console.Error.WriteLine("resize smoke failed");
+    return 1;
+}
+
 // Compression layer: deflate/inflate and LZW round trips.
 byte[] sample = new byte[100_000];
 for (int i = 0; i < sample.Length; i++)
