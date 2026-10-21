@@ -4,6 +4,8 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>$(LibName).Tests</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- Competitor packages are pinned for comparison only; their security advisories do not affect what ships. -->
+    <NoWarn>$(NoWarn);NU1901;NU1902;NU1903;NU1904</NoWarn>
     <IsTestProject>true</IsTestProject>
     <!-- Tests deliberately call blocking and token-defaulted APIs of the library under test. -->
     <NoWarn>$(NoWarn);xUnit1051;xUnit1031</NoWarn>
@@ -22,8 +24,8 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <!-- Reference implementations for the compression tests only; the library depends on nothing. -->
-    <PackageReference Include="Magick.NET-Q8-AnyCPU" VersionOverride="15.0.0" />
-    <PackageReference Include="System.IO.Hashing" VersionOverride="10.0.0" />
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" />
+    <PackageReference Include="System.IO.Hashing" />
   </ItemGroup>
 
   <ItemGroup>
