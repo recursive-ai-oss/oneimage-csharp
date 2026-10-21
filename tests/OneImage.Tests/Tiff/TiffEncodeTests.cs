@@ -222,11 +222,14 @@ public sealed class TiffEncodeTests
             {
                 foreach (bool big in new[] { false, true })
                 {
-                    Image src = Source(PixelFormat.Rgb8, 20, 20, 5);
+                    Image src = Source(PixelFormat.Rgb8, 20, 30, 5);
                     var meta = new ImageMetadata { IccProfile = icc, Xmp = xmp, Iptc = ip, Exif = exif, Orientation = 6 };
                     var img = new Image([src.Frames[0].Node], [default], 0, meta, null);
                     byte[] file = Save(img, new TiffEncoderOptions { BigTiff = big });
-                    Image back = Image.Load(file, Load);
+                    // Orientation is a stored tag; the core applies it on load unless asked not to.
+                    Image oriented = Image.Load(file, Load);
+                    Assert.Equal((30, 20, 1), (oriented.Width, oriented.Height, oriented.Metadata.Orientation));
+                    Image back = Image.Load(file, new LoadOptions { Configuration = Config, AutoOrient = false });
                     Assert.Equal(icc, back.Metadata.IccProfile.ToArray());
                     Assert.Equal(xmp, back.Metadata.Xmp.ToArray());
                     Assert.Equal(ip.Length % 4 == 0 ? ip : ip, back.Metadata.Iptc.ToArray()[..ip.Length]);
@@ -237,7 +240,8 @@ public sealed class TiffEncodeTests
                     Assert.NotEmpty(normalized);
                     var expected = OneImage.Codecs.Tiff.TiffMetadataIo.ParseBlob(exif, ImageLimits.Default)!;
                     var actual = OneImage.Codecs.Tiff.TiffMetadataIo.ParseBlob(normalized, ImageLimits.Default)!;
-                    Assert.Equal(Describe(expected), Describe(actual));
+                    // The core may add the pixel-size and orientation tags on save; everything that was in the blob must still be there.
+                    AssertContains(expected, actual);
                     Image again = Image.Load(Save(back, new TiffEncoderOptions { BigTiff = big }), Load);
                     Assert.Equal(normalized, again.Metadata.Exif.ToArray());
 
@@ -245,6 +249,24 @@ public sealed class TiffEncodeTests
                     using var m = new MagickImage(file);
                     Assert.Equal(icc, m.GetProfile("icc")!.ToByteArray());
                 }
+            }
+        }
+    }
+
+    private static void AssertContains(List<OneImage.Codecs.Tiff.TiffTreeEntry> expected, List<OneImage.Codecs.Tiff.TiffTreeEntry> actual)
+    {
+        foreach (var e in expected)
+        {
+            var a = actual.SingleOrDefault(x => x.Tag == e.Tag);
+            Assert.NotNull(a);
+            Assert.Equal((e.Type, e.Count), (a.Type, a.Count));
+            if (e.Sub is not null)
+            {
+                AssertContains(e.Sub, a.Sub!);
+            }
+            else
+            {
+                Assert.Equal(e.Value, a.Value);
             }
         }
     }
