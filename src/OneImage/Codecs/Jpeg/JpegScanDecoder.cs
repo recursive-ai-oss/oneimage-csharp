@@ -301,69 +301,8 @@ internal sealed class JpegScanDecoder
         }
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void DecodeBaseline(Span<short> block, JpegComponent c, JpegHuffmanTable dc, JpegHuffmanTable ac)
-    {
-        JpegReader r = _r;
-        ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
-        block.Clear();
-        if (r.BitCount < 32)
-        {
-            r.Fill();
-        }
-
-        int t = r.DecodeHuffman(dc);
-        if (t > 15)
-        {
-            throw new ImageFormatException("Invalid JPEG DC coefficient size.");
-        }
-
-        if (t != 0)
-        {
-            c.DcPred += r.ReceiveExtend(t);
-        }
-
-        block[0] = (short)c.DcPred;
-        bool skip = DcOnly;
-        for (int k = 1; k < 64;)
-        {
-            if (r.BitCount < 32)
-            {
-                r.Fill();
-            }
-
-            int rs = r.DecodeHuffman(ac);
-            int s = rs & 15;
-            int run = rs >> 4;
-            if (s == 0)
-            {
-                if (run != 15)
-                {
-                    break;
-                }
-
-                k += 16;
-                continue;
-            }
-
-            k += run;
-            if (k > 63)
-            {
-                throw new ImageFormatException("JPEG AC coefficient index out of range.");
-            }
-
-            if (skip)
-            {
-                r.SkipBits(s);
-            }
-            else
-            {
-                block[zz[k]] = (short)r.ReceiveExtend(s);
-            }
-
-            k++;
-        }
-    }
+    private void DecodeBaseline(Span<short> block, JpegComponent c, JpegHuffmanTable dc, JpegHuffmanTable ac) =>
+        _r.DecodeBlockBaseline(block, ref c.DcPred, dc, ac, DcOnly);
 
     private void DecodeDcFirst(Span<short> block, JpegComponent c, JpegHuffmanTable dc, int al)
     {

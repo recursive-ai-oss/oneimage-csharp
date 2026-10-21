@@ -200,6 +200,131 @@ internal sealed partial class JpegReader
         throw new ImageFormatException("Invalid JPEG Huffman code.");
     }
 
+    /// <summary>
+    /// Decodes one sequential block (T.81 F.2.2): the DC difference and the run-length coded AC coefficients, written in
+    /// natural order. The hot loop keeps the bit buffer in locals, which is what makes the entropy stage fast.
+    /// </summary>
+    /// <param name="block">64 coefficients; cleared here.</param>
+    /// <param name="pred">The component's running DC value.</param>
+    /// <param name="dc">DC table.</param>
+    /// <param name="ac">AC table.</param>
+    /// <param name="dcOnly">Parse the AC data but do not store it.</param>
+    public void DecodeBlockBaseline(Span<short> block, ref int pred, JpegHuffmanTable dc, JpegHuffmanTable ac, bool dcOnly)
+    {
+        if (block.Length < 64)
+        {
+            throw new ArgumentException("A block needs 64 coefficients.", nameof(block));
+        }
+
+        ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
+        ushort[] dcFast = dc.Fast;
+        ushort[] acFast = ac.Fast;
+        block[..64].Clear();
+        ulong bits = _bits;
+        int count = _count;
+        if (count < 32)
+        {
+            _bits = bits;
+            _count = count;
+            Fill();
+            bits = _bits;
+            count = _count;
+        }
+
+        int e = dcFast[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
+        int t;
+        if (e != 0)
+        {
+            int l = e >> 8;
+            bits <<= l;
+            count -= l;
+            t = e & 0xFF;
+        }
+        else
+        {
+            _bits = bits;
+            _count = count;
+            t = DecodeHuffmanSlow(dc);
+            bits = _bits;
+            count = _count;
+        }
+
+        if (t > 15)
+        {
+            throw new ImageFormatException("Invalid JPEG DC coefficient size.");
+        }
+
+        if (t != 0)
+        {
+            int v = (int)(bits >> (64 - t));
+            bits <<= t;
+            count -= t;
+            pred += v + (((v - (1 << (t - 1))) >> 31) & ((-1 << t) + 1));
+        }
+
+        block[0] = (short)pred;
+        for (int k = 1; k < 64;)
+        {
+            if (count < 32)
+            {
+                _bits = bits;
+                _count = count;
+                Fill();
+                bits = _bits;
+                count = _count;
+            }
+
+            e = acFast[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
+            int rs;
+            if (e != 0)
+            {
+                int l = e >> 8;
+                bits <<= l;
+                count -= l;
+                rs = e & 0xFF;
+            }
+            else
+            {
+                _bits = bits;
+                _count = count;
+                rs = DecodeHuffmanSlow(ac);
+                bits = _bits;
+                count = _count;
+            }
+
+            int s = rs & 15;
+            if (s == 0)
+            {
+                if (rs != 0xF0)
+                {
+                    break;
+                }
+
+                k += 16;
+                continue;
+            }
+
+            k += rs >> 4;
+            if (k > 63)
+            {
+                throw new ImageFormatException("JPEG AC coefficient index out of range.");
+            }
+
+            int val = (int)(bits >> (64 - s));
+            bits <<= s;
+            count -= s;
+            if (!dcOnly)
+            {
+                block[zz[k] & 63] = (short)(val + (((val - (1 << (s - 1))) >> 31) & ((-1 << s) + 1)));
+            }
+
+            k++;
+        }
+
+        _bits = bits;
+        _count = count;
+    }
+
     /// <summary>Reads <paramref name="n"/> (1..16) bits as an unsigned value. Needs the buffer filled.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetBits(int n)
