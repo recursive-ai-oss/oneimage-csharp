@@ -21,6 +21,13 @@
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
+    <!-- Reference implementations for the compression tests only; the library depends on nothing. -->
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" VersionOverride="15.0.0" />
+    <PackageReference Include="System.IO.Hashing" VersionOverride="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../testdata/**" Link="testdata/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

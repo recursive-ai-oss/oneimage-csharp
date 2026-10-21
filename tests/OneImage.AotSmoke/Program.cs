@@ -1,5 +1,7 @@
 using System;
+using System.Buffers;
 using OneImage;
+using OneImage.Compression;
 
 // Exercises the library from a NativeAOT-published app; grows as the library does.
 if (string.IsNullOrEmpty(Library.Name))
@@ -30,6 +32,28 @@ bool ok = px[(5 * 100) + 5] == new Rgba32(1, 2, 3, 255) && gray.Length == 10000 
 if (!ok)
 {
     Console.Error.WriteLine("smoke failed");
+    return 1;
+}
+
+// Compression layer: deflate/inflate and LZW round trips.
+byte[] sample = new byte[100_000];
+for (int i = 0; i < sample.Length; i++)
+{
+    sample[i] = (byte)((i * 7 % 251) ^ (i >> 9));
+}
+
+byte[] zipped = Deflater.Compress(sample, 6);
+using var inflater = new Inflater(true, sample.Length, 1100);
+byte[] unzipped = new byte[sample.Length];
+InflateStatus status = inflater.Inflate(zipped, unzipped, out _, out int produced);
+byte[] lzw = LzwEncoder.Compress(sample, LzwVariant.Tiff);
+byte[] unlzw = new byte[sample.Length];
+InflateStatus lzwStatus = new LzwDecoder(LzwVariant.Tiff).Decode(lzw, unlzw, out _, out int lzwProduced);
+if (status != InflateStatus.Done || produced != sample.Length || !unzipped.AsSpan().SequenceEqual(sample)
+    || lzwStatus != InflateStatus.Done || lzwProduced != sample.Length || !unlzw.AsSpan().SequenceEqual(sample)
+    || Crc32.Compute("123456789"u8) != 0xCBF43926u || Adler32.Update(Adler32.Initial, "Wikipedia"u8) != 0x11E60398u)
+{
+    Console.Error.WriteLine("compression smoke failed");
     return 1;
 }
 

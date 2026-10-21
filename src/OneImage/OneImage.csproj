@@ -23,6 +23,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="$(LibName).Tests" />
     <InternalsVisibleTo Include="$(LibName).Benchmarks" />
+    <InternalsVisibleTo Include="$(LibName).AotSmoke" />
   </ItemGroup>
 
   <ItemGroup>
