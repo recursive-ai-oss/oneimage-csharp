@@ -97,22 +97,6 @@ public sealed partial class Image
     }
 
     /// <summary>
-    /// Inverts colors (lazy): every color channel c becomes max - c with max 255, 65535 or 1.0; alpha is unchanged
-    /// (with premultiplied alpha the result is alpha - c). Float results are not clamped.
-    /// </summary>
-    /// <returns>The inverted image.</returns>
-    /// <exception cref="ImageOperationException">The format is Lab.</exception>
-    public Image Invert()
-    {
-        if (Format.Model == ColorModel.Lab)
-        {
-            throw new ImageOperationException("Invert is not defined for Lab pixels.");
-        }
-
-        return Map(static (n, _) => new RowOpNode(n, "invert", new OpDescriptor("invert")), 0);
-    }
-
-    /// <summary>
     /// Converts the pixel format (lazy). Rounding is half up and clamped; gray to RGB replicates, RGB to gray uses Rec. 709 weights
     /// on stored values; dropping alpha discards it, adding alpha makes pixels opaque; CMYK and Lab convert to and from the other models through the
     /// default ICC profiles (sRGB, gray, the generic CMYK profile, Lab D50) with relative colorimetric intent and black point compensation. Use
@@ -140,7 +124,12 @@ public sealed partial class Image
             }
         }
 
-        return Map(static (n, f) => n.Format == f ? n : new ConvertNode(n, f), format);
+        // Behind a chain of color ops the conversion joins the chain (same arithmetic, one pass).
+        return Map(
+            static (n, f) => n.Format == f ? n
+                : n is ToneNode && n.Format.Model is ColorModel.Gray or ColorModel.Rgb && f.Model is ColorModel.Gray or ColorModel.Rgb ? ToneNode.Build(n, new ConvertStep(f))
+                : new ConvertNode(n, f),
+            format);
     }
 
     /// <summary>Copies frame 0 into a mutable <see cref="Canvas"/>. Tiles are computed lazily on first touch and cached under the global budget until written.</summary>

@@ -78,6 +78,18 @@ if (status != InflateStatus.Done || produced != sample.Length || !unzipped.AsSpa
     return 1;
 }
 
+// Color and tone: a fused chain, grayscale, flatten, split/combine.
+Image toned = snapshot.Crop(0, 0, 64, 64).Levels(0.1, 0.9, 1.2).Curves([new CurvePoint(0, 0), new CurvePoint(0.5, 0.6), new CurvePoint(1, 1)]).Gamma(1.5).Invert();
+Image flat = snapshot.Crop(0, 0, 64, 64).Grayscale().HueSaturationLightness(20, 0.1).Flatten(new Rgba32(255, 255, 255, 255));
+Image rejoined = Image.CombineChannels(snapshot.Crop(0, 0, 64, 64).SplitChannels());
+bool toneOk = toned.ToArray<Rgba32>().Length == 4096 && flat.Format == PixelFormat.Rgb8 && flat.ToArray<Rgb24>().Length == 4096
+    && rejoined.ToArray<Rgba32>().AsSpan().SequenceEqual(snapshot.Crop(0, 0, 64, 64).ToArray<Rgba32>()) && toned.DescribeGraph().Contains("fused", StringComparison.Ordinal);
+if (!toneOk)
+{
+    Console.Error.WriteLine("tone smoke failed");
+    return 1;
+}
+
 // Color management and metadata: built-in profiles (including the embedded CMYK tables), conversions, EXIF.
 Image p3 = snapshot.ConvertColor(ColorProfile.DisplayP3);
 Rgba32[] p3px = p3.ToArray<Rgba32>();

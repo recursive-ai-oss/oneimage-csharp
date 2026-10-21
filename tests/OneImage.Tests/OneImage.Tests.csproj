@@ -26,12 +26,14 @@
     <!-- Reference implementations for the compression tests only; the library depends on nothing. -->
     <PackageReference Include="Magick.NET-Q8-AnyCPU" />
     <PackageReference Include="System.IO.Hashing" />
-    <!-- libvips as an independent reference for the geometry ops. -->
+    <!-- libvips as an independent reference for the geometry and tone ops. -->
     <PackageReference Include="NetVips" />
     <PackageReference Include="NetVips.Native.linux-x64" />
     <!-- libjpeg-turbo behind SkiaSharp is the JPEG oracle for the interoperability tests. -->
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
+    <!-- ImageSharp is a second oracle for the tone operations. -->
+    <PackageReference Include="SixLabors.ImageSharp" />
   </ItemGroup>
 
   <ItemGroup>
