@@ -38,6 +38,9 @@ public class GeometryBenchmarks : IDisposable
         return r.Width;
     }
 
+    [Benchmark(Description = "oneimage plain copy out (no op)")]
+    public int OursCopyOnly() => Render(_src.Ours);
+
     [Benchmark(Description = "oneimage rotate 90")]
     public int OursRotate90() => Render(_src.Ours.Rotate(90));
 

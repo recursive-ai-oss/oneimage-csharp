@@ -45,6 +45,16 @@ if (small.Length != 60 * 40 || padded.Width != 100 || smart.ToArray<Rgba32>().Le
     return 1;
 }
 
+// Geometry: exact turns, edge-mode padding, arbitrary rotation, trim.
+Image geo = snapshot.Rotate(90).Flip(FlipAxis.Horizontal).Pad(3, 2, 1, 4, EdgeMode.Mirror);
+Image turned = snapshot.Rotate(17, filter: ResamplingFilter.Lanczos3);
+Image trimmed = snapshot.Pad(5, 5, 5, 5, EdgeMode.Constant, new Rgba32(255, 255, 255, 255)).Trim();
+if (geo.Width != 204 || turned.ToArray<Rgba32>().Length != turned.Width * turned.Height || trimmed.Width < 1 || snapshot.Orient(6).Width != 200)
+{
+    Console.Error.WriteLine("geometry smoke failed");
+    return 1;
+}
+
 // Compression layer: deflate/inflate and LZW round trips.
 byte[] sample = new byte[100_000];
 for (int i = 0; i < sample.Length; i++)

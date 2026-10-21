@@ -85,15 +85,17 @@ public sealed partial class Image
         Node cur = node;
         if (plan.ResampleWidth != cur.Width || plan.ResampleHeight != cur.Height)
         {
-            if (cur is DecodeSourceNode && a.Filter != ResamplingFilter.Nearest)
+            // Shrink-on-load: ask the decoder for a smaller frame when it can, also when an auto-orient node sits on top of it.
+            DecodeSourceNode? decoder = cur as DecodeSourceNode ?? (cur as OrientNode)?.Inputs[0] as DecodeSourceNode;
+            if (decoder != null && a.Filter != ResamplingFilter.Nearest)
             {
                 foreach (int denominator in (ReadOnlySpan<int>)[8, 4, 2])
                 {
                     if (((cur.Width + denominator - 1) / denominator) >= plan.ResampleWidth
                         && ((cur.Height + denominator - 1) / denominator) >= plan.ResampleHeight
-                        && ((DecodeSourceNode)cur).TryPushScale(denominator) is { } shrunk)
+                        && decoder.TryPushScale(denominator) is { } shrunk)
                     {
-                        cur = shrunk;
+                        cur = cur is OrientNode o ? o.WithInput(shrunk) : shrunk;
                         break;
                     }
                 }

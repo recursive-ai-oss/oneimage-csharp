@@ -42,6 +42,53 @@ internal static class AffineFilterTable
         return t;
     }
 
+    /// <summary>
+    /// Fills the 2S tap weights for a sample at fractional offset <paramref name="frac"/> past its base pixel (taps at base-S+1 .. base+S).
+    /// Bilinear and the cubics are evaluated from their polynomials; the sinc kernels come from the table.
+    /// </summary>
+    public static void Fill(ResamplingFilter filter, ReadOnlySpan<float> table, int support, float frac, Span<float> w)
+    {
+        switch (filter)
+        {
+            case ResamplingFilter.Bilinear:
+                w[0] = 1f - frac;
+                w[1] = frac;
+                return;
+            case ResamplingFilter.CatmullRom:
+                Cubic(0f, 0.5f, frac, w);
+                return;
+            case ResamplingFilter.Mitchell:
+                Cubic(1f / 3f, 1f / 3f, frac, w);
+                return;
+            default:
+                for (int t = 0; t < 2 * support; t++)
+                {
+                    w[t] = Weight(table, (t - support + 1) - frac);
+                }
+
+                return;
+        }
+    }
+
+    // Mitchell-Netravali (B, C) cubic at the four tap distances 1+t, t, 1-t, 2-t.
+    private static void Cubic(float b, float c, float t, Span<float> w)
+    {
+        float a3 = (12f - (9f * b) - (6f * c)) / 6f;
+        float a2 = (-18f + (12f * b) + (6f * c)) / 6f;
+        float a0 = (6f - (2f * b)) / 6f;
+        float b3 = (-b - (6f * c)) / 6f;
+        float b2 = ((6f * b) + (30f * c)) / 6f;
+        float b1 = ((-12f * b) - (48f * c)) / 6f;
+        float b0 = ((8f * b) + (24f * c)) / 6f;
+        float u = 1f - t;
+        float p = 1f + t;
+        float q = 2f - t;
+        w[0] = (((((b3 * p) + b2) * p) + b1) * p) + b0;
+        w[1] = ((((a3 * t) + a2) * t) * t) + a0;
+        w[2] = ((((a3 * u) + a2) * u) * u) + a0;
+        w[3] = (((((b3 * q) + b2) * q) + b1) * q) + b0;
+    }
+
     public static float Weight(ReadOnlySpan<float> table, float distance)
     {
         float pos = Math.Abs(distance) * Resolution;
@@ -157,17 +204,14 @@ internal static class AffineKernel
                 int by = (int)Math.Floor(py);
                 float ax = (float)(px - bx);
                 float ay = (float)(py - by);
+                AffineFilterTable.Fill(filter, table, support, ax, wx);
+                AffineFilterTable.Fill(filter, table, support, ay, wy);
                 float sx = 0f;
                 float sy = 0f;
                 for (int t = 0; t < taps; t++)
                 {
-                    int off = t - support + 1;
-                    wx[t] = AffineFilterTable.Weight(table, off - ax);
-                    wy[t] = AffineFilterTable.Weight(table, off - ay);
                     sx += wx[t];
                     sy += wy[t];
-                    ix[t] = Resolve(bx + off, sourceWidth, regionX, regionWidth, edge);
-                    iy[t] = Resolve(by + off, sourceHeight, regionY, regionHeight, edge);
                 }
 
                 float rx = 1f / sx;
@@ -176,6 +220,41 @@ internal static class AffineKernel
                 {
                     wx[t] *= rx;
                     wy[t] *= ry;
+                }
+
+                if (stride == 4 && bx - support + 1 >= 0 && bx + support < sourceWidth && by - support + 1 >= 0 && by + support < sourceHeight)
+                {
+                    // Every tap is inside the source: no edge handling, one bounds check for the whole 2S x 2S block.
+                    int cx = bx - support + 1 - regionX;
+                    int cy = by - support + 1 - regionY;
+                    if (cx < 0 || cy < 0 || cx + taps > regionWidth || cy + taps > regionHeight)
+                    {
+                        throw new ImageOperationException("Sampler taps fell outside the prepared source region.");
+                    }
+
+                    ref float r0 = ref MemoryMarshal.GetReference(region);
+                    Vector128<float> inner = Vector128<float>.Zero;
+                    for (int j = 0; j < taps; j++)
+                    {
+                        nuint at = (nuint)(((((cy + j) * regionWidth) + cx)) * 4);
+                        Vector128<float> h = Vector128.LoadUnsafe(ref r0, at) * Vector128.Create(wx[0]);
+                        for (int i = 1; i < taps; i++)
+                        {
+                            h += Vector128.LoadUnsafe(ref r0, at + (nuint)(i * 4)) * Vector128.Create(wx[i]);
+                        }
+
+                        inner += h * Vector128.Create(wy[j]);
+                    }
+
+                    inner.StoreUnsafe(ref MemoryMarshal.GetReference(output), (nuint)(x * 4));
+                    continue;
+                }
+
+                for (int t = 0; t < taps; t++)
+                {
+                    int off = t - support + 1;
+                    ix[t] = Resolve(bx + off, sourceWidth, regionX, regionWidth, edge);
+                    iy[t] = Resolve(by + off, sourceHeight, regionY, regionHeight, edge);
                 }
             }
 

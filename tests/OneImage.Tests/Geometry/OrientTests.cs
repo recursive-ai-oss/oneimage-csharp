@@ -186,6 +186,27 @@ public class OrientTests
         Assert.Equal(expected, second);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(31)]
+    [InlineData(33)]
+    [InlineData(128)]
+    public void ReversedFourByteGatherMatchesAScalarLoop(int count)
+    {
+        byte[] src = new byte[(count * 4) + 12];
+        new Random(count).NextBytes(src);
+        byte[] got = new byte[count * 4];
+        long first = (count * 4L) + 4;
+        GeometryKernel.GatherRow(src, first, -4, got, count, 4);
+        for (int i = 0; i < count; i++)
+        {
+            Assert.True(src.AsSpan((int)first - (i * 4), 4).SequenceEqual(got.AsSpan(i * 4, 4)));
+        }
+    }
+
     [Fact]
     public void KernelRejectsReadsOutsideItsBuffers()
     {

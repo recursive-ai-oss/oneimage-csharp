@@ -93,7 +93,7 @@ public sealed partial class Image
             }
         }
 
-        return Map(static (n, r) => n is DecodeSourceNode d && d.TryPushRegion(r) is { } pushed ? pushed : new CropNode(n, r), rect);
+        return Map(static (n, r) => CropNodeFor(n, r), rect);
     }
 
     /// <summary>
@@ -186,6 +186,14 @@ public sealed partial class Image
 
     internal static Image FromNode(Node node, TimeSpan delay = default) =>
         new([node], [delay], 0, ImageMetadata.Empty, null);
+
+    // Crop below an orientation node (the source rectangle of the wanted pixels), so the decoder can still be asked for just that region.
+    private static Node CropNodeFor(Node n, ImageRect r) => n switch
+    {
+        DecodeSourceNode d when d.TryPushRegion(r) is { } pushed => pushed,
+        OrientNode o => o.WithInput(CropNodeFor(o.Inputs[0], o.RequiredInput(0, r))),
+        _ => new CropNode(n, r),
+    };
 
     private Image Map<TArg>(Func<Node, TArg, Node> op, TArg arg)
     {

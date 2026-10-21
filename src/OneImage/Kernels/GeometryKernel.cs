@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace OneImage.Kernels;
 
@@ -53,6 +54,12 @@ internal static class GeometryKernel
             return;
         }
 
+        if (step == -4 && bytesPerPixel == 4 && Vector256.IsHardwareAccelerated)
+        {
+            ReverseRow4(ref s, ref d, count);
+            return;
+        }
+
         switch (bytesPerPixel)
         {
             case 1: Gather<byte>(ref s, step, ref d, count); break;
@@ -73,6 +80,23 @@ internal static class GeometryKernel
                 }
 
                 break;
+        }
+    }
+
+    // Pixel i of the output is the 4-byte pixel at s - 4 * i: eight pixels at a time are one contiguous load, reversed.
+    private static void ReverseRow4(ref byte s, ref byte d, int count)
+    {
+        Vector256<uint> reverse = Vector256.Create(7u, 6u, 5u, 4u, 3u, 2u, 1u, 0u);
+        int i = 0;
+        for (; i + 8 <= count; i += 8)
+        {
+            Vector256<uint> v = Vector256.LoadUnsafe(ref Unsafe.As<byte, uint>(ref Unsafe.Add(ref s, -4 * (i + 7))));
+            Vector256.Shuffle(v, reverse).StoreUnsafe(ref Unsafe.As<byte, uint>(ref Unsafe.Add(ref d, i * 4)));
+        }
+
+        for (; i < count; i++)
+        {
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref d, i * 4), Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref s, -4 * i)));
         }
     }
 

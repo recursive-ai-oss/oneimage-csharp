@@ -207,9 +207,10 @@ public sealed partial class Image
     }
 
     /// <summary>
-    /// Applies the orientation recorded in <see cref="Metadata"/> (see <see cref="Orient"/>) and resets the recorded orientation to 1,
-    /// so applying it twice is harmless. Lazy. Loading applies this automatically when the loader is wired to do so; this method is the
-    /// single place that maps the tag to pixels.
+    /// Applies <see cref="ImageMetadata.Orientation"/> (see <see cref="Orient"/>) and resets it to 1, so applying it twice is harmless.
+    /// Lazy. <see cref="Load(string,LoadOptions?,CancellationToken)"/> does this by default (<see cref="LoadOptions.AutoOrient"/>); call
+    /// this on images loaded with <c>AutoOrient = false</c>, or built by hand with a recorded orientation. The EXIF blob keeps its old
+    /// tag until the image is saved, when it is rewritten to the current orientation and size.
     /// </summary>
     /// <returns>The upright image, or this image when the orientation is already 1.</returns>
     public Image AutoOrient()
@@ -228,14 +229,7 @@ public sealed partial class Image
             delays[i] = _frames[i].Delay;
         }
 
-        var reset = new ImageMetadata
-        {
-            IccProfile = Metadata.IccProfile,
-            Exif = Metadata.Exif,
-            Xmp = Metadata.Xmp,
-            Iptc = Metadata.Iptc,
-            Orientation = 1,
-        };
+        ImageMetadata reset = Metadata.WithOrientation(1);
         return new Image(nodes, delays, LoopCount, reset, SourceFormat);
     }
 

@@ -20,6 +20,15 @@ public sealed class LoadOptions
 
     /// <summary>Gets the most threads validation may use; 0 means the default.</summary>
     public int MaxDegree { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether to apply the stored EXIF orientation lazily at load (the default), so the pixels come out upright:
+    /// <see cref="Image.Width"/> and <see cref="Image.Height"/> are the upright size and <see cref="ImageMetadata.Orientation"/> reads 1.
+    /// The orientation is taken from <see cref="ImageMetadata.Orientation"/> when the decoder set it, otherwise from the EXIF blob.
+    /// Set to <see langword="false"/> to keep the stored pixel layout and the recorded orientation. <see cref="Image.Identify(string,LoadOptions?)"/>
+    /// always reports the stored size.
+    /// </summary>
+    public bool AutoOrient { get; init; } = true;
 }
 
 /// <summary>Settings for saving images.</summary>
@@ -399,7 +408,30 @@ public sealed partial class Image
             }
         }
 
-        return new Image(nodes, delays, probe.info.LoopCount, probe.info.Metadata, probe.info.Format);
+        ImageMetadata metadata = probe.info.Metadata;
+        if (options?.AutoOrient != false && StoredOrientation(metadata) is > 1 and int orientation)
+        {
+            // Lazy: only graph nodes are added; no pixels are touched. The tag is reset so saving writes upright pixels as upright.
+            for (int i = 0; i < n; i++)
+            {
+                nodes[i] = OrientNode.Create(nodes[i], orientation);
+            }
+
+            metadata = metadata.WithOrientation(1);
+        }
+
+        return new Image(nodes, delays, probe.info.LoopCount, metadata, probe.info.Format);
+    }
+
+    // The orientation a decoder reported, or else the one inside the EXIF blob (1 when neither says anything usable).
+    private static int StoredOrientation(ImageMetadata metadata)
+    {
+        if (metadata.Orientation is > 1 and <= 8)
+        {
+            return metadata.Orientation;
+        }
+
+        return metadata.TryReadExif(out ExifData? exif) && exif?.Orientation is { } o ? o : 1;
     }
 
     private static (IImageDecoder Decoder, ImageInfo Info, ImageLimits Limits) Probe(Stream stream, LoadOptions? options)
@@ -448,6 +480,28 @@ public sealed partial class Image
         return config.FindByExtension(path) ?? throw new ImageOperationException($"Cannot infer an image format from '{Path.GetFileName(path)}'; set SaveOptions.Format.");
     }
 
+    // The EXIF blob is rewritten for what is being saved: current pixel size and the current orientation (1 after auto-orient).
+    // A blob that cannot be parsed is dropped rather than written with tags that no longer match the pixels.
+    private ImageMetadata MetadataForOutput()
+    {
+        if (Metadata.Exif.IsEmpty)
+        {
+            return Metadata;
+        }
+
+        ReadOnlyMemory<byte> exif;
+        try
+        {
+            exif = Metadata.ExifForOutput(Width, Height, Math.Clamp(Metadata.Orientation, 1, 8));
+        }
+        catch (ImageFormatException)
+        {
+            exif = default;
+        }
+
+        return new ImageMetadata { IccProfile = Metadata.IccProfile, Exif = exif, Xmp = Metadata.Xmp, Iptc = Metadata.Iptc, Orientation = Metadata.Orientation };
+    }
+
     private void SaveCore(Stream destination, IImageFormat format, SaveOptions? options, CancellationToken cancellationToken)
     {
         IImageEncoder encoder = format.Encoder ?? throw new ImageOperationException($"Format '{format.Name}' has no encoder.");
@@ -468,7 +522,7 @@ public sealed partial class Image
 
         try
         {
-            encoder.Encode(new ImageEncodeRequest(readers, LoopCount, Metadata, options?.EncoderOptions, limits), destination, cancellationToken);
+            encoder.Encode(new ImageEncodeRequest(readers, LoopCount, MetadataForOutput(), options?.EncoderOptions, limits), destination, cancellationToken);
         }
         finally
         {
