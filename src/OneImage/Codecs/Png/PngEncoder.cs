@@ -240,6 +240,7 @@ internal sealed class PngEncoder : IImageEncoder
         using (var idat = new PngChunkWriter(dest, PngChunk.IDAT, null))
         {
             using var deflater = new Deflater(idat, options.CompressionLevel);
+            deflater.FilteredStrategy = UsesFilters(options.Filter, palette != null && paletteBits < 8);
             WriteImageData(rows, width, height, format, palette, paletteBits, deflater, options.Filter, ct);
             deflater.Finish();
             idat.Flush();
@@ -335,6 +336,7 @@ internal sealed class PngEncoder : IImageEncoder
             using (var writer = new PngChunkWriter(dest, i == 0 ? PngChunk.IDAT : PngChunk.fdAT, i == 0 ? null : seq))
             {
                 using var deflater = new Deflater(writer, options.CompressionLevel);
+                deflater.FilteredStrategy = UsesFilters(options.Filter, false);
                 WriteImageData(Rows, rw, rh, format, null, 0, deflater, options.Filter, ct);
                 deflater.Finish();
                 writer.Flush();
@@ -429,6 +431,10 @@ internal sealed class PngEncoder : IImageEncoder
         w = right - left + 1;
         h = bottom - top + 1;
     }
+
+    // Like libpng, rows that are really filtered are deflated with the "filtered" strategy, which ignores short matches.
+    private static bool UsesFilters(PngFilterMode mode, bool lowBitDepth) =>
+        mode != PngFilterMode.None && !(lowBitDepth && mode == PngFilterMode.Adaptive);
 
     private static (ushort Num, ushort Den) EncodeDelay(TimeSpan delay)
     {

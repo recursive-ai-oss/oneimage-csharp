@@ -120,6 +120,13 @@ internal sealed class Deflater : IDisposable
         Reset(level, zlib);
     }
 
+    /// <summary>
+    /// Gets or sets the "filtered" strategy for levels 4-9: matches of 5 bytes or fewer are not used and become literals
+    /// (zlib's Z_FILTERED). It suits data that went through predictive filtering, such as PNG scanlines, where short
+    /// matches are mostly coincidences. It is kept across <see cref="Reset"/>; levels 0-3 ignore it, as zlib does.
+    /// </summary>
+    public bool FilteredStrategy { get; set; }
+
     /// <summary>Starts a new stream with the given settings, keeping the buffers.</summary>
     public void Reset(int level, bool zlib)
     {
@@ -533,7 +540,7 @@ internal sealed class Deflater : IDisposable
             {
                 _matchLength = LongestMatch(hashHead, _prevLength);
                 // A distant length-3 match costs more than the three literals it replaces.
-                if (_matchLength == 3 && _strstart - _matchStart > 4096)
+                if ((_matchLength == 3 && _strstart - _matchStart > 4096) || (FilteredStrategy && _matchLength <= 5))
                 {
                     _matchLength = MinMatch - 1;
                 }

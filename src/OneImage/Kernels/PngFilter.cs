@@ -89,6 +89,38 @@ internal static class PngFilter
     internal static void UnAverage(Span<byte> row, ReadOnlySpan<byte> prev, int bpp)
     {
         int n = row.Length;
+        if (bpp == 4 || bpp == 3)
+        {
+            // Keep the left neighbour in registers instead of re-reading it from the row.
+            int a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+            int i = 0;
+            if (bpp == 4)
+            {
+                for (; i + 4 <= n; i += 4)
+                {
+                    Span<byte> px = row.Slice(i, 4);
+                    ReadOnlySpan<byte> up = prev.Slice(i, 4);
+                    a0 = px[0] += (byte)((a0 + up[0]) >> 1);
+                    a1 = px[1] += (byte)((a1 + up[1]) >> 1);
+                    a2 = px[2] += (byte)((a2 + up[2]) >> 1);
+                    a3 = px[3] += (byte)((a3 + up[3]) >> 1);
+                }
+            }
+            else
+            {
+                for (; i + 3 <= n; i += 3)
+                {
+                    Span<byte> px = row.Slice(i, 3);
+                    ReadOnlySpan<byte> up = prev.Slice(i, 3);
+                    a0 = px[0] += (byte)((a0 + up[0]) >> 1);
+                    a1 = px[1] += (byte)((a1 + up[1]) >> 1);
+                    a2 = px[2] += (byte)((a2 + up[2]) >> 1);
+                }
+            }
+
+            return;
+        }
+
         int head = Math.Min(bpp, n);
         for (int i = 0; i < head; i++)
         {
@@ -104,6 +136,47 @@ internal static class PngFilter
     internal static void UnPaeth(Span<byte> row, ReadOnlySpan<byte> prev, int bpp)
     {
         int n = row.Length;
+        if (bpp == 4 || bpp == 3)
+        {
+            int a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+            int c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+            int i = 0;
+            if (bpp == 4)
+            {
+                for (; i + 4 <= n; i += 4)
+                {
+                    Span<byte> px = row.Slice(i, 4);
+                    ReadOnlySpan<byte> up = prev.Slice(i, 4);
+                    int b0 = up[0], b1 = up[1], b2 = up[2], b3 = up[3];
+                    a0 = px[0] += Paeth(a0, b0, c0);
+                    a1 = px[1] += Paeth(a1, b1, c1);
+                    a2 = px[2] += Paeth(a2, b2, c2);
+                    a3 = px[3] += Paeth(a3, b3, c3);
+                    c0 = b0;
+                    c1 = b1;
+                    c2 = b2;
+                    c3 = b3;
+                }
+            }
+            else
+            {
+                for (; i + 3 <= n; i += 3)
+                {
+                    Span<byte> px = row.Slice(i, 3);
+                    ReadOnlySpan<byte> up = prev.Slice(i, 3);
+                    int b0 = up[0], b1 = up[1], b2 = up[2];
+                    a0 = px[0] += Paeth(a0, b0, c0);
+                    a1 = px[1] += Paeth(a1, b1, c1);
+                    a2 = px[2] += Paeth(a2, b2, c2);
+                    c0 = b0;
+                    c1 = b1;
+                    c2 = b2;
+                }
+            }
+
+            return;
+        }
+
         int head = Math.Min(bpp, n);
         for (int i = 0; i < head; i++)
         {
