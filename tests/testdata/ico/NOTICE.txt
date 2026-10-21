@@ -1,0 +1,3 @@
+These BMP files were produced with Magick.NET by the BmpTests corpus generator (set ONEIMAGE_WRITE_CORPUS to a
+directory to rewrite them) from deterministic pseudo-random pixels. They are generated test data with no third-party
+content. The odd variants (16-bit masks, RLE4, top-down, V5, core header) are built byte by byte inside the tests.

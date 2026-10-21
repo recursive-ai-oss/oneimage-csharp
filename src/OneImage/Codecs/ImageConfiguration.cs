@@ -118,6 +118,8 @@ internal static class DefaultCodecs
         configuration.Add(JpegFormat.Instance);
         Codecs.Jpeg.JpegTiffBridge.Connect();
         configuration.Add(PngFormat.Instance);
+        configuration.Add(BmpFormat.Instance);
+        configuration.Add(IcoFormat.Instance);
     }
 }
 
