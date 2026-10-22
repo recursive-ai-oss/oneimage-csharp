@@ -461,5 +461,30 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Rich text: runs with decorations and attributes, font fallback, text along a path and the installed-font scan.
+{
+    string dir = Path.Combine(AppContext.BaseDirectory, "fonts");
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily noto = fonts.Add(Path.Combine(dir, "NotoSans-Subset-Regular.ttf"));
+    OneImage.Text.FontFamily cjk = fonts.Add(Path.Combine(dir, "NotoSansCJK-Subset.otf"));
+    var rich = new OneImage.Text.TextOptions(noto.CreateFont(24)) { Origin = new System.Numerics.Vector2(6, 4) };
+    rich.FallbackFontFamilies.Add(cjk);
+    rich.TextRuns.Add(new OneImage.Text.TextRun(0, 5) { Font = noto.CreateFont(40), TextDecorations = OneImage.Text.TextDecorations.Underline | OneImage.Text.TextDecorations.Strikeout, Brush = OneImage.Drawing.Brush.Solid(new Rgba32(200, 0, 0, 255)) });
+    rich.TextRuns.Add(new OneImage.Text.TextRun(6, 7) { TextAttributes = OneImage.Text.TextAttributes.Superscript });
+    const string richText = "Hello x2 \u3042\u3044 end";
+    var canvasPixels = new Rgba32[300 * 100];
+    Array.Fill(canvasPixels, new Rgba32(255, 255, 255, 255));
+    Rgba32[] richPixels = Image.FromPixels<Rgba32>(canvasPixels, 300, 100)
+        .DrawText(richText, rich, OneImage.Drawing.Brush.Solid(new Rgba32(0, 0, 0, 255))).ToArray<Rgba32>();
+    var onPath = new OneImage.Text.TextOptions(noto.CreateFont(20)) { Path = OneImage.Drawing.Path.Circle(100, 100, 60) };
+    var pathBounds = OneImage.Text.TextBuilder.GeneratePath("Round and round", onPath).Bounds;
+    var installed = new OneImage.Text.SystemFontSet([dir]);
+    if (!richPixels.Any(p => p.R > 150 && p.G < 100) || !richPixels.Any(p => p.R < 100 && p.G < 100) || pathBounds.Height < 30 || !installed.TryGet("Noto Sans", out _))
+    {
+        Console.Error.WriteLine("rich text smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

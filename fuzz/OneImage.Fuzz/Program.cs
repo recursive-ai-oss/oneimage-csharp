@@ -30,6 +30,8 @@ internal static class Program
         ["font"] = FontTarget.Run,
         ["breaking"] = BreakingTarget.Run,
         ["brotli"] = BrotliTarget.Run,
+        ["richtext"] = RichTextTarget.Run,
+        ["sysfont"] = SysFontTarget.Run,
     };
 
     private static int Main(string[] args)

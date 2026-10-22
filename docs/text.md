@@ -50,7 +50,7 @@ Measured on the 45 KB WOFF2 of the Noto Sans shaping subset (shared workstation,
 - **Kerning** is on by default (`KerningMode.Normal`): the `kern` feature of the font (GPOS pair adjustment), or the legacy `kern` table when the font has no GPOS kerning. `KerningMode.None` switches the `kern` feature off; see [Shaping](#shaping).
 - **Alignment.** `HorizontalAlignment` puts a box on the origin (left edge, center or right edge); the box is as wide as the widest line. `TextAlignment` Start keeps lines at the box's left edge. Center and End move each line by its slack against the wrapping length (the widest line when there is none), placing it in a box of that width positioned by the horizontal alignment. This reproduces ImageSharp's behavior, including that a centered block does not center its lines unless asked to. `VerticalAlignment` puts the block (lines × pitch tall) on the origin.
 - **Measuring.** `TextMeasurer.Measure` gives `TextMetrics`: `Advance` (widest line without trailing spaces × lines × pitch; independent of origin and alignment), `Bounds` (the ink, exact curve extents, positioned), `LineCount` and per-line `LineMetrics`. `GetCharacterBounds` gives each character's (grapheme cluster's) advance box and ink box. Zero-width format characters (U+200B–U+200F, U+2060, U+FEFF, soft hyphen, bidi controls) are dropped from the layout.
-- **Missing glyphs** draw the font's `.notdef` glyph. There is no fallback yet.
+- **Missing glyphs** draw the font's `.notdef` glyph, unless a fallback family has the character (see [Font fallback](#font-fallback)).
 
 ## Shaping
 
@@ -96,6 +96,66 @@ img.DrawText("\u2600 sunny", options, Brush.Solid(new Rgba32(0, 0, 0, 255)));
 - **Order.** Plain glyphs first, then layer 0 of every color glyph, then layer 1, and so on, with layers of equal index and color merged into one fill. Colors of glyphs that overlap each other can therefore stack differently from glyph-by-glyph painting.
 - **Layout is unchanged:** advances, wrapping and measuring use the base glyph. `TextBuilder.GeneratePath` and measuring never depend on `ColorFontSupport`; text as a path is the monochrome outline. `Font.HasColorGlyph(codePoint)` tells whether a code point has layers.
 - **Damaged tables** are ignored and the font then has no color glyphs. With `ColorFontSupport.None`, or in a font or a text without color glyphs, the output is byte for byte the monochrome path.
+- **In runs and fallback faces.** Color glyphs work wherever a glyph comes from: a run's own font, a font of a different size, or a fallback face. The foreground entry (0xFFFF) takes the brush of the run that owns the character (the brush you pass when the run has none), layers with a palette color keep that color, and the run's pen (or the one you pass) outlines the plain and foreground parts after all fills. The palette is `ColorPaletteIndex` of the options, applied to every face (an index past a face's last palette selects its palette 0).
+
+## Rich text: runs, decorations and attributes
+
+`TextOptions.TextRuns` gives parts of the text their own look. A `TextRun(start, end)` covers UTF-16 offsets `[start, end)` of the string passed to the call and can set:
+
+| Property | Default | Effect |
+|---|---|---|
+| `Font` | null: `TextOptions.Font` | Face and size of the run. A run can use any family and style. |
+| `TextAttributes` | `None` | `Superscript` or `Subscript` (below). |
+| `TextDecorations` | `None` | Any of `Underline`, `Strikeout`, `Overline`. |
+| `Brush`, `Pen` | null: the brush and pen of the `DrawText` call | Paint of the run's glyphs and of its filled decorations. |
+| `UnderlinePen`, `StrikeoutPen`, `OverlinePen` | null | Strokes that decoration as a line with this pen (its width is the thickness) instead of filling a rectangle. |
+
+```csharp
+var options = new TextOptions(regular24) { Origin = new(20, 20), WrappingLength = 500 };
+options.TextRuns.Add(new TextRun(0, 5) { Font = bold40, Brush = Brush.Solid(red), TextDecorations = TextDecorations.Underline });
+options.TextRuns.Add(new TextRun(12, 13) { TextAttributes = TextAttributes.Superscript });
+image.DrawText("Hello, rich world", options, Brush.Solid(black));
+```
+
+- **Resolution.** A character belongs to the last run in the list that covers it, otherwise to no run (the options' font, no decoration, the call's paint). Ranges are clamped to the text and empty ones ignored, so the work is linear in the text plus the number of runs however runs overlap. A run is read when the layout runs; `Clone()` copies runs.
+- **Mixed sizes and faces.** Shaping, kerning and ligatures stay inside a stretch of one run and face. Each glyph carries its own scale, so widths, wrapping and alignment mix sizes freely. A line is as tall as the largest line pitch (`size × dpi/72 × LineSpacing`) of any glyph on it, and its baseline sits at the largest "ascent in the line box" (the font's ascent, with the leading split evenly above and below as described under *Units and layout*). Lines stack without gaps; an empty line takes the metrics of the run at its position. `LineMetrics` reports the line's own `Ascender`, `Descender` and `LineHeight`. A tab is `TabWidth` spaces of the space glyph of the run it sits in.
+- **Decorations.** Positions come from the font of each glyph: the underline at `post` underline position and thickness, the strikeout at `OS/2` strikeout position and size, the overline one em plus the underline distance above the baseline with the underline's thickness (fonts with no such data get 1/20 em thick lines, an underline 1/10 em below and a strikeout 3/10 em above the baseline). The measures are the centers of the lines. A decoration runs from the pen position of the first decorated glyph to the end of the advance of the last one, as one rectangle across neighbouring glyphs of the same run, position and thickness, so it is continuous across glyphs, spaces and kerning; it restarts when the font or size changes, ends at the last visible glyph of each line (trailing spaces at a wrap are not underlined) and starts again on the next line. Decorations are painted like their run's glyphs, in the same path, and are left out of `Bounds` and ink boxes.
+- **Super- and subscript.** The glyphs are scaled by the font's `OS/2` superscript or subscript size (x and y separately, by default 65 % by 60 % of the em), advances scale with them, and the baseline moves by the recommended y offset scaled by the vertical size (up for superscript, down for subscript). The line pitch of such a run is scaled by the vertical size too. Horizontal offsets are not applied. Decorations on such a run sit on the shifted baseline with scaled thickness.
+- **Painting.** `DrawText` draws one path per distinct brush/pen pair (runs that share a brush and pen share a path), so a text with default paint is still one fill. `TextBuilder.GeneratePath` returns everything as one path, decorations as rectangles (a decoration stroked with its own pen has no outline and is left out). `DrawText` with every run painted accepts a null brush and pen.
+- **Limits.** At most `TextOptions.MaxTextRuns` (16,384) runs; more throw `ImageLimitException`. Layout cost does not depend on how runs overlap; one style object is created per (run, face) actually used.
+
+## Font fallback
+
+`TextOptions.FallbackFontFamilies` lists families tried, in order, for characters the run's font cannot map. Up to `MaxFallbackFamilies` (32); more throw `ImageLimitException`.
+
+- **Choosing.** For each grapheme cluster the first code point (zero-width and format characters and tabs never choose) is looked up in the run's face, then in the face of each fallback family that matches the run's style (or is closest to it), at the run's size. The first face with a glyph (a nonzero glyph id in its character map) shapes the whole cluster, so a base and its combining marks stay together. When no face has it, the primary face draws its missing-glyph box.
+- **Shaping.** A stretch of one face is one shaping run, so ligatures and kerning never cross a change of face, and line breaking and wrapping work on the shaped glyphs as before.
+- **Metrics.** A line takes its baseline from the largest ascent of the faces used on it, so a line with a fallback face of a taller ascent sits lower than the same line without it (the Noto Sans CJK subset, with an hhea ascent of 1.16 em against Noto Sans's 1.069 em, moves a line by 1.92 px at 40 px). Line height is the largest pitch (size-based), so it does not grow with a fallback face. Each face's own `OS/2`/`hhea` rule picks its ascender (typographic metrics when `USE_TYPO_METRICS` is set).
+- **Cost.** One character-map lookup per cluster per face tried, only when fallback families are given.
+
+## Text on a path
+
+`TextOptions.Path` lays the text along a `Path`. The text is laid out exactly as straight text would be (wrapping, alignment, line spacing, origin, runs, fallback), treating the path as the top edge of the first line, and each glyph is then moved onto the path:
+
+- A glyph's anchor is the middle of its advance. Its **distance** along the path is the layout x of the anchor (origin and alignment included), so `HorizontalAlignment.Center` centers about the *start* of the path, not its middle, and an origin x moves text along it.
+- The glyph is **rotated about its anchor** to the direction of the path at that distance and is not bent: a rigid move per glyph. Its offset from the path is its layout y, to the right of the direction of travel in a y-down image (so text on a left-to-right line stands below it, and a clockwise circle carries text on the inside). Later lines are further to the right; `VerticalAlignment` and `Origin.Y` move the whole block off the path.
+- **Past the ends.** An open path continues straight: before the start along its first segment, after the end along its last. A closed path wraps around: glyphs beyond the perimeter start over at the beginning, and the closing edge is a real edge.
+- **Which path.** The path is flattened (0.1 px) and the first contour with a length is used; a path without length throws `ArgumentException`. Measuring (`TextMeasurer`) ignores the path.
+- **Decorations** follow the path glyph by glyph (each piece is a rectangle rotated with its glyph), so on a curve neighbouring pieces overlap on the inside and open a thin wedge on the outside.
+- **Cost.** One flatten, then a binary search over the cumulative segment lengths per glyph: linear in glyphs, logarithmic in path points. 100,000 glyphs on a path of 200,000 points take about 110 ms.
+
+## System fonts
+
+`SystemFonts` finds installed fonts without native calls: it scans the standard directories (Windows: the system Fonts folder and `%LOCALAPPDATA%\Microsoft\Windows\Fonts`; macOS: `/System/Library/Fonts`, `/Library/Fonts`, `/Network/Library/Fonts`, `~/Library/Fonts`; elsewhere: `/usr/share/fonts`, `/usr/local/share/fonts`, `$XDG_DATA_DIRS/*/fonts`, `~/.fonts` and `$XDG_DATA_HOME/fonts` or `~/.local/share/fonts`). `SystemFonts.Installed` is the process-wide `SystemFontSet`; `new SystemFontSet(directories)` scans directories of your choice.
+
+```csharp
+Font font = SystemFonts.CreateFont("DejaVu Sans", 24, FontStyle.Bold);
+IReadOnlyList<string> names = SystemFonts.FamilyNames;   // sorted, nothing loaded
+```
+
+- **Lazy.** Nothing happens until the first lookup. The first call that needs names lists the files (`.ttf`, `.otf`, `.ttc`, `.otc`, to a depth of 8, at most 100,000 files) and reads just the table directory and `name` table of each, never glyph data: 10 ms for directories holding 1,413 files (277 families) on a warm cache on the Linux host this was built on. The result is kept for the life of the set; fonts installed afterwards are not noticed.
+- **Loading.** `TryGet`/`Get`/`CreateFont` parse the files of that one family (all its styles) the first time and return the same `FontFamily` afterwards. A file that no longer parses is skipped; its family may then be missing or partial. WOFF files are not scanned (their tables are compressed).
+- **Safe.** Header reads are bounds-checked against the file length and stop at 256 faces per collection, 256 tables and 1 MiB of names; unreadable directories and files are skipped without an error. Family names are the ones `FontFamily.Name` gives (the typographic family when the font has one).
 
 ## Drawing
 
@@ -126,7 +186,14 @@ Differences you will meet, all deliberate or pending the later units:
 - **Color glyph advances.** We use the base glyph's advance, as the OpenType specification and the layout of every other glyph do. With color enabled SixLabors.Fonts 2.1.3 advances by the advance of the glyph's first layer instead; the two agree in fonts whose layers are as wide as their base glyph (the test font), and differ in others.
 - **Color rendering** on the test font (layered shapes, foreground color, a half-transparent layer, two palettes, a composite layer): brush only, mean 0.07 levels over the image and at most 28 at single edge pixels; with a pen, mean 1.9 to 2.7 levels, which is the half-pixel stroke placement difference described in [drawing.md](drawing.md). COLR version 1 paint graphs are not painted by either library.
 - **WOFF2** has no ImageSharp difference worth naming: faces, outlines (point for point), advances, side bearings, kerning and shaped text from the WOFF2 of each test font (TrueType, CFF, a collection, and a file using the `hmtx` transform) equal those of the source font.
-- **No text decorations, rich-text runs or text along a path yet.**
+- **Rich text** (probed through the public API of SixLabors.Fonts 2.1.3 and ImageSharp.Drawing 2.1.7; tolerances are what the tests assert):
+  - *Runs with mixed sizes and faces*, with and without wrapping: glyph ink boxes agree to 0.0002 px, advance and line count exactly. In some run configurations (a run without a font next to plain text, or runs of different sizes) the reference applies an extra pair adjustment to `r` followed by some letters (-20 units; in mixed-size text it is scaled by the size of one of the runs) that it does not apply to the same text without runs; we apply the font's `GPOS` kerning only, and the tests use text without the pairs.
+  - *Overlapping runs*: the reference drops the rest of an outer run after a nested one (an inner run in the middle of an outer run leaves the outer run's decorations off the text after it); we resolve every character to the last run covering it.
+  - *Decorations*: segment ends and heights agree to 0.01 px, thickness to 0.01 px, in plain, wrapped, mixed-size and raised runs. The reference reports one segment per glyph; we report one per line and run, and the filled rectangle is the same area.
+  - *Super- and subscript*: ink boxes agree to 0.0001 px.
+  - *Fallback without wrapping*: ink boxes agree exactly. *With wrapping* the line count agrees but the reference declines some break opportunities where a fallback face is involved (for `ABあいCD` at 150 px it keeps two kana on a line where the text fits three); we wrap by the same rule as without fallback.
+  - *Text on a path*: glyph vertices agree to 0.0003 px on lines (horizontal, diagonal, reversed, steep), alignments, origin, wrapping and multi-line text, and past the end of an open path. On a 120-segment circle ten of twelve glyphs agree to 0.001 px; two sit one segment step (up to 1.9 px at their far corners) away from the reference's. The reference does not place glyphs on the closing edge of a closed polygon (they continue straight past the last explicit vertex) while still wrapping at the full perimeter; we follow the closing edge. We also take the first contour of a multi-contour path.
+  - *Not supported*: `LayoutMode` other than horizontal top-to-bottom (the reference's bottom-to-top mode places glyphs as top-to-bottom does; the vertical modes are not supported), `TextDirection`, `HintingMode`.
 
 ## Where the next pieces plug in
 
@@ -134,10 +201,8 @@ Differences you will meet, all deliberate or pending the later units:
 
 - **Shaping** is `Shape` calling `Shaping/TextShaper`: code points in, `ShapedGlyph`s (glyph id, cluster, advance with kerning, offsets) out. A script-specific shaper (Arabic joining, Indic and Universal Shaping Engine reordering) is a `ScriptShaper` with its own feature stages; the lookup engine (`Shaping/Engine`) is shared.
 - **Line breaking** is `PrepareBreaks` and `CanBreakBefore`: the break opportunities and cluster starts of a paragraph are computed from its text (`Unicode/LineBreaker.cs`, `Unicode/Graphemes.cs`) and reach the glyphs only through each glyph's text offset, so a shaper that merges or reorders glyphs needs no change here. Hyphenation, language-tagged tailoring and dictionary breaking for Thai, Lao, Khmer and Burmese (their characters are treated as letters) would extend `LineBreaker`.
-- **Fallback** and **runs** extend the paragraph step: a paragraph becomes runs, each with its own face, shaped separately; `ShapedGlyph` gains the face index and `TextOptions` the fallback families.
-- **Color fonts** beyond COLR version 0 (version 1 paint graphs, SVG and bitmap glyphs) extend `ColorText`, which already splits a laid-out text into plain glyphs and layer fills.
-- **Decorations** draw rectangles from `LineMetrics` (baseline, left, advance) and the font's underline and strikeout metrics.
-- **Text on a path** replaces the single matrix `AppendTo` builds per glyph (scale, translation) with one that follows the path.
+- **Color fonts** beyond COLR version 0 (version 1 paint graphs, SVG and bitmap glyphs) extend the color branch of `BuildParts`, which already turns the layers of a color glyph into one fill per layer index and color.
+- **Runs, fallback, decorations and paths** live in `Layout/TextLayout.cs`: `ResolveRuns` maps every offset to a run, `Shape` splits shaping runs by (run, face) and every `ShapedGlyph` carries a `GlyphStyle` (face, scale, shift, line and decoration measures); `BuildParts` writes outlines and decoration rectangles per paint, with `GlyphMatrix` giving the straight or on-path placement (`Layout/PathRoute.cs`).
 
 ## ImageSharp names
 
@@ -145,7 +210,10 @@ Differences you will meet, all deliberate or pending the later units:
 |---|---|
 | `FontCollection.Add(path / stream)`, `AddCollection` | `FontCollection.Add(path / stream / memory)`, `AddCollection` |
 | `FontFamily.CreateFont(size, style)` | `FontFamily.CreateFont(size, style)` |
-| `RichTextOptions` / `TextOptions` | `TextOptions` (`Origin`, `WrappingLength`, `LineSpacing`, `TabWidth`, `Dpi`, alignments, `Kerning`, `WordBreaking`, `TextJustification`, `Language`, `Features`) |
+| `RichTextOptions` / `TextOptions` | `TextOptions` (`Origin`, `WrappingLength`, `LineSpacing`, `TabWidth`, `Dpi`, alignments, `Kerning`, `WordBreaking`, `TextJustification`, `Language`, `Features`, `TextRuns`, `FallbackFontFamilies`, `Path`) |
+| `RichTextRun` / `TextRun` (`Start`, `End`, `Font`, `TextAttributes`, `TextDecorations`, `Brush`, `Pen`, `UnderlinePen`, `StrikeoutPen`, `OverlinePen`) | `TextRun` with the same members (`Start`/`End` are UTF-16 offsets, End exclusive) |
+| `SystemFonts.Get` / `CreateFont` / `Families` | `SystemFonts.Get` / `CreateFont` / `FamilyNames` (names only until a family is requested) |
+| `TextBuilder.GenerateGlyphs(text, path, options)` | `TextOptions.Path` with `TextBuilder.GeneratePath` or `DrawText` |
 | `TextOptions.FeatureTags` (`Tag`) | `TextOptions.Features` (`FontFeature`, with a value and off switches) |
 | `TextMeasurer.MeasureAdvance` / `MeasureBounds` / `MeasureSize` / `CountLines` | `TextMeasurer.MeasureAdvance` / `MeasureBounds` / `Measure(...).Bounds.Size` / `CountLines` |
 | `TextMeasurer.TryMeasureCharacterBounds` | `TextMeasurer.GetCharacterBounds` (`Ink`) |

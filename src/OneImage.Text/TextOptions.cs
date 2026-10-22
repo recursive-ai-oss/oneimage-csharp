@@ -190,6 +190,33 @@ public sealed class TextOptions
         set => _colorPalette = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value), "The palette index cannot be negative.");
     }
 
+    /// <summary>
+    /// Gets the runs that give parts of the text their own font, size, attributes, decorations and paint; see <see cref="TextRun"/>.
+    /// At most <see cref="MaxTextRuns"/> runs are read; more make layout throw <see cref="ImageLimitException"/>.
+    /// </summary>
+    public IList<TextRun> TextRuns { get; } = [];
+
+    /// <summary>
+    /// Gets the families tried, in order, for a character the font of its run has no glyph for. The first family whose face (the
+    /// same style as the run's, or the closest) has a glyph takes the whole grapheme cluster and is shaped at the run's size. A
+    /// character no face covers draws the primary font's missing-glyph box. Empty by default; at most <see cref="MaxFallbackFamilies"/>
+    /// entries are read (more make layout throw <see cref="ImageLimitException"/>).
+    /// </summary>
+    public IList<FontFamily> FallbackFontFamilies { get; } = [];
+
+    /// <summary>
+    /// Gets or sets a path to lay the text along, or null (the default) for straight text. The text is laid out as usual, as if
+    /// the path were the top edge of the first line (alignment, wrapping and line spacing apply), and every glyph is then moved
+    /// onto the path. See <c>docs/text.md</c> for the placement rules. Measuring ignores the path.
+    /// </summary>
+    public OneImage.Drawing.Path? Path { get; set; }
+
+    /// <summary>The most runs a layout reads.</summary>
+    public const int MaxTextRuns = 1 << 14;
+
+    /// <summary>The most fallback families a layout reads.</summary>
+    public const int MaxFallbackFamilies = 32;
+
     /// <summary>Makes a copy of these options.</summary>
     /// <returns>A new, independent object with the same settings.</returns>
     public TextOptions Clone()
@@ -198,6 +225,16 @@ public sealed class TextOptions
         foreach (FontFeature f in Features)
         {
             copy.Features.Add(f);
+        }
+
+        foreach (TextRun r in TextRuns)
+        {
+            copy.TextRuns.Add(r.Copy());
+        }
+
+        foreach (FontFamily f in FallbackFontFamilies)
+        {
+            copy.FallbackFontFamilies.Add(f);
         }
 
         return copy;
@@ -219,5 +256,6 @@ public sealed class TextOptions
         TextJustification = TextJustification,
         ColorFontSupport = ColorFontSupport,
         _colorPalette = _colorPalette,
+        Path = Path,
     };
 }

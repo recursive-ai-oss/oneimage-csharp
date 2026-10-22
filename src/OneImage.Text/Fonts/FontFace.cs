@@ -84,6 +84,12 @@ internal sealed class FontFace
             ReadOnlySpan<byte> os2 = os2m.Span;
             int version = Be.U16(os2, 0);
             WeightClass = Be.U16(os2, 4);
+            SubscriptXSize = Be.I16(os2, 10);
+            SubscriptYSize = Be.I16(os2, 12);
+            SubscriptYOffset = Be.I16(os2, 16);
+            SuperscriptXSize = Be.I16(os2, 18);
+            SuperscriptYSize = Be.I16(os2, 20);
+            SuperscriptYOffset = Be.I16(os2, 24);
             StrikeoutSize = Be.I16(os2, 26);
             StrikeoutPosition = Be.I16(os2, 28);
             fsSelection = Be.U16(os2, 62);
@@ -176,6 +182,19 @@ internal sealed class FontFace
     public int UnderlineThickness { get; }
 
     public int StrikeoutPosition { get; }
+
+    // OS/2 subscript and superscript recommendations, in font units (0 when the font has no OS/2 table).
+    public int SubscriptXSize { get; }
+
+    public int SubscriptYSize { get; }
+
+    public int SubscriptYOffset { get; }
+
+    public int SuperscriptXSize { get; }
+
+    public int SuperscriptYSize { get; }
+
+    public int SuperscriptYOffset { get; }
 
     public int StrikeoutSize { get; }
 

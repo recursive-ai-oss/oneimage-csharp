@@ -64,3 +64,33 @@ public enum KerningMode
     /// <summary>Use plain advances.</summary>
     None,
 }
+
+/// <summary>Lines drawn along text: any combination of the three.</summary>
+[Flags]
+public enum TextDecorations
+{
+    /// <summary>No decoration (the default).</summary>
+    None = 0,
+
+    /// <summary>A line below the baseline, at the underline position and thickness the font's <c>post</c> table gives.</summary>
+    Underline = 1,
+
+    /// <summary>A line through the letters, at the strikeout position and thickness of the font's <c>OS/2</c> table.</summary>
+    Strikeout = 2,
+
+    /// <summary>A line above the text, one em plus the underline distance over the baseline, as thick as the underline.</summary>
+    Overline = 4,
+}
+
+/// <summary>A shift of a run off the baseline, at a reduced size.</summary>
+public enum TextAttributes
+{
+    /// <summary>Normal text (the default).</summary>
+    None,
+
+    /// <summary>Raised and shrunk by the superscript size and offset the font's <c>OS/2</c> table recommends.</summary>
+    Superscript,
+
+    /// <summary>Lowered and shrunk by the subscript size and offset the font's <c>OS/2</c> table recommends.</summary>
+    Subscript,
+}

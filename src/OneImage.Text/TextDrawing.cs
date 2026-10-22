@@ -1,5 +1,6 @@
 using System.Numerics;
 using OneImage.Drawing;
+using OneImage.Text.Layout;
 using Path = OneImage.Drawing.Path;
 
 namespace OneImage.Text;
@@ -33,53 +34,27 @@ public static class TextDrawing
     public static Image DrawText(this Image image, string text, TextOptions options, Brush? brush, Pen? pen = null, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false)
     {
         ArgumentNullException.ThrowIfNull(image);
-        Validate(text, options, brush, pen);
+        List<TextPart> parts = Prepare(text, options, brush, pen);
         Image result = image;
-        if (ColorText.Create(text, options) is { } color)
+
+        // Every fill first (plain glyphs, then color layers by layer index), then the pens: a stroke is never hidden by a later
+        // layer or run.
+        foreach (TextPart part in parts)
         {
-            // Every fill first, layer by layer, then the pen over the plain glyphs and the text-colored layers: a stroke is never
-            // hidden by a later layer (SixLabors.Fonts draws the outlines last too).
-            if (brush is not null)
+            Brush? b = part.Brush ?? (part.InheritBrush ? brush : null);
+            if (b is not null)
             {
-                result = result.Fill(brush, color.Plain, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                result = result.Fill(b, part.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
             }
-
-            foreach (ColorFill f in color.Fills)
-            {
-                if (!f.Foreground)
-                {
-                    result = result.Fill(Brush.Solid(f.Color), f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
-                }
-                else if (brush is not null)
-                {
-                    result = result.Fill(brush, f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
-                }
-            }
-
-            if (pen is not null)
-            {
-                result = result.Draw(pen, color.Plain, antialias, opacity, blend, composition, linear);
-                foreach (ColorFill f in color.Fills)
-                {
-                    if (f.Foreground)
-                    {
-                        result = result.Draw(pen, f.Path, antialias, opacity, blend, composition, linear);
-                    }
-                }
-            }
-
-            return result;
         }
 
-        Path path = TextBuilder.GeneratePath(text, options);
-        if (brush is not null)
+        foreach (TextPart part in parts)
         {
-            result = result.Fill(brush, path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
-        }
-
-        if (pen is not null)
-        {
-            result = result.Draw(pen, path, antialias, opacity, blend, composition, linear);
+            Pen? p = part.Pen ?? (part.InheritPen ? pen : null);
+            if (p is not null)
+            {
+                result = result.Draw(p, part.Path, antialias, opacity, blend, composition, linear);
+            }
         }
 
         return result;
@@ -117,50 +92,23 @@ public static class TextDrawing
     public static void DrawText(this Canvas canvas, string text, TextOptions options, Brush? brush, Pen? pen = null, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false)
     {
         ArgumentNullException.ThrowIfNull(canvas);
-        Validate(text, options, brush, pen);
-        if (ColorText.Create(text, options) is { } color)
+        List<TextPart> parts = Prepare(text, options, brush, pen);
+        foreach (TextPart part in parts)
         {
-            if (brush is not null)
+            Brush? b = part.Brush ?? (part.InheritBrush ? brush : null);
+            if (b is not null)
             {
-                canvas.Fill(brush, color.Plain, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                canvas.Fill(b, part.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
             }
-
-            foreach (ColorFill f in color.Fills)
-            {
-                if (!f.Foreground)
-                {
-                    canvas.Fill(Brush.Solid(f.Color), f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
-                }
-                else if (brush is not null)
-                {
-                    canvas.Fill(brush, f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
-                }
-            }
-
-            if (pen is not null)
-            {
-                canvas.Draw(pen, color.Plain, antialias, opacity, blend, composition, linear);
-                foreach (ColorFill f in color.Fills)
-                {
-                    if (f.Foreground)
-                    {
-                        canvas.Draw(pen, f.Path, antialias, opacity, blend, composition, linear);
-                    }
-                }
-            }
-
-            return;
         }
 
-        Path path = TextBuilder.GeneratePath(text, options);
-        if (brush is not null)
+        foreach (TextPart part in parts)
         {
-            canvas.Fill(brush, path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
-        }
-
-        if (pen is not null)
-        {
-            canvas.Draw(pen, path, antialias, opacity, blend, composition, linear);
+            Pen? p = part.Pen ?? (part.InheritPen ? pen : null);
+            if (p is not null)
+            {
+                canvas.Draw(p, part.Path, antialias, opacity, blend, composition, linear);
+            }
         }
     }
 
@@ -173,13 +121,15 @@ public static class TextDrawing
     public static void DrawText(this Canvas canvas, string text, TextOptions options, Rgba32 color) =>
         canvas.DrawText(text, options, Brush.Solid(color));
 
-    private static void Validate(string text, TextOptions options, Brush? brush, Pen? pen)
+    private static List<TextPart> Prepare(string text, TextOptions options, Brush? brush, Pen? pen)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(options);
-        if (brush is null && pen is null)
+        if (brush is null && pen is null && options.TextRuns.Count == 0)
         {
-            throw new ArgumentException("Give a brush, a pen, or both.", nameof(brush));
+            throw new ArgumentException("Give a brush, a pen, or both (or paint every run yourself).", nameof(brush));
         }
+
+        return TextBuilder.GenerateParts(text, options, color: true);
     }
 }

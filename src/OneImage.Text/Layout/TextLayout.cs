@@ -1,12 +1,16 @@
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using OneImage.Drawing;
 using OneImage.Text.Fonts;
 using OneImage.Text.Shaping;
 using OneImage.Text.Unicode;
 
+using Path = OneImage.Drawing.Path;
+
 namespace OneImage.Text.Layout;
 
-/// <summary>One shaped glyph. Advances are in font units and already include kerning with the next glyph.</summary>
+/// <summary>One shaped glyph. Advances are in pixels and already include kerning with the next glyph.</summary>
 internal struct ShapedGlyph
 {
     public int GlyphId;
@@ -15,10 +19,52 @@ internal struct ShapedGlyph
     public int Length;
     public float Advance;
 
-    /// <summary>Where the glyph is drawn relative to its pen position, in font units, y up (marks, cursive joins).</summary>
+    /// <summary>Where the glyph is drawn relative to its pen position, in pixels, y up (marks, cursive joins, super- and subscript shifts).</summary>
     public float XOffset;
     public float YOffset;
     public bool IsSpace;
+
+    /// <summary>Index into <see cref="TextLayout.Styles"/>: the face, scale and run the glyph is set in.</summary>
+    public int Style;
+}
+
+/// <summary>The face, scale and run shared by a stretch of glyphs, with the line and decoration measures derived from them once.</summary>
+internal sealed class GlyphStyle
+{
+    public FontFace Face = null!;
+    public int Run;
+    public TextDecorations Decorations;
+
+    /// <summary>Pixels per font unit across and down (they differ for super- and subscript).</summary>
+    public float Sx;
+    public float Sy;
+
+    /// <summary>Raise (positive) or lowering of the baseline for super- and subscript, in pixels.</summary>
+    public float Shift;
+
+    /// <summary>The line pitch this style asks for and the part of it above the baseline, in pixels.</summary>
+    public float Pitch;
+    public float Ascent;
+    public float TabAdvance;
+
+    /// <summary>Centers of the decoration lines above the baseline, and their thicknesses, in pixels.</summary>
+    public float UnderlineOffset;
+    public float StrikeoutOffset;
+    public float OverlineOffset;
+    public float UnderlineThickness;
+    public float StrikeoutThickness;
+}
+
+/// <summary>A piece of the output that is painted as one: glyph outlines and filled decorations of runs with the same paint.</summary>
+internal sealed class TextPart
+{
+    public Path Path = null!;
+    public Brush? Brush;
+    public Pen? Pen;
+
+    /// <summary>Whether a null brush or pen means the one given to the drawing call.</summary>
+    public bool InheritBrush;
+    public bool InheritPen;
 }
 
 /// <summary>One line of the result: a range of glyphs plus the text range it came from.</summary>
@@ -29,8 +75,12 @@ internal sealed class LayoutLine
     public int TextStart;
     public int TextLength;
 
-    /// <summary>Width in font units without trailing spaces.</summary>
+    /// <summary>Width in pixels without trailing spaces.</summary>
     public float Width;
+
+    /// <summary>The line's height (the largest pitch of its glyphs) and the part of it above the baseline, in pixels.</summary>
+    public float Height;
+    public float Ascent;
 
     /// <summary>Absolute x of the line start, in pixels.</summary>
     public float Left;
@@ -40,22 +90,32 @@ internal sealed class LayoutLine
 }
 
 /// <summary>
-/// Lays text out: OpenType shaping, Unicode line breaking, greedy line
-/// filling (with the word breaking modes), justification and alignment. Line breaking works on the text and reaches the glyphs
-/// only through each glyph's text offset, so a different shaping step does not change it.
+/// Lays text out: runs and font fallback, OpenType shaping, Unicode line breaking, greedy line filling (with the word breaking
+/// modes), justification and alignment. Line breaking works on the text and reaches the glyphs only through each glyph's text
+/// offset, so a different shaping step does not change it. Glyph metrics are pixels: every glyph carries the scale of the face and
+/// run it was shaped in, so lines can mix faces and sizes.
 /// </summary>
 internal sealed class TextLayout
 {
     public const int MaxTextLength = 1 << 22;
 
-    private readonly FontFace _face;
-    private readonly float _scale;
+    private readonly string _text;
+    private readonly float _dpi;
     private readonly float _wrap;
+    private readonly float _lineSpacing;
+    private readonly float _tabWidth;
     private readonly FeatureSet _features;
     private readonly uint _language;
-    private readonly float _tabUnits;
     private readonly WordBreaking _wordBreaking;
     private readonly TextJustification _justification;
+    private readonly Font _baseFont;
+    private readonly IList<FontFamily> _fallbacks;
+
+    // Runs: the run that owns each UTF-16 offset (-1 for none), rented while the layout is built.
+    private RunInfo[] _runs = [];
+    private int[]? _runOf;
+    private readonly Dictionary<Font, FaceEntry[]> _faces = [];
+    private readonly Dictionary<long, int> _styleIndex = [];
 
     // Break data of the paragraph being laid out, indexed by UTF-16 offset from its start (rented, returned after each paragraph).
     private byte[] _breaks = [];
@@ -63,14 +123,14 @@ internal sealed class TextLayout
     private int _paragraphStart;
     private int _firstGlyph = -1;
 
-    private TextLayout(TextOptions o)
+    private TextLayout(string text, TextOptions o)
     {
-        FaceEntry entry = o.Font.Face;
-        _face = entry.Data;
-        FontMetrics m = entry.Metrics;
-        float px = o.Font.Size * o.Dpi / 72f;
-        _scale = px / _face.UnitsPerEm;
+        _text = text;
+        _baseFont = o.Font;
+        _dpi = o.Dpi;
         _wrap = o.WrappingLength;
+        _lineSpacing = o.LineSpacing;
+        _tabWidth = o.TabWidth;
         _language = Languages.ToTag(o.Language);
         var settings = new List<(uint, int)>();
         if (o.Kerning != KerningMode.Normal)
@@ -87,25 +147,21 @@ internal sealed class TextLayout
         }
 
         _features = FeatureSet.Create(settings);
-        _tabUnits = o.TabWidth * _face.GetAdvance(_face.GetGlyphIndex(' '));
         _wordBreaking = o.WordBreaking;
         _justification = o.TextJustification;
-        LineHeight = px * o.LineSpacing;
-        float natural = m.LineHeight * _scale;
+        _fallbacks = o.FallbackFontFamilies;
+        if (_fallbacks.Count > TextOptions.MaxFallbackFamilies)
+        {
+            throw new ImageLimitException($"More than {TextOptions.MaxFallbackFamilies} fallback font families.");
+        }
 
-        // The line box is one em (times the spacing) tall; the font's own ascent and descent are centered in it.
-        AscentInLine = (m.Ascender * _scale) - ((natural - LineHeight) / 2);
-        Face = _face;
-        Scale = _scale;
+        foreach (FontFamily? f in _fallbacks)
+        {
+            ArgumentNullException.ThrowIfNull(f, "FallbackFontFamilies");
+        }
     }
 
-    public FontFace Face { get; }
-
-    public float Scale { get; }
-
-    public float LineHeight { get; }
-
-    public float AscentInLine { get; }
+    public List<GlyphStyle> Styles { get; } = [];
 
     public List<ShapedGlyph> Glyphs { get; } = [];
 
@@ -114,11 +170,14 @@ internal sealed class TextLayout
     /// <summary>Whether each glyph starts a grapheme cluster (false for combining marks and other continuations).</summary>
     public List<bool> ClusterStart { get; } = [];
 
-    /// <summary>Pen x of each glyph in font units from its line's start.</summary>
+    /// <summary>Pen x of each glyph in pixels from its line's start.</summary>
     public List<float> PenX { get; } = [];
 
     /// <summary>The widest line, in pixels.</summary>
     public float MaxWidth { get; private set; }
+
+    /// <summary>The height of all lines together, in pixels.</summary>
+    public float TotalHeight { get; private set; }
 
     public static TextLayout Create(string text, TextOptions options)
     {
@@ -129,23 +188,31 @@ internal sealed class TextLayout
             throw new ImageLimitException("The text is longer than the supported maximum.");
         }
 
-        var layout = new TextLayout(options);
-        int pos = 0;
-        while (text.Length > 0)
+        var layout = new TextLayout(text, options);
+        try
         {
-            int end = FindBreak(text, pos, out int termLen);
-            layout.AddParagraph(text, pos, end);
-            if (end >= text.Length)
+            layout.ResolveRuns(options);
+            int pos = 0;
+            while (text.Length > 0)
             {
-                break;
-            }
+                int end = FindBreak(text, pos, out int termLen);
+                layout.AddParagraph(text, pos, end);
+                if (end >= text.Length)
+                {
+                    break;
+                }
 
-            pos = end + termLen;
-            if (pos >= text.Length)
-            {
-                // A line break at the very end does not open another line.
-                break;
+                pos = end + termLen;
+                if (pos >= text.Length)
+                {
+                    // A line break at the very end does not open another line.
+                    break;
+                }
             }
+        }
+        finally
+        {
+            layout.ReleaseRuns();
         }
 
         layout.Position(options);
@@ -174,12 +241,203 @@ internal sealed class TextLayout
         return text.Length;
     }
 
-    // Shaping: code points go to the OpenType shaper (character map, GSUB substitutions, GPOS positioning). Tabs, zero width
-    // non-joiners, zero width spaces and soft hyphens end a shaping run: nothing substitutes or kerns across them. The last two
+    private readonly struct RunInfo(Font font, TextAttributes attributes, TextDecorations decorations, TextRun? source)
+    {
+        public readonly Font Font = font;
+        public readonly TextAttributes Attributes = attributes;
+        public readonly TextDecorations Decorations = decorations;
+        public readonly TextRun? Source = source;
+    }
+
+    private RunInfo InfoOf(int run) => run < 0 ? new RunInfo(_baseFont, TextAttributes.None, TextDecorations.None, null) : _runs[run];
+
+    // Gives every UTF-16 offset to the last run that covers it. Runs are painted from the last to the first, skipping offsets that
+    // are already taken through a union-find "next free offset" array, so the work is linear in the text plus the run count however
+    // much the runs overlap.
+    private void ResolveRuns(TextOptions o)
+    {
+        IList<TextRun> runs = o.TextRuns;
+        if (runs.Count == 0)
+        {
+            return;
+        }
+
+        if (runs.Count > TextOptions.MaxTextRuns)
+        {
+            throw new ImageLimitException($"More than {TextOptions.MaxTextRuns} text runs.");
+        }
+
+        _runs = new RunInfo[runs.Count];
+        for (int r = 0; r < runs.Count; r++)
+        {
+            TextRun tr = runs[r] ?? throw new ArgumentException("TextRuns contains a null run.", nameof(o));
+            _runs[r] = new RunInfo(tr.Font ?? _baseFont, tr.TextAttributes, tr.TextDecorations, tr);
+        }
+
+        int len = _text.Length;
+        if (len == 0)
+        {
+            return;
+        }
+
+        int[] owner = ArrayPool<int>.Shared.Rent(len);
+        int[] next = ArrayPool<int>.Shared.Rent(len + 1);
+        _runOf = owner;
+        try
+        {
+            Array.Fill(owner, -1, 0, len);
+            for (int i = 0; i <= len; i++)
+            {
+                next[i] = i;
+            }
+
+            for (int r = runs.Count - 1; r >= 0; r--)
+            {
+                TextRun tr = runs[r];
+                int end = Math.Min(tr.End, len);
+                int i = Find(next, Math.Min(tr.Start, len));
+                while (i < end)
+                {
+                    owner[i] = r;
+                    next[i] = i + 1;
+                    i = Find(next, i + 1);
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(next);
+        }
+    }
+
+    private static int Find(int[] next, int x)
+    {
+        int root = x;
+        while (next[root] != root)
+        {
+            root = next[root];
+        }
+
+        while (next[x] != root)
+        {
+            int n = next[x];
+            next[x] = root;
+            x = n;
+        }
+
+        return root;
+    }
+
+    private void ReleaseRuns()
+    {
+        if (_runOf is not null)
+        {
+            ArrayPool<int>.Shared.Return(_runOf);
+            _runOf = null;
+        }
+    }
+
+    private int RunAt(int index) => _runOf is null ? -1 : _runOf[index];
+
+    // The faces a font can be set in: its own, then one per fallback family (the same style, or the closest).
+    private FaceEntry[] FacesOf(Font font)
+    {
+        if (_faces.TryGetValue(font, out FaceEntry[]? faces))
+        {
+            return faces;
+        }
+
+        faces = new FaceEntry[1 + _fallbacks.Count];
+        faces[0] = font.Face;
+        for (int i = 0; i < _fallbacks.Count; i++)
+        {
+            faces[i + 1] = _fallbacks[i].Select(font.Style, out _);
+        }
+
+        _faces[font] = faces;
+        return faces;
+    }
+
+    private int StyleOf(int run, int face)
+    {
+        long key = ((long)(run + 1) << 8) | (uint)face;
+        if (_styleIndex.TryGetValue(key, out int index))
+        {
+            return index;
+        }
+
+        RunInfo ri = InfoOf(run);
+        FaceEntry entry = FacesOf(ri.Font)[face];
+        FontFace f = entry.Data;
+        FontMetrics m = entry.Metrics;
+        int upem = f.UnitsPerEm;
+        float px = ri.Font.Size * _dpi / 72f;
+        float scale = px / upem;
+        float sx = scale;
+        float sy = scale;
+        float shift = 0;
+        if (ri.Attributes != TextAttributes.None)
+        {
+            // The OS/2 recommendations; a font without them gets the usual 65 % by 60 % at +35 % / -7.5 % of the em.
+            bool sup = ri.Attributes == TextAttributes.Superscript;
+            int xs = sup ? f.SuperscriptXSize : f.SubscriptXSize;
+            int ys = sup ? f.SuperscriptYSize : f.SubscriptYSize;
+            int yo = sup ? f.SuperscriptYOffset : f.SubscriptYOffset;
+            if (xs <= 0 || ys <= 0)
+            {
+                xs = upem * 65 / 100;
+                ys = upem * 60 / 100;
+                yo = sup ? upem * 35 / 100 : upem * 75 / 1000;
+            }
+
+            sx = scale * xs / upem;
+            sy = scale * ys / upem;
+            shift = (sup ? yo : -yo) * sy;
+        }
+
+        // The decoration measures come from post and OS/2; a font without them gets a tenth of the em below the baseline
+        // for the underline, 30 % of the em for the strikeout line, and 1/20 em thick lines.
+        int ulThick = f.UnderlineThickness > 0 ? f.UnderlineThickness : upem / 20;
+        int ulPos = f.UnderlinePosition != 0 ? f.UnderlinePosition : -(upem / 10);
+        int stThick = f.StrikeoutSize > 0 ? f.StrikeoutSize : upem / 20;
+        int stPos = f.StrikeoutPosition != 0 ? f.StrikeoutPosition : upem * 3 / 10;
+
+        float pitch = px * (sy / scale) * _lineSpacing;
+        float natural = m.LineHeight * sy;
+        var st = new GlyphStyle
+        {
+            Face = f,
+            Run = run,
+            Decorations = ri.Decorations,
+            Sx = sx,
+            Sy = sy,
+            Shift = shift,
+            Pitch = pitch,
+
+            // The font's ascent and descent are centered in the line box.
+            Ascent = (m.Ascender * sy) - ((natural - pitch) / 2),
+            TabAdvance = _tabWidth * f.GetAdvance(f.GetGlyphIndex(' ')) * sx,
+            UnderlineOffset = shift + (ulPos * sy),
+            UnderlineThickness = ulThick * sy,
+            StrikeoutOffset = shift + (stPos * sy),
+            StrikeoutThickness = stThick * sy,
+            OverlineOffset = shift + ((upem - ulPos) * sy),
+        };
+        index = Styles.Count;
+        Styles.Add(st);
+        _styleIndex[key] = index;
+        return index;
+    }
+
+    // Shaping: code points go to the OpenType shaper (character map, GSUB substitutions, GPOS positioning). A shaping run is a
+    // stretch of one style (run and face), so substitutions and kerning never reach across a change of font or size. Tabs, zero width
+    // non-joiners, zero width spaces and soft hyphens also end a shaping run: nothing substitutes or kerns across them. The last two
     // are break opportunities, and a ligature spanning one would swallow it.
     private void Shape(string text, int start, int end)
     {
         _pending = 0;
+        _runStyle = -1;
+        int face = 0;
         int i = start;
         while (i < end)
         {
@@ -196,17 +454,37 @@ internal sealed class TextLayout
                 len = 1;
             }
 
-            if (cp == '	')
+            int run = RunAt(i);
+            bool ignorable = IsIgnorable(cp) || cp == '\t';
+            if (_fallbacks.Count > 0 && !ignorable && _clusters[i - start] != 0)
+            {
+                // The first code point of a grapheme cluster picks the face for the whole cluster.
+                face = PickFace(run, cp);
+            }
+            else if (_fallbacks.Count == 0)
+            {
+                face = 0;
+            }
+
+            int style = StyleOf(run, face);
+            if (style != _runStyle)
             {
                 FlushRun(end);
-                int gid = _face.GetGlyphIndex(' ');
-                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = _tabUnits, IsSpace = true });
+                _runStyle = style;
+            }
+
+            if (cp == '\t')
+            {
+                FlushRun(end);
+                GlyphStyle st = Styles[style];
+                int gid = st.Face.GetGlyphIndex(' ');
+                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = st.TabAdvance, IsSpace = true, Style = style });
             }
             else if (cp is 0x200C or 0x200B or 0x00AD)
             {
                 FlushRun(end);
             }
-            else if (!IsIgnorable(cp))
+            else if (!ignorable)
             {
                 if (_pending == _cps.Length)
                 {
@@ -224,10 +502,26 @@ internal sealed class TextLayout
         FlushRun(end);
     }
 
+    // Font fallback: the first face of the chain with a glyph for the character, else the primary face (its missing-glyph box).
+    private int PickFace(int run, int cp)
+    {
+        FaceEntry[] faces = FacesOf(InfoOf(run).Font);
+        for (int k = 0; k < faces.Length; k++)
+        {
+            if (faces[k].Data.GetGlyphIndex(cp) != 0)
+            {
+                return k;
+            }
+        }
+
+        return 0;
+    }
+
     private readonly List<ShapedRunGlyph> _run = [];
     private int[] _cps = new int[64];
     private int[] _runClusters = new int[64];
     private int _pending;
+    private int _runStyle = -1;
 
     private void FlushRun(int paragraphEnd)
     {
@@ -236,8 +530,9 @@ internal sealed class TextLayout
             return;
         }
 
+        GlyphStyle st = Styles[_runStyle];
         _run.Clear();
-        TextShaper.Shape(_face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run);
+        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run);
         for (int k = 0; k < _run.Count; k++)
         {
             ShapedRunGlyph r = _run[k];
@@ -248,10 +543,11 @@ internal sealed class TextLayout
                 CodePoint = r.CodePoint,
                 Cluster = r.Cluster,
                 Length = Math.Max(nextCluster - r.Cluster, 1),
-                Advance = r.XAdvance,
-                XOffset = r.XOffset,
-                YOffset = r.YOffset,
+                Advance = r.XAdvance * st.Sx,
+                XOffset = r.XOffset * st.Sx,
+                YOffset = (r.YOffset * st.Sy) + st.Shift,
                 IsSpace = IsBreakingSpace(r.CodePoint),
+                Style = _runStyle,
             });
         }
 
@@ -285,6 +581,11 @@ internal sealed class TextLayout
         _paragraphStart = start;
         _breaks = ArrayPool<byte>.Shared.Rent(length + 1);
         _clusters = ArrayPool<byte>.Shared.Rent(length + 1);
+        if (length == 0)
+        {
+            return;
+        }
+
         ReadOnlySpan<char> span = text.AsSpan(start, length);
         LineBreaker.Fill(span, _breaks);
         Graphemes.Fill(span, _clusters);
@@ -335,18 +636,18 @@ internal sealed class TextLayout
     private void AddParagraph(string text, int start, int end)
     {
         int g0 = Glyphs.Count;
-        Shape(text, start, end);
-        int g1 = Glyphs.Count;
-        if (g1 == g0)
-        {
-            AddLine(g0, g0, start, end - start);
-            return;
-        }
-
         PrepareBreaks(text, start, end);
-        _firstGlyph = g0;
         try
         {
+            Shape(text, start, end);
+            int g1 = Glyphs.Count;
+            if (g1 == g0)
+            {
+                AddLine(g0, g0, start, end - start);
+                return;
+            }
+
+            _firstGlyph = g0;
             for (int k = g0; k < g1; k++)
             {
                 // A glyph starts a cluster when its first character does and the glyph before it is not from the same character
@@ -366,7 +667,7 @@ internal sealed class TextLayout
     private void FillLines(int g0, int g1, int start, int end)
     {
         int lineStart = g0;
-        float lineW = 0; // font units, including spaces accepted so far
+        float lineW = 0; // pixels, including spaces accepted so far
         int seg = g0;
         while (seg < g1)
         {
@@ -389,14 +690,14 @@ internal sealed class TextLayout
                 trimmed -= Glyphs[k].Advance;
             }
 
-            if (_wrap > 0 && seg > lineStart && (lineW + trimmed) * _scale > _wrap)
+            if (_wrap > 0 && seg > lineStart && lineW + trimmed > _wrap)
             {
                 AddLine(lineStart, seg, TextIndex(lineStart, start), TextEnd(seg, start, end) - TextIndex(lineStart, start));
                 lineStart = seg;
                 lineW = 0;
             }
 
-            if (_wordBreaking == WordBreaking.BreakWord && _wrap > 0 && trimmed * _scale > _wrap)
+            if (_wordBreaking == WordBreaking.BreakWord && _wrap > 0 && trimmed > _wrap)
             {
                 // The word does not fit even on a line of its own: fill lines cluster by cluster.
                 int visibleEnd = segEnd;
@@ -416,7 +717,7 @@ internal sealed class TextLayout
                         j++;
                     }
 
-                    if (i > lineStart && (lineW + cw) * _scale > _wrap)
+                    if (i > lineStart && lineW + cw > _wrap)
                     {
                         AddLine(lineStart, i, TextIndex(lineStart, start), TextEnd(i, start, end) - TextIndex(lineStart, start));
                         lineStart = i;
@@ -476,7 +777,7 @@ internal sealed class TextLayout
             width += Glyphs[k].Advance;
         }
 
-        float slack = (_wrap / _scale) - width;
+        float slack = _wrap - width;
         if (!(slack > 0))
         {
             return;
@@ -521,10 +822,29 @@ internal sealed class TextLayout
 
         // Pen positions, then the width without trailing spaces (unless the line is only spaces).
         float x = 0;
+        float height = 0;
+        float ascent = 0;
+        int lastStyle = -1;
         for (int k = g0; k < g1; k++)
         {
             PenX.Add(x);
-            x += Glyphs[k].Advance;
+            ShapedGlyph g = Glyphs[k];
+            x += g.Advance;
+            if (g.Style != lastStyle)
+            {
+                lastStyle = g.Style;
+                GlyphStyle st = Styles[g.Style];
+                height = Math.Max(height, st.Pitch);
+                ascent = Math.Max(ascent, st.Ascent);
+            }
+        }
+
+        if (g1 == g0)
+        {
+            // A line without glyphs takes the metrics of the style of its first character.
+            GlyphStyle st = Styles[StyleOf(textStart < _text.Length ? RunAt(textStart) : -1, 0)];
+            height = st.Pitch;
+            ascent = st.Ascent;
         }
 
         int last = g1;
@@ -534,8 +854,9 @@ internal sealed class TextLayout
         }
 
         float width = last > g0 ? PenXOf(last - 1) + Glyphs[last - 1].Advance : x;
-        Lines.Add(new LayoutLine { GlyphStart = g0, GlyphEnd = g1, TextStart = textStart, TextLength = textLength, Width = width });
-        MaxWidth = Math.Max(MaxWidth, width * _scale);
+        Lines.Add(new LayoutLine { GlyphStart = g0, GlyphEnd = g1, TextStart = textStart, TextLength = textLength, Width = width, Height = height, Ascent = ascent });
+        MaxWidth = Math.Max(MaxWidth, width);
+        TotalHeight += height;
     }
 
     // PenX is appended in glyph order, so a glyph's entry is its index; paragraphs and lines are contiguous.
@@ -551,7 +872,7 @@ internal sealed class TextLayout
         float alignW = _wrap > 0 ? _wrap : MaxWidth;
         float haFraction = o.HorizontalAlignment switch { HorizontalAlignment.Center => 0.5f, HorizontalAlignment.Right => 1f, _ => 0f };
         float left = o.Origin.X;
-        float blockH = Lines.Count * LineHeight;
+        float blockH = TotalHeight;
         float top = o.VerticalAlignment switch
         {
             VerticalAlignment.Center => o.Origin.Y - (blockH / 2),
@@ -561,14 +882,15 @@ internal sealed class TextLayout
         for (int i = 0; i < Lines.Count; i++)
         {
             LayoutLine l = Lines[i];
-            float w = l.Width * _scale;
+            float w = l.Width;
             l.Left = o.TextAlignment switch
             {
                 TextAlignment.Center => left - (haFraction * alignW) + ((alignW - w) / 2),
                 TextAlignment.End => left - (haFraction * alignW) + (alignW - w),
                 _ => left - (haFraction * blockW),
             };
-            l.Baseline = top + (i * LineHeight) + AscentInLine;
+            l.Baseline = top + l.Ascent;
+            top += l.Height;
         }
     }
 
@@ -585,10 +907,10 @@ internal sealed class TextLayout
                 Length = l.TextLength,
                 Left = l.Left,
                 Baseline = l.Baseline,
-                Advance = l.Width * _scale,
-                Ascender = AscentInLine,
-                Descender = LineHeight - AscentInLine,
-                LineHeight = LineHeight,
+                Advance = l.Width,
+                Ascender = l.Ascent,
+                Descender = l.Height - l.Ascent,
+                LineHeight = l.Height,
             };
             for (int k = l.GlyphStart; k < l.GlyphEnd; k++)
             {
@@ -598,26 +920,27 @@ internal sealed class TextLayout
                     continue;
                 }
 
-                Outline o = _face.GetOutline(g.GlyphId);
+                GlyphStyle st = Styles[g.Style];
+                Outline o = st.Face.GetOutline(g.GlyphId);
                 if (o.IsEmpty)
                 {
                     continue;
                 }
 
                 (float ax, float ay, float bx, float by) = o.TightBox();
-                float gx = l.Left + ((PenX[k] + g.XOffset) * _scale);
-                x0 = Math.Min(x0, gx + (ax * _scale));
-                x1 = Math.Max(x1, gx + (bx * _scale));
-                float gy = l.Baseline - (g.YOffset * _scale);
-                y0 = Math.Min(y0, gy - (by * _scale));
-                y1 = Math.Max(y1, gy - (ay * _scale));
+                float gx = l.Left + PenX[k] + g.XOffset;
+                x0 = Math.Min(x0, gx + (ax * st.Sx));
+                x1 = Math.Max(x1, gx + (bx * st.Sx));
+                float gy = l.Baseline - g.YOffset;
+                y0 = Math.Min(y0, gy - (by * st.Sy));
+                y1 = Math.Max(y1, gy - (ay * st.Sy));
             }
         }
 
-        var advance = new System.Drawing.SizeF(MaxWidth, Lines.Count * LineHeight);
+        var advance = new System.Drawing.SizeF(MaxWidth, TotalHeight);
         System.Drawing.RectangleF bounds = x0 <= x1
             ? new System.Drawing.RectangleF(x0, y0, x1 - x0, y1 - y0)
-            : new System.Drawing.RectangleF(Lines.Count > 0 ? Lines[0].Left : 0, Lines.Count > 0 ? Lines[0].Baseline - AscentInLine : 0, 0, 0);
+            : new System.Drawing.RectangleF(Lines.Count > 0 ? Lines[0].Left : 0, Lines.Count > 0 ? Lines[0].Baseline - Lines[0].Ascent : 0, 0, 0);
         return new TextMetrics(advance, bounds, lines);
     }
 
@@ -630,17 +953,18 @@ internal sealed class TextLayout
             for (int k = l.GlyphStart; k < l.GlyphEnd; k++)
             {
                 ShapedGlyph g = Glyphs[k];
-                float gx = l.Left + ((PenX[k] + g.XOffset) * _scale);
-                float gy = l.Baseline - (g.YOffset * _scale);
+                GlyphStyle st = Styles[g.Style];
+                float gx = l.Left + PenX[k] + g.XOffset;
+                float gy = l.Baseline - g.YOffset;
                 System.Drawing.RectangleF ink = default;
-                Outline outline = g.IsSpace ? Outline.Empty : _face.GetOutline(g.GlyphId);
+                Outline outline = g.IsSpace ? Outline.Empty : st.Face.GetOutline(g.GlyphId);
                 if (!outline.IsEmpty)
                 {
                     (float ax, float ay, float bx, float by) = outline.TightBox();
-                    ink = new System.Drawing.RectangleF(gx + (ax * _scale), gy - (by * _scale), (bx - ax) * _scale, (by - ay) * _scale);
+                    ink = new System.Drawing.RectangleF(gx + (ax * st.Sx), gy - (by * st.Sy), (bx - ax) * st.Sx, (by - ay) * st.Sy);
                 }
 
-                var box = new System.Drawing.RectangleF(l.Left + (PenX[k] * _scale), l.Baseline - AscentInLine, g.Advance * _scale, LineHeight);
+                var box = new System.Drawing.RectangleF(l.Left + PenX[k], l.Baseline - l.Ascent, g.Advance, l.Height);
                 if (!ClusterStart[k] && k > l.GlyphStart && list.Count > 0)
                 {
                     // A combining mark or other continuation: one box for the whole grapheme cluster, never split.
@@ -669,9 +993,52 @@ internal sealed class TextLayout
         return list;
     }
 
-    /// <summary>Appends the outlines of every glyph, in pixel space, to a path builder.</summary>
-    public void AppendTo(OneImage.Drawing.PathBuilder builder)
+    // ---- Output: outlines and decorations grouped by paint ----
+
+    /// <summary>Identifies the paint of a part by reference, so runs that share a brush and a pen share a path.</summary>
+    private readonly struct PaintKey(Brush? brush, Pen? pen, bool inheritBrush, bool inheritPen) : IEquatable<PaintKey>
     {
+        public readonly Brush? Brush = brush;
+        public readonly Pen? Pen = pen;
+        public readonly bool InheritBrush = inheritBrush;
+        public readonly bool InheritPen = inheritPen;
+
+        public bool Equals(PaintKey o) => ReferenceEquals(Brush, o.Brush) && ReferenceEquals(Pen, o.Pen) && InheritBrush == o.InheritBrush && InheritPen == o.InheritPen;
+
+        public override bool Equals(object? obj) => obj is PaintKey k && Equals(k);
+
+        public override int GetHashCode() => HashCode.Combine(RuntimeHelpers.GetHashCode(Brush), RuntimeHelpers.GetHashCode(Pen), InheritBrush, InheritPen);
+    }
+
+    /// <summary>
+    /// Builds the glyph outlines and decorations as paths, one per distinct paint in the order each paint first appears. With a
+    /// route every glyph (and decoration piece) is moved onto it; see docs/text.md.
+    /// </summary>
+    public List<TextPart> BuildParts(PathRoute? route, int colorPalette = -1)
+    {
+        // Color glyphs (COLR v0, when the palette index is not negative): layer j of every color glyph goes into a builder of its
+        // own, keyed by layer index and color (palette color, or the run's paint for the foreground entry), and the layer parts
+        // follow the plain glyphs in layer order. A face that has no color data, or glyphs that are not color glyphs, take the
+        // plain path, so this works for runs and fallback faces alike.
+        var layerBuilders = new Dictionary<(int Layer, bool Foreground, PaintKey Paint, uint Color), PathBuilder>();
+        var layerOrder = new List<(int Layer, bool Foreground, PaintKey Paint, uint Color, int Seq)>();
+        var builders = new Dictionary<PaintKey, PathBuilder>();
+        var order = new List<PaintKey>();
+
+        PathBuilder For(PaintKey key)
+        {
+            if (!builders.TryGetValue(key, out PathBuilder? b))
+            {
+                b = new PathBuilder();
+                builders[key] = b;
+                order.Add(key);
+            }
+
+            return b;
+        }
+
+        GlyphStyle? lastStyle = null;
+        PathBuilder? lastBuilder = null;
         for (int i = 0; i < Lines.Count; i++)
         {
             LayoutLine l = Lines[i];
@@ -683,12 +1050,240 @@ internal sealed class TextLayout
                     continue;
                 }
 
-                Outline o = _face.GetOutline(g.GlyphId);
+                GlyphStyle st = Styles[g.Style];
+                if (colorPalette >= 0 && st.Face.Color is { } colors && colors.TryGetLayers(g.GlyphId, out int firstLayer, out int layerCount))
+                {
+                    Matrix3x2 m = GlyphMatrix(l, k, st, route);
+                    for (int j = 0; j < layerCount; j++)
+                    {
+                        (int layerGlyph, int paletteIndex) = colors.GetLayer(firstLayer + j);
+                        bool foreground = paletteIndex == ColorGlyphs.ForegroundIndex;
+                        Rgba32 color = default;
+                        if (!foreground)
+                        {
+                            // A palette entry that does not exist leaves the layer out.
+                            if (colors.GetColor(colorPalette, paletteIndex) is not { } c)
+                            {
+                                continue;
+                            }
+
+                            color = c;
+                        }
+
+                        Outline lo = st.Face.GetOutline(layerGlyph);
+                        if (lo.IsEmpty)
+                        {
+                            continue;
+                        }
+
+                        PaintKey paint = foreground ? FillKey(st) : default;
+                        uint bits = foreground ? 0 : ((uint)color.R << 24) | ((uint)color.G << 16) | ((uint)color.B << 8) | color.A;
+                        var lk = (j, foreground, paint, bits);
+                        if (!layerBuilders.TryGetValue(lk, out PathBuilder? lb))
+                        {
+                            lb = new PathBuilder();
+                            layerBuilders[lk] = lb;
+                            layerOrder.Add((j, foreground, paint, bits, layerOrder.Count));
+                        }
+
+                        GlyphPaths.Append(lb, lo, m);
+                    }
+
+                    continue;
+                }
+
+                Outline o = st.Face.GetOutline(g.GlyphId);
                 if (!o.IsEmpty)
                 {
-                    GlyphPaths.Append(builder, o, new Matrix3x2(_scale, 0, 0, -_scale, l.Left + ((PenX[k] + g.XOffset) * _scale), l.Baseline - (g.YOffset * _scale)));
+                    if (!ReferenceEquals(st, lastStyle))
+                    {
+                        lastStyle = st;
+                        lastBuilder = For(FillKey(st));
+                    }
+
+                    GlyphPaths.Append(lastBuilder!, o, GlyphMatrix(l, k, st, route));
                 }
+            }
+
+            AddDecorations(l, route, For);
+        }
+
+        var parts = new List<TextPart>(order.Count);
+        foreach (PaintKey key in order)
+        {
+            Path p = builders[key].Build();
+            if (!p.IsEmpty)
+            {
+                parts.Add(new TextPart { Path = p, Brush = key.Brush, Pen = key.Pen, InheritBrush = key.InheritBrush, InheritPen = key.InheritPen });
+            }
+        }
+
+        layerOrder.Sort((a, b) => a.Layer != b.Layer ? a.Layer.CompareTo(b.Layer) : a.Seq.CompareTo(b.Seq));
+        foreach (var e in layerOrder)
+        {
+            Path p = layerBuilders[(e.Layer, e.Foreground, e.Paint, e.Color)].Build();
+            if (p.IsEmpty)
+            {
+                continue;
+            }
+
+            if (e.Foreground)
+            {
+                parts.Add(new TextPart { Path = p, Brush = e.Paint.Brush, Pen = e.Paint.Pen, InheritBrush = true, InheritPen = true });
+            }
+            else
+            {
+                // A layer with its own color keeps it and is not outlined by the pen.
+                var c = new Rgba32((byte)(e.Color >> 24), (byte)(e.Color >> 16), (byte)(e.Color >> 8), (byte)e.Color);
+                parts.Add(new TextPart { Path = p, Brush = Brush.Solid(c) });
+            }
+        }
+
+        return parts;
+    }
+
+    private PaintKey FillKey(GlyphStyle st)
+    {
+        TextRun? r = st.Run < 0 ? null : _runs[st.Run].Source;
+        return new PaintKey(r?.Brush, r?.Pen, true, true);
+    }
+
+    // Straight text: a scale and flip into pixels at the pen position. On a path: the same, rotated about the middle of the glyph's
+    // advance and moved to the point of the path at that distance.
+    private Matrix3x2 GlyphMatrix(LayoutLine l, int k, GlyphStyle st, PathRoute? route)
+    {
+        ShapedGlyph g = Glyphs[k];
+        float oy = l.Baseline - g.YOffset;
+        if (route is null)
+        {
+            return new Matrix3x2(st.Sx, 0, 0, -st.Sy, l.Left + PenX[k] + g.XOffset, oy);
+        }
+
+        double center = l.Left + PenX[k] + (g.Advance / 2);
+        route.Sample(center, out Vector2 p, out float c, out float s);
+        float dx = g.XOffset - (g.Advance / 2);
+        return new Matrix3x2(c * st.Sx, s * st.Sx, s * st.Sy, -c * st.Sy, p.X + (c * dx) - (s * oy), p.Y + (s * dx) + (c * oy));
+    }
+
+    private void AddDecorations(LayoutLine l, PathRoute? route, Func<PaintKey, PathBuilder> builderFor)
+    {
+        int visibleEnd = l.GlyphEnd;
+        while (visibleEnd > l.GlyphStart && Glyphs[visibleEnd - 1].IsSpace)
+        {
+            visibleEnd--;
+        }
+
+        if (visibleEnd == l.GlyphStart)
+        {
+            return;
+        }
+
+        foreach (TextDecorations kind in (ReadOnlySpan<TextDecorations>)[TextDecorations.Underline, TextDecorations.Strikeout, TextDecorations.Overline])
+        {
+            bool open = false;
+            float x0 = 0;
+            float x1 = 0;
+            float offset = 0;
+            float thick = 0;
+            int run = -2;
+            for (int k = l.GlyphStart; k < visibleEnd; k++)
+            {
+                GlyphStyle st = Styles[Glyphs[k].Style];
+                if ((st.Decorations & kind) == 0)
+                {
+                    if (open)
+                    {
+                        EmitDecoration(l, kind, run, x0, x1, offset, thick, null, builderFor);
+                        open = false;
+                    }
+
+                    continue;
+                }
+
+                (float off, float th) = kind switch
+                {
+                    TextDecorations.Underline => (st.UnderlineOffset, st.UnderlineThickness),
+                    TextDecorations.Strikeout => (st.StrikeoutOffset, st.StrikeoutThickness),
+                    _ => (st.OverlineOffset, st.UnderlineThickness),
+                };
+                float gx0 = l.Left + PenX[k];
+                float gx1 = gx0 + Glyphs[k].Advance;
+                if (route is not null)
+                {
+                    EmitDecoration(l, kind, st.Run, gx0, gx1, off, th, route, builderFor);
+                    continue;
+                }
+
+                // One continuous line over neighbouring glyphs that share the run, position and thickness.
+                if (open && run == st.Run && offset == off && thick == th)
+                {
+                    x1 = gx1;
+                    continue;
+                }
+
+                if (open)
+                {
+                    EmitDecoration(l, kind, run, x0, x1, offset, thick, null, builderFor);
+                }
+
+                open = true;
+                run = st.Run;
+                x0 = gx0;
+                x1 = gx1;
+                offset = off;
+                thick = th;
+            }
+
+            if (open)
+            {
+                EmitDecoration(l, kind, run, x0, x1, offset, thick, null, builderFor);
             }
         }
     }
+
+    // A decoration is a filled rectangle painted like its run's glyphs, or, when the run has a pen for it, a stroked line.
+    private void EmitDecoration(LayoutLine l, TextDecorations kind, int run, float x0, float x1, float offset, float thick, PathRoute? route, Func<PaintKey, PathBuilder> builderFor)
+    {
+        TextRun? r = run < 0 ? null : _runs[run].Source;
+        Pen? pen = kind switch
+        {
+            TextDecorations.Underline => r?.UnderlinePen,
+            TextDecorations.Strikeout => r?.StrikeoutPen,
+            _ => r?.OverlinePen,
+        };
+        float y = l.Baseline - offset;
+        Vector2 a;
+        Vector2 b;
+        Vector2 c;
+        Vector2 d;
+        float half = pen is null ? thick / 2 : 0;
+        if (route is null)
+        {
+            a = new Vector2(x0, y - half);
+            b = new Vector2(x1, y - half);
+            c = new Vector2(x1, y + half);
+            d = new Vector2(x0, y + half);
+        }
+        else
+        {
+            double center = (x0 + x1) / 2;
+            route.Sample(center, out Vector2 p, out float cs, out float sn);
+            float hw = (x1 - x0) / 2;
+            a = Place(p, cs, sn, -hw, y - half);
+            b = Place(p, cs, sn, hw, y - half);
+            c = Place(p, cs, sn, hw, y + half);
+            d = Place(p, cs, sn, -hw, y + half);
+        }
+
+        if (pen is not null)
+        {
+            // The pen's own width is the thickness: stroke the middle line.
+            builderFor(new PaintKey(null, pen, false, false)).MoveTo(a).LineTo(b);
+            return;
+        }
+
+        builderFor(new PaintKey(r?.Brush, r?.Pen, true, true)).MoveTo(a).LineTo(b).LineTo(c).LineTo(d).Close();
+    }
+
+    private static Vector2 Place(Vector2 p, float cos, float sin, float x, float y) => new(p.X + (cos * x) - (sin * y), p.Y + (sin * x) + (cos * y));
 }

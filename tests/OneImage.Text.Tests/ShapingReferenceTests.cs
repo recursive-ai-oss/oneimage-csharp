@@ -67,9 +67,9 @@ internal sealed class GlyphIdRecorder : IGlyphRenderer
     {
     }
 
-    public TextDecorations EnabledDecorations() => TextDecorations.None;
+    public SixLabors.Fonts.TextDecorations EnabledDecorations() => SixLabors.Fonts.TextDecorations.None;
 
-    public void SetDecoration(TextDecorations textDecorations, Vector2 start, Vector2 end, float thickness)
+    public void SetDecoration(SixLabors.Fonts.TextDecorations textDecorations, Vector2 start, Vector2 end, float thickness)
     {
     }
 }

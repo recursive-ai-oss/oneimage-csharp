@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg font breaking brotli   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg font breaking brotli richtext sysfont   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -50,6 +50,8 @@ case "$target" in
   font)    seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc *.woff *.woff2'; maxlen=262144 ;;
   breaking) seeds='';         prefix='';     patterns='';      maxlen=2050 ;;
   brotli)  seeds=brotli;      prefix='';     patterns='*.compressed'; maxlen=262144 ;;
+  richtext) seeds='';         prefix='';     patterns='';      maxlen=2200 ;;
+  sysfont) seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc'; maxlen=65536 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac
 
@@ -82,7 +84,7 @@ if [[ "$target" == breaking && -z "$(ls -A "$work/breaking-seeds" 2>/dev/null)" 
   done
 fi
 "$instrument" "$bin/OneImage.dll" >/dev/null
-[[ "$target" != font && "$target" != breaking && "$target" != brotli ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
+[[ "$target" != font && "$target" != breaking && "$target" != brotli && "$target" != richtext && "$target" != sysfont ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
 
 corpus="$work/corpus/$target"
 findings="$work/findings/$target"
