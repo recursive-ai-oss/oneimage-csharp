@@ -453,7 +453,7 @@ Image.Load(input)
 |---|---|---|
 | `Filter(ColorMatrix)` | `ApplyColorMatrix(ColorMatrix)` | Works on straight color on the stored values, like ImageSharp. Integer results clamp; float results are not clamped (alpha always is). Gray images become RGB. |
 | `Sepia(amount)`, `BlackWhite()`, `Kodachrome()` | `Sepia(amount)`, `BlackWhite()`, `Kodachrome()` | Same matrices. `Sepia(0)` returns the image unchanged. `BlackWhite` is a hard, high-contrast matrix, not a luminance conversion; use `Grayscale` for that. |
-| `Lomograph()`, `Polaroid()` | `Lomograph()`, `Polaroid()` | The color matrices only. ImageSharp follows the matrix with a vignette-style darkening (and, for Polaroid, a tint); that part is not reproduced, so the center of the frame matches Lomograph and the rest does not. |
+| `Lomograph()`, `Polaroid()` | `Lomograph()`, `Polaroid()` | The full looks, within one level of ImageSharp at 8 bits: `Lomograph` is the matrix plus a dark-green `Vignette`; `Polaroid` is the matrix plus a dark-orange `Vignette` and an orange `Glow`. The matrix alone is `ApplyColorMatrix(ColorMatrix.Lomograph)` / `ColorMatrix.Polaroid`, which are the same values as ImageSharp's `KnownFilterMatrices` and have no vignette. |
 | `ColorBlindness(mode)` | `ColorBlindness(mode)` | Same eight modes and matrices. |
 | `Opacity(amount)` | `Opacity(amount)` | Multiplies alpha. An image without alpha gains an alpha channel. |
 | `KnownFilterMatrices` | `ColorMatrix.Sepia(amount)`, `.BlackWhite`, `.Kodachrome`, `.Lomograph`, `.Polaroid`, `.ColorBlindness(mode)`, `.Opacity(amount)` | Matrices as values you can inspect, multiply (`a * b` applies `a`, then `b`) and pass to `ApplyColorMatrix`. |

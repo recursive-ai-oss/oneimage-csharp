@@ -45,20 +45,24 @@ public sealed partial class Image
     public Image Kodachrome() => ApplyColorMatrix(ColorMatrix.Kodachrome);
 
     /// <summary>
-    /// Lomograph color shift (ImageSharp's matrix): strong contrast and saturation with a dark, cool cast. This is the color part of the
-    /// look only: ImageSharp follows its matrix with a corner-darkening vignette, which is not applied here. Alpha is unchanged.
+    /// The Lomograph look as ImageSharp's <c>Lomograph()</c> renders it: <see cref="ColorMatrix.Lomograph"/> (strong contrast and saturation with a
+    /// dark, cool cast), then a very dark green (0, 10, 0) <see cref="Vignette"/> over the whole image with the default radii. The matrix alone is available as
+    /// <c>ApplyColorMatrix(ColorMatrix.Lomograph)</c>. The two steps are separate, so the result is rounded to the sample type between them; it
+    /// agrees with ImageSharp to within a level or two at 8 bits. Alpha is unchanged by the matrix; the vignette blends over the pixel as described there.
     /// </summary>
     /// <returns>The filtered image.</returns>
     /// <exception cref="ImageOperationException">The image is CMYK or Lab.</exception>
-    public Image Lomograph() => ApplyColorMatrix(ColorMatrix.Lomograph);
+    public Image Lomograph() => ApplyColorMatrix(ColorMatrix.Lomograph).Vignette(new Rgba32(0, 10, 0, 255));
 
     /// <summary>
-    /// Polaroid color shift (ImageSharp's matrix): warm, contrasty and slightly faded. This is the color part of the look only: ImageSharp
-    /// follows its matrix with a vignette and tint, which are not applied here. Alpha is unchanged.
+    /// The Polaroid look as ImageSharp's <c>Polaroid()</c> renders it: <see cref="ColorMatrix.Polaroid"/> (warm, contrasty), then a dark-orange
+    /// <see cref="Vignette"/> (color 102, 34, 0) with the default radii, then an orange <see cref="Glow"/> at half strength in the center (color 255, 153, 102, alpha 128,
+    /// radius a quarter of the width). The matrix alone is available as <c>ApplyColorMatrix(ColorMatrix.Polaroid)</c>. The steps are separate, so the
+    /// result is rounded to the sample type between them; it agrees with ImageSharp to within a level or two at 8 bits.
     /// </summary>
     /// <returns>The filtered image.</returns>
     /// <exception cref="ImageOperationException">The image is CMYK or Lab.</exception>
-    public Image Polaroid() => ApplyColorMatrix(ColorMatrix.Polaroid);
+    public Image Polaroid() => ApplyColorMatrix(ColorMatrix.Polaroid).Vignette(new Rgba32(102, 34, 0, 255)).Glow(new Rgba32(255, 153, 102, 128), Width / 4.0);
 
     /// <summary>
     /// Simulates a color vision deficiency with ImageSharp's matrices, on the stored values. Alpha is unchanged. Gray images become RGB.

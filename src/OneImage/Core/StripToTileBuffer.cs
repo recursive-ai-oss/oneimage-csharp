@@ -283,7 +283,7 @@ internal sealed class DirectRowSink : IRowSink
                 WriteRow(rows.Slice(r * _sourceRowBytes, _sourceRowBytes), Format, y + r);
             }
         }
-        else if (_converter == null && _degree > 1 && rowCount > 1 && rowCount * (long)Width >= ParallelMinPixels)
+        else if (_degree > 1 && rowCount > 1 && rowCount * (long)Width >= ParallelMinPixels)
         {
             HandOff(y, rows, rowCount);
         }
@@ -387,7 +387,22 @@ internal sealed class DirectRowSink : IRowSink
         rows.Slice(0, bytes).CopyTo(chunk);
         _nextChunk ^= 1;
         var options = new ParallelOptions { MaxDegreeOfParallelism = _degree };
-        _pending = Task.Run(() => Parallel.For(0, rowCount, options, r => ConvertOne(chunk.AsSpan(r * _sourceRowBytes, _sourceRowBytes), y + r, null)));
+        _pending = Task.Run(() => Parallel.For(0, rowCount, options, r =>
+        {
+            // A format change after the stage goes through a scratch row, rented per row so the workers share nothing.
+            byte[]? scratch = _converter == null ? null : System.Buffers.ArrayPool<byte>.Shared.Rent(_stageRowBytes);
+            try
+            {
+                ConvertOne(chunk.AsSpan(r * _sourceRowBytes, _sourceRowBytes), y + r, scratch);
+            }
+            finally
+            {
+                if (scratch != null)
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(scratch);
+                }
+            }
+        }));
     }
 
     /// <summary>Delivers one row in <paramref name="format"/> to its place in the destination, converting if the destination differs.</summary>

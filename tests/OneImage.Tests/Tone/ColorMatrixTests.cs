@@ -149,26 +149,47 @@ public class ColorMatrixTests
     }
 
     [Fact]
-    public void LomographMatchesImageSharpAtTheCenter()
+    public void LomographAndPolaroidMatchImageSharpOverTheWholeFrame()
     {
-        // ImageSharp darkens the corners after the matrix; the middle of the frame is untouched by that.
-        const int S = 201;
-        Rgba32[] px = Pixels8(S, S, 24);
-        foreach ((Func<Image, Image> op, Action<IImageProcessingContext> sharp) in new (Func<Image, Image>, Action<IImageProcessingContext>)[]
+        // The full looks: matrix, then ImageSharp's vignette (and for Polaroid a glow). Odd sizes exercise the center rounding.
+        foreach ((int w, int h, bool opaque) in new[] { (201, 201, true), (301, 97, true), (64, 130, true), (150, 90, false) })
         {
-            (i => i.Lomograph(), c => c.Lomograph()),
-        })
-        {
-            Rgba32[] ours = op(Image.FromPixels<Rgba32>(px, S, S)).ToArray<Rgba32>();
-            var data = px.Select(static p => new IsRgba32(p.R, p.G, p.B, p.A)).ToArray();
-            using SixLabors.ImageSharp.Image<IsRgba32> img = IsImage.LoadPixelData<IsRgba32>(data, S, S);
-            img.Mutate(sharp);
-            var theirs = new IsRgba32[px.Length];
-            img.CopyPixelDataTo(theirs);
-            int c0 = ((S / 2) * S) + (S / 2);
-            int max = Math.Max(Math.Abs(ours[c0].R - theirs[c0].R), Math.Max(Math.Abs(ours[c0].G - theirs[c0].G), Math.Abs(ours[c0].B - theirs[c0].B)));
-            Assert.True(max <= 1, $"center difference {max}");
+            Rgba32[] px = Pixels8(w, h, 24, opaque);
+            foreach ((string name, Func<Image, Image> op, Action<IImageProcessingContext> sharp) in new (string, Func<Image, Image>, Action<IImageProcessingContext>)[]
+            {
+                ("lomograph", i => i.Lomograph(), c => c.Lomograph()),
+                ("polaroid", i => i.Polaroid(), c => c.Polaroid()),
+            })
+            {
+                Rgba32[] ours = op(Image.FromPixels<Rgba32>(px, w, h)).ToArray<Rgba32>();
+                var data = px.Select(static p => new IsRgba32(p.R, p.G, p.B, p.A)).ToArray();
+                using SixLabors.ImageSharp.Image<IsRgba32> img = IsImage.LoadPixelData<IsRgba32>(data, w, h);
+                img.Mutate(sharp);
+                var theirs = new IsRgba32[px.Length];
+                img.CopyPixelDataTo(theirs);
+                int max = MaxDiff(ours, theirs);
+                int worst = 0;
+                for (int k = 0; k < ours.Length; k++)
+                {
+                    if (Math.Abs(ours[k].G - theirs[k].G) > Math.Abs(ours[worst].G - theirs[worst].G))
+                    {
+                        worst = k;
+                    }
+                }
+
+                Assert.True(max <= 1, $"{name} {w}x{h}: max difference {max} at ({worst % w},{worst / w}) src {px[worst]} ours {ours[worst]} theirs {theirs[worst]}");
+            }
         }
+    }
+
+    [Fact]
+    public void LomographAndPolaroidAreTheMatrixPlusTheEffects()
+    {
+        Image src = Make8();
+        Assert.Equal(
+            src.ApplyColorMatrix(ColorMatrix.Lomograph).Vignette(new Rgba32(0, 10, 0, 255)).ToArray<Rgba32>(),
+            src.Lomograph().ToArray<Rgba32>());
+        Assert.NotEqual(src.ApplyColorMatrix(ColorMatrix.Polaroid).ToArray<Rgba32>(), src.Polaroid().ToArray<Rgba32>());
     }
 
     [Fact]
@@ -327,6 +348,31 @@ public class ColorMatrixTests
             if (a[i].A >= 128)
             {
                 Assert.True(Math.Abs(a[i].R - b[i].R) <= 2 && Math.Abs(a[i].G - b[i].G) <= 2 && Math.Abs(a[i].B - b[i].B) <= 2, $"pixel {i}: {a[i]} vs {b[i]}");
+            }
+        }
+    }
+
+    [Fact]
+    public void DirectDecodeReadMatchesTheTilePath()
+    {
+        // A whole-frame read of a decode runs the chain on full-width rows; the same chain over tiles must give the same bytes.
+        foreach (bool alpha in new[] { false, true })
+        {
+            Rgba32[] px = Pixels8(300, 70, 41, opaque: !alpha);
+            using var ms = new MemoryStream();
+            Image.FromPixels<Rgba32>(px, 300, 70).Save(ms, PngFormat.Instance);
+            byte[] file = ms.ToArray();
+            Func<Image, Image>[] chains =
+            [
+                i => i.Sepia(0.7f),
+                i => i.Gamma(1.3).Kodachrome().Opacity(0.6f).Invert(),
+                i => i.Exposure(0.4).HueSaturationLightness(20, 0.2).Polaroid().Grayscale(),
+            ];
+            foreach (Func<Image, Image> chain in chains)
+            {
+                Image direct = chain(Image.Load(file));
+                Image viaTiles = chain(Barrier(Image.Load(file)));
+                Assert.Equal(viaTiles.ToArray<Rgba32>(), direct.ToArray<Rgba32>());
             }
         }
     }

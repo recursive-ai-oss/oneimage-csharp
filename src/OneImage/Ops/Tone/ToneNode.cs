@@ -12,7 +12,7 @@ namespace OneImage;
 /// to the sample grid after every step. Because rounding happens between steps in every path, fusing never changes a byte.
 /// </para>
 /// </summary>
-internal sealed class ToneNode : Node
+internal sealed class ToneNode : Node, IRowStage
 {
     private readonly ToneStep[] _steps;
     private readonly PixelFormat[] _formats;
@@ -24,6 +24,26 @@ internal sealed class ToneNode : Node
         _steps = steps;
         _formats = formats;
     }
+
+    PixelFormat IRowStage.OutputFormat => Format;
+
+    void IRowStage.ConvertRow(ReadOnlySpan<byte> source, Span<byte> destination, int width)
+    {
+        // Rows from a decoder are as wide as the image; the plane scratch holds one tile row, so work in tile-wide pieces.
+        Span<float> buf = stackalloc float[4 * Tile.Size];
+        Compiled plan = _compiled ??= Compile();
+        int sbpp = Inputs[0].Format.BytesPerPixel;
+        int dbpp = Format.BytesPerPixel;
+        for (int x = 0; x < width; x += Tile.Size)
+        {
+            int n = Math.Min(Tile.Size, width - x);
+            RunRow(plan, source.Slice(x * sbpp, n * sbpp), destination.Slice(x * dbpp, n * dbpp), n, buf);
+        }
+    }
+
+    /// <summary>A one-shot whole-frame read of a decode runs the color chain on rows as the decoder delivers them, so the decoded frame is not buffered first.</summary>
+    public override bool TryReadDirect(Span<byte> destination, PixelFormat destinationFormat, int degree, CancellationToken cancellationToken) =>
+        Inputs[0] is DecodeSourceNode decode && decode.TryDecodeInto(destination, destinationFormat, this, degree, cancellationToken);
 
     /// <summary>Gets the number of fused steps.</summary>
     public int StepCount => _steps.Length;
@@ -121,53 +141,56 @@ internal sealed class ToneNode : Node
 
     private void Run(Compiled plan, ReadOnlySpan<byte> src, Span<byte> dst, ImageRect rect)
     {
-        PixelFormat inF = Inputs[0].Format;
-        PixelFormat outF = Format;
-        int sbpp = inF.BytesPerPixel;
-        int dbpp = outF.BytesPerPixel;
+        int sbpp = Inputs[0].Format.BytesPerPixel;
+        int dbpp = Format.BytesPerPixel;
         int w = rect.Width;
         Span<float> buf = stackalloc float[4 * Tile.Size];
         for (int y = 0; y < rect.Height; y++)
         {
-            ReadOnlySpan<byte> s = src.Slice(y * Tile.Size * sbpp, w * sbpp);
-            Span<byte> d = dst.Slice(y * Tile.Size * dbpp, w * dbpp);
-            if (plan.Lut8 != null)
-            {
-                ToneKernel.ApplyLut8(s, d, w, inF.ChannelCount, inF.ColorChannels, plan.Lut8);
-                continue;
-            }
-
-            if (plan.Lut16 != null)
-            {
-                ToneKernel.ApplyLut16(s, d, w, inF.ChannelCount, inF.ColorChannels, plan.Lut16);
-                continue;
-            }
-
-            if (plan.Stages != null)
-            {
-                RunStages(plan.Stages, s, d, w);
-                continue;
-            }
-
-            if (_steps.Length == 1 && _steps[0].TryApplyBytes(s, d, inF, w))
-            {
-                continue;
-            }
-
-            var row = new ToneRow { Buf = buf, Width = w };
-            ToneKernel.UnpackRow(s, inF, ref row);
-            for (int i = 0; i < _steps.Length; i++)
-            {
-                _steps[i].Apply(ref row);
-                row.Sample = _formats[i].Sample;
-                if (i < _steps.Length - 1)
-                {
-                    ToneKernel.QuantizeRow(ref row, _formats[i], _steps[i].ModifiesAlpha);
-                }
-            }
-
-            ToneKernel.PackRow(ref row, outF, d);
+            RunRow(plan, src.Slice(y * Tile.Size * sbpp, w * sbpp), dst.Slice(y * Tile.Size * dbpp, w * dbpp), w, buf);
         }
+    }
+
+    private void RunRow(Compiled plan, ReadOnlySpan<byte> s, Span<byte> d, int w, Span<float> buf)
+    {
+        PixelFormat inF = Inputs[0].Format;
+        PixelFormat outF = Format;
+        if (plan.Lut8 != null)
+        {
+            ToneKernel.ApplyLut8(s, d, w, inF.ChannelCount, inF.ColorChannels, plan.Lut8);
+            return;
+        }
+
+        if (plan.Lut16 != null)
+        {
+            ToneKernel.ApplyLut16(s, d, w, inF.ChannelCount, inF.ColorChannels, plan.Lut16);
+            return;
+        }
+
+        if (plan.Stages != null)
+        {
+            RunStages(plan.Stages, s, d, w);
+            return;
+        }
+
+        if (_steps.Length == 1 && _steps[0].TryApplyBytes(s, d, inF, w))
+        {
+            return;
+        }
+
+        var row = new ToneRow { Buf = buf, Width = w };
+        ToneKernel.UnpackRow(s, inF, ref row);
+        for (int i = 0; i < _steps.Length; i++)
+        {
+            _steps[i].Apply(ref row);
+            row.Sample = _formats[i].Sample;
+            if (i < _steps.Length - 1)
+            {
+                ToneKernel.QuantizeRow(ref row, _formats[i], _steps[i].ModifiesAlpha);
+            }
+        }
+
+        ToneKernel.PackRow(ref row, outF, d);
     }
 
     private Compiled Compile()

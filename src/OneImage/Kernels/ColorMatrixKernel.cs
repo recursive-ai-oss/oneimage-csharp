@@ -39,9 +39,9 @@ internal static class ColorMatrixKernel
         ref byte s = ref MemoryMarshal.GetReference(src);
         ref byte d = ref MemoryMarshal.GetReference(dst);
         int start = 0;
-        if (inChannels == 4 && outChannels == 4 && Vector256.IsHardwareAccelerated)
+        if (Vector256.IsHardwareAccelerated)
         {
-            start = Rgba8Wide(ref s, ref d, width, computeAlpha, matrix);
+            start = Wide8(ref s, ref d, width, inChannels, outChannels, computeAlpha, matrix);
         }
 
         for (int x = start; x < width; x++)
@@ -73,32 +73,59 @@ internal static class ColorMatrixKernel
         }
     }
 
-    /// <summary>RGBA to RGBA, eight pixels per step; returns how many pixels it did (a multiple of eight).</summary>
-    private static int Rgba8Wide(ref byte s, ref byte d, int width, bool computeAlpha, ReadOnlySpan<float> m)
+    /// <summary>Eight pixels per step for any mix of 3- and 4-channel input and output; returns how many pixels it did (a multiple of eight).</summary>
+    private static int Wide8(ref byte s, ref byte d, int width, int inChannels, int outChannels, bool computeAlpha, ReadOnlySpan<float> m)
     {
         // Terms with a zero weight add an exact zero, so skipping them changes no value (only the sign of a zero, which rounds away).
-        bool useA = m[12] != 0f || m[13] != 0f || m[14] != 0f || (computeAlpha && m[15] != 0f);
+        bool hasA = inChannels == 4;
+        bool useA = !hasA || m[12] != 0f || m[13] != 0f || m[14] != 0f || (computeAlpha && m[15] != 0f);
         bool useG = m[4] != 0f || m[5] != 0f || m[6] != 0f || (computeAlpha && m[7] != 0f);
         bool useB = m[8] != 0f || m[9] != 0f || m[10] != 0f || (computeAlpha && m[11] != 0f);
         Vector256<float> v255 = Vector256.Create(255f);
         Vector256<float> half = Vector256.Create(0.5f);
         Vector256<uint> mask = Vector256.Create(0xFFu);
-        int n = width & ~7;
-        for (int x = 0; x < n; x += 8)
+        Vector256<float> one = Vector256.Create(1f);
+
+        // The 3-byte layouts load and store 16 bytes at a time (the second half 12 bytes in), so they stop two pixels early to stay inside the row.
+        bool packed = inChannels == 3 || outChannels == 3;
+        int limit = packed ? width - 10 : width - 8;
+        Vector128<byte> inMask = Vector128.Create((byte)0, 1, 2, 0x80, 3, 4, 5, 0x80, 6, 7, 8, 0x80, 9, 10, 11, 0x80);
+        Vector128<byte> outMask = Vector128.Create((byte)0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 0x80, 0x80, 0x80, 0x80);
+        int x = 0;
+        for (; x <= limit; x += 8)
         {
-            Vector256<uint> p = Vector256.LoadUnsafe(ref Unsafe.As<byte, uint>(ref s), (nuint)x);
+            Vector256<uint> p;
+            if (inChannels == 4)
+            {
+                p = Vector256.LoadUnsafe(ref Unsafe.As<byte, uint>(ref s), (nuint)x);
+            }
+            else
+            {
+                Vector128<byte> v0 = Vector128.LoadUnsafe(ref s, (nuint)(x * 3));
+                Vector128<byte> v1 = Vector128.LoadUnsafe(ref s, (nuint)((x * 3) + 12));
+                p = Vector256.Create(Vector128.Shuffle(v0, inMask).AsUInt32(), Vector128.Shuffle(v1, inMask).AsUInt32());
+            }
+
             Vector256<float> r = Vector256.ConvertToSingle((p & mask).AsInt32()) / v255;
             Vector256<float> g = useG ? Vector256.ConvertToSingle(((p >> 8) & mask).AsInt32()) / v255 : default;
             Vector256<float> b = useB ? Vector256.ConvertToSingle(((p >> 16) & mask).AsInt32()) / v255 : default;
-            Vector256<float> a = useA ? Vector256.ConvertToSingle((p >> 24).AsInt32()) / v255 : default;
-            Vector256<uint> o0 = Channel(r, g, b, a, m[0], m[4], m[8], m[12], m[16], v255, half);
-            Vector256<uint> o1 = Channel(r, g, b, a, m[1], m[5], m[9], m[13], m[17], v255, half) << 8;
-            Vector256<uint> o2 = Channel(r, g, b, a, m[2], m[6], m[10], m[14], m[18], v255, half) << 16;
-            Vector256<uint> o3 = computeAlpha ? Channel(r, g, b, a, m[3], m[7], m[11], m[15], m[19], v255, half) << 24 : p & Vector256.Create(0xFF000000u);
-            Vector256.StoreUnsafe(o0 | o1 | o2 | o3, ref Unsafe.As<byte, uint>(ref d), (nuint)x);
+            Vector256<float> a = !hasA ? one : useA ? Vector256.ConvertToSingle((p >> 24).AsInt32()) / v255 : default;
+            Vector256<uint> o = Channel(r, g, b, a, m[0], m[4], m[8], m[12], m[16], v255, half)
+                | (Channel(r, g, b, a, m[1], m[5], m[9], m[13], m[17], v255, half) << 8)
+                | (Channel(r, g, b, a, m[2], m[6], m[10], m[14], m[18], v255, half) << 16);
+            if (outChannels == 4)
+            {
+                o |= computeAlpha ? Channel(r, g, b, a, m[3], m[7], m[11], m[15], m[19], v255, half) << 24 : p & Vector256.Create(0xFF000000u);
+                Vector256.StoreUnsafe(o, ref Unsafe.As<byte, uint>(ref d), (nuint)x);
+            }
+            else
+            {
+                Vector128.Shuffle(o.GetLower().AsByte(), outMask).StoreUnsafe(ref d, (nuint)(x * 3));
+                Vector128.Shuffle(o.GetUpper().AsByte(), outMask).StoreUnsafe(ref d, (nuint)((x * 3) + 12));
+            }
         }
 
-        return n;
+        return x;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

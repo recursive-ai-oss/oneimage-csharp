@@ -151,7 +151,7 @@ public readonly struct ColorMatrix : IEquatable<ColorMatrix>
         0, 0, 0, 1,
         -0.041944027f, 0.022855982f, 0.039056003f, 0);
 
-    /// <summary>Gets the Lomograph color shift (the matrix part of the look: no vignette).</summary>
+    /// <summary>Gets the Lomograph color shift (the matrix alone; <see cref="Image.Lomograph"/> adds ImageSharp's vignette).</summary>
     public static ColorMatrix Lomograph => new(
         2.1520066f, -0.042493507f, -0.042493507f, 0,
         -0.13788776f, 1.9834623f, -0.13788776f, 0,
@@ -159,7 +159,7 @@ public readonly struct ColorMatrix : IEquatable<ColorMatrix>
         0, 0, 0, 1,
         -0.3058949f, -0.1888549f, -0.2620049f, 0);
 
-    /// <summary>Gets the Polaroid color shift (the matrix part of the look: no vignette).</summary>
+    /// <summary>Gets the Polaroid color shift (the matrix alone; <see cref="Image.Polaroid"/> adds ImageSharp's glow and vignette).</summary>
     public static ColorMatrix Polaroid => new(
         1.538f, -0.062f, -0.262f, 0,
         -0.022f, 1.578f, -0.022f, 0,
