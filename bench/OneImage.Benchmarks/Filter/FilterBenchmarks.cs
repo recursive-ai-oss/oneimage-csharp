@@ -10,7 +10,7 @@ namespace OneImage.Benchmarks.Filter;
 /// Neighbourhood filters and the histogram on 6000x4000 RGBA pixels already in memory. Every library gets the same bytes in its
 /// own native form during setup and produces its whole result in memory (ours into a caller buffer). Kernel conventions differ
 /// and are noted in the row names: this library blurs in linear light by default ("encoded" rows pass linear: false, which is
-/// what the competitors do), uses radius ceil(3 sigma), and the competitors' sharpen operators are not the same operator.
+/// what the competitors do), uses radius ceil(3 sigma), and the competitors' sharpen operators are not the same operator (libvips sharpen is not benchmarked: it works on CIELAB L and does not run on these inputs).
 /// </summary>
 [MemoryDiagnoser]
 [ShortRunJob]
@@ -20,6 +20,8 @@ public class FilterBenchmarks : IDisposable
     private const int H = 4000;
     private OneImage.Image _ours = null!;
     private IsImage _sharp = null!;
+    private IsImage _sharp4 = null!;
+    private IsImage _sharp1 = null!;
     private VipsImage _vips = null!;
     private OneImage.Rgba32[] _buffer = [];
 
@@ -42,6 +44,21 @@ public class FilterBenchmarks : IDisposable
         }
 
         _sharp = SixLabors.ImageSharp.Image.LoadPixelData<IsRgba32>(raw, W, H);
+        foreach (int degree in new[] { 4, 1 })
+        {
+            SixLabors.ImageSharp.Configuration config = SixLabors.ImageSharp.Configuration.Default.Clone();
+            config.MaxDegreeOfParallelism = degree;
+            IsImage img = SixLabors.ImageSharp.Image.LoadPixelData<IsRgba32>(config, raw, W, H);
+            if (degree == 4)
+            {
+                _sharp4 = img;
+            }
+            else
+            {
+                _sharp1 = img;
+            }
+        }
+
         var ours = new OneImage.Rgba32[W * H];
         System.Runtime.InteropServices.MemoryMarshal.Cast<byte, OneImage.Rgba32>(raw).CopyTo(ours);
         _ours = OneImage.Image.FromPixels<OneImage.Rgba32>(ours, W, H);
@@ -53,13 +70,15 @@ public class FilterBenchmarks : IDisposable
     public void Dispose()
     {
         _sharp.Dispose();
+        _sharp4.Dispose();
+        _sharp1.Dispose();
         _vips.Dispose();
         GC.SuppressFinalize(this);
     }
 
-    private int Run(OneImage.Image image)
+    private int Run(OneImage.Image image, int degree = 0)
     {
-        image.CopyPixelsTo<OneImage.Rgba32>(_buffer, new ImageRect(0, 0, W, H));
+        image.CopyPixelsTo<OneImage.Rgba32>(_buffer, new ImageRect(0, 0, W, H), degree);
         return _buffer[0].R;
     }
 
@@ -104,8 +123,29 @@ public class FilterBenchmarks : IDisposable
     [Benchmark(Description = "unsharp s1.5: ImageSharp GaussianSharpen")]
     public int SharpenSharp() => Run(_sharp, c => c.GaussianSharpen(1.5f));
 
-    [Benchmark(Description = "sharpen s1.5: NetVips (CIELAB L, other operator)")]
-    public int SharpenVips() => Run(_vips.ExtractBand(0, 3).Sharpen(sigma: 1.5));
+    [Benchmark(Description = "gaussian s2: ImageSharp 4 threads")]
+    public int Gauss2Sharp4() => Run(_sharp4, c => c.GaussianBlur(2f));
+
+    [Benchmark(Description = "gaussian s2: oneimage encoded 1 thread")]
+    public int Gauss2Ours1() => Run(_ours.GaussianBlur(2, linear: false), 1);
+
+    [Benchmark(Description = "gaussian s2: ImageSharp 1 thread")]
+    public int Gauss2Sharp1() => Run(_sharp1, c => c.GaussianBlur(2f));
+
+    [Benchmark(Description = "gaussian s10: ImageSharp 4 threads")]
+    public int Gauss10Sharp4() => Run(_sharp4, c => c.GaussianBlur(10f));
+
+    [Benchmark(Description = "unsharp s1.5: ImageSharp 4 threads")]
+    public int SharpenSharp4() => Run(_sharp4, c => c.GaussianSharpen(1.5f));
+
+    [Benchmark(Description = "unsharp s1.5: oneimage encoded 1 thread")]
+    public int SharpenOurs1() => Run(_ours.Sharpen(1, 1.5, linear: false), 1);
+
+    [Benchmark(Description = "unsharp s1.5: ImageSharp 1 thread")]
+    public int SharpenSharp1() => Run(_sharp1, c => c.GaussianSharpen(1.5f));
+
+    [Benchmark(Description = "median r2: ImageSharp 4 threads")]
+    public int MedianSharp4() => Run(_sharp4, c => c.MedianBlur(2, true));
 
     [Benchmark(Description = "median r2: oneimage")]
     public int MedianOurs() => Run(_ours.Median(2));
