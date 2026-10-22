@@ -16,8 +16,8 @@ benchmark task (wall-clock time, log scale, higher is better; a task
 where OneImage is slower shows as a bar to the left, a tie in grey):
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.1.0/docs/img/oneimage-hero-dark.svg">
-  <img alt="Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower." src="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.1.0/docs/img/oneimage-hero-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.2.0/docs/img/oneimage-hero-dark.svg">
+  <img alt="Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower." src="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.2.0/docs/img/oneimage-hero-light.svg">
 </picture>
 
 [Full results, with memory, the losses and the method →](docs/performance.md)
@@ -100,6 +100,10 @@ errors appear, how sources are held, limits and threading.
 - **Migrating:** [from ImageSharp and System.Drawing](docs/migrating.md).
 - **Serving images from ASP.NET Core:** [OneImage.Web](docs/web.md), URL-driven
   resizing with a disk cache, signed URLs and request limits.
+- **Drawing and text:** [vector drawing](docs/drawing.md) (paths, fills,
+  strokes, brushes, boolean operations, clipping) is in the core package;
+  [OneImage.Text](docs/text.md) adds fonts, OpenType shaping, line
+  breaking, rich text and color glyphs.
 - **Choosing a library:** [how OneImage compares](docs/comparison.md),
   including where the others win.
 - **Evidence:** [benchmark tables](docs/performance.md#results-at-a-glance)
