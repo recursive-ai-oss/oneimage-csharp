@@ -9,6 +9,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `RecursiveAI.OneImage.Text`, a separate package for fonts and text: `FontCollection` loads TrueType, OpenType/CFF, TrueType Collections and WOFF 1.0 (own inflate); `TextOptions` (origin, wrapping, line spacing, tab width, dpi, horizontal, vertical and text alignment, kerning), `TextMeasurer` (advance, ink bounds, lines, character boxes), `TextBuilder.GeneratePath` (text as a `Path`) and `DrawText` on `Image` and `Canvas` with a brush and/or pen. Outlines, advances, kerning, line counts and bounds match SixLabors.Fonts 2.1.3; rendering agrees with ImageSharp.Drawing 2.1.7 DrawText to coverage differences. Ligatures and other OpenType features, Unicode line breaking, fallback, decorations and color fonts are not in this release. See `docs/text.md`. A fuzz target `font` covers the parsers.
 - OpenType shaping in `RecursiveAI.OneImage.Text`: GDEF glyph classes and mark filtering sets, GSUB lookup types 1-8 and GPOS types 1-9 with all lookup flags, so ligatures (`fi`, `ffl`), `ccmp` compositions, language forms (`locl`), contextual alternates, pair kerning and mark positioning on bases, ligatures and other marks work for Latin, Greek and Cyrillic. `TextOptions.Features` (`FontFeature.On("smcp")`, `Off("liga")`, alternates by value) and `TextOptions.Language` choose features and language forms; `KerningMode.None` is the `kern` feature off. Lookups are bounded in depth, work and growth, and damaged layout tables are ignored. Glyph ids and origins match SixLabors.Fonts 2.1.3 on Noto Sans; measuring and drawing a ligature-heavy paragraph is 8x and 19x faster. See `docs/text.md`.
 
+### Changed
+
+- `Canvas.Clip` no longer copies tiles through a public snapshot: it swaps in fresh pooled tiles and returns the replaced and cached ones to the pool. A blur clipped to a circle on a 2000 x 2000 canvas allocates 88 KB instead of 9.6 MB, at the same speed and with identical output.
+
 ## [1.1.0] - 2026-10-22
 
 ### Added

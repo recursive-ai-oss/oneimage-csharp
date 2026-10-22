@@ -4,7 +4,7 @@ OneImage is faster than ImageSharp 3.1.12 on every task in the benchmark
 set except one that is a tie, and one where ImageSharp does less work
 (CMYK, below). It is not faster than every native wrapper, and on peak
 memory it has one exception and several ties. Drawing and clipping
-against ImageSharp.Drawing have two exceptions of their own
+against ImageSharp.Drawing have one exception of their own
 ([below](#drawing-and-clipping-exceptions)). This page prints all of
 it: the table, the ties, the losses and the method.
 
@@ -142,26 +142,27 @@ diagnoser, 2000 x 2000 RGBA, .NET 10.0.11, X64 AVX-512). These were
 local smoke runs on a shared workstation with a load of 4.7 at the
 start, rising to about 10, so treat them as rough. Fills, strokes and
 brushes are faster with less allocation on every row; see
-[drawing.md](drawing.md). Clipping has two exceptions:
+[drawing.md](drawing.md). Clipping has one exception:
 
 | Row | OneImage | ImageSharp.Drawing | Allocated (OneImage vs ImageSharp) | |
 |---|--:|--:|---|---|
 | union of 200 circles | 7.2 ms | 11.1 ms | 3.2 MB vs 23 MB | faster, less |
 | star minus a 1000-point polygon | 158 µs | 134 µs | 33 KB vs 205 KB | **slower** (exception) |
 | blur clipped to a circle, lazy `Image` | 12.3 ms | 56 ms | 52 KB vs 423 KB | faster, less |
-| blur clipped to a circle, in place on a `Canvas` | 13.4 ms | 56 ms | 9.6 MB vs 423 KB | **more allocation** (exception) |
+| blur clipped to a circle, in place on a `Canvas` | 12.9 ms | 56 ms | 88 KB vs 423 KB | faster, less |
 
 - **Star minus a 1000-point polygon is 1.18× slower.** The time is
   split evenly between finding crossings and the sweep. The boolean
   engine works in exact integer arithmetic on a 1/256-pixel grid, and
   for an input this small the candidate-pair search costs more than it
   saves. It allocates a sixth as much.
-- **`Canvas.Clip` allocates 9.6 MB, where the `Image` path allocates
-  52 KB.** `Canvas.Clip` reads the canvas through a snapshot, so every
-  tile it rewrites is a fresh copy, and the replaced tiles go to the
-  garbage collector instead of back to the tile pool. The lazy `Image`
-  path shows the work itself needs little memory. This is on the list
-  for the next release.
+- **`Canvas.Clip` allocates 88 KB** (the `Image` path 52 KB). It used to
+  allocate 9.6 MB: it read the canvas through a public snapshot, so every
+  rewritten tile was copied and the replaced tiles, together with the
+  tiles the clipped graph cached, went to the garbage collector. It now
+  reads a private copy of the tile table, swaps fresh pooled tiles in and
+  returns the replaced and cached tiles to the pool afterwards. Time is
+  unchanged (12.9 ms against 13.4 ms before).
 
 ## AVX-512 (information)
 

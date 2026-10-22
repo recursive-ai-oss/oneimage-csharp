@@ -161,6 +161,39 @@ public class ClipTests
         Assert.Equal(inner[(130 * W) + 150], nested[(130 * W) + 150]);
     }
 
+    [Fact]
+    public void RepeatedCanvasClipsKeepTileCountAndSnapshots()
+    {
+        Path path = Path.Circle(140, 120, 90);
+        Func<Image, Image> ops = i => i.GaussianBlur(4);
+        using Canvas c = CanvasOf(false);
+        int tiles = c.AllocatedTiles;
+        Rgba32[] original = c.Snapshot().ToArray<Rgba32>();
+        Image before = c.Snapshot();
+        Rgba32[] expected = before.Clip(path, ops).ToArray<Rgba32>();
+        c.Clip(path, ops); // the canvas has outside snapshots
+        Assert.Equal(expected, c.Snapshot().ToArray<Rgba32>());
+        Assert.Equal(original, before.ToArray<Rgba32>());
+
+        // Without outside snapshots the canvas keeps its tiles and swaps them in place.
+        using Canvas d = CanvasOf(false);
+        for (int i = 0; i < 5; i++)
+        {
+            d.Clip(path, ops);
+            Assert.Equal(tiles, d.AllocatedTiles);
+        }
+
+        Image once = Source(false);
+        for (int i = 0; i < 5; i++)
+        {
+            once = once.Clip(path, ops);
+        }
+
+        Assert.Equal(once.ToArray<Rgba32>(), d.Snapshot().ToArray<Rgba32>());
+        d.CopyFrom<Rgba32>([Red], new ImageRect(3, 3, 1, 1));
+        Assert.Equal(Red, d[3, 3]);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

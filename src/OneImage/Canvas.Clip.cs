@@ -28,35 +28,89 @@ public sealed partial class Canvas
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(operations);
-        Image clipped = Snapshot().Clip(path, operations, antialias, rule, transform);
+        // Without an outside snapshot nothing else can see the tiles, so the work reads a private copy of the tile table instead of
+        // calling Snapshot(): the canvas keeps owning its tiles, writes swap in fresh pooled tiles, and the replaced ones go back
+        // to the pool afterwards. With an outside snapshot the tiles belong to it and the ordinary copy-on-write path applies.
+        bool exclusive = !_grid.Shared;
+        TileGrid readGrid = exclusive ? _grid.Clone() : _grid;
+        if (!exclusive)
+        {
+            _grid.Shared = true;
+            _token = new object();
+        }
+
+        Image clipped = Image.FromNode(new GridSourceNode(readGrid)).Clip(path, operations, antialias, rule, transform);
         var node = (ClipNode)clipped.Root;
         Raster raster = node.Raster;
         var touched = new List<(int Tx, int Ty, Tile Tile)>();
-        for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
+        var replaced = new List<(int Index, Tile? Old)>();
+        bool done = false;
+        try
         {
-            for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
+            for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
             {
-                if (raster.MayTouch(tx, ty))
+                for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
                 {
-                    touched.Add((tx, ty, WritableTile(tx, ty, willOverwriteAll: true)));
+                    if (!raster.MayTouch(tx, ty))
+                    {
+                        continue;
+                    }
+
+                    if (exclusive)
+                    {
+                        int idx = (ty * _grid.TilesX) + tx;
+                        Tile fresh = Tile.Rent(Tile.ByteSize(Format), clear: false);
+                        fresh.Owner = _token;
+                        replaced.Add((idx, _grid.Tiles[idx]));
+                        _grid.Tiles[idx] = fresh;
+                        touched.Add((tx, ty, fresh));
+                    }
+                    else
+                    {
+                        touched.Add((tx, ty, WritableTile(tx, ty, willOverwriteAll: true)));
+                    }
+                }
+            }
+
+            // Each tile depends only on its own coverage and the source tiles, so the order of work never shows in the output.
+            RenderContext context = RenderContext.Create(1, CancellationToken.None);
+            int degree = ImageEngine.ResolveDegree(0);
+            if (degree <= 1 || touched.Count < 2)
+            {
+                foreach ((int tx, int ty, Tile tile) in touched)
+                {
+                    CopyClipped(node, context, tx, ty, tile);
+                }
+            }
+            else
+            {
+                Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => CopyClipped(node, context, touched[i].Tx, touched[i].Ty, touched[i].Tile));
+            }
+
+            done = true;
+        }
+        finally
+        {
+            // The clipped graph was a one-shot pass: give back the tiles its nodes cached rather than leave them to the cache budget.
+            Node.ReleaseAfterSave([node]);
+
+            // Success: the replaced tiles are no longer referenced. Failure: put them back so the canvas is unchanged.
+            foreach ((int index, Tile? old) in replaced)
+            {
+                if (done)
+                {
+                    if (old != null && ReferenceEquals(old.Owner, _token))
+                    {
+                        old.Release();
+                    }
+                }
+                else
+                {
+                    _grid.Tiles[index]?.Release();
+                    _grid.Tiles[index] = old;
                 }
             }
         }
-
-        // Each tile depends only on its own coverage and the snapshot, so the order of work never shows in the output.
-        RenderContext context = RenderContext.Create(1, CancellationToken.None);
-        int degree = ImageEngine.ResolveDegree(0);
-        if (degree <= 1 || touched.Count < 2)
-        {
-            foreach ((int tx, int ty, Tile tile) in touched)
-            {
-                CopyClipped(node, context, tx, ty, tile);
-            }
-
-            return;
-        }
-
-        Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => CopyClipped(node, context, touched[i].Tx, touched[i].Ty, touched[i].Tile));
     }
 
     private static void CopyClipped(Node node, RenderContext context, int tx, int ty, Tile target)
