@@ -65,6 +65,57 @@ public class ThumbnailBenchmarks
     }
 }
 
+/// <summary>The same thumbnail task saved as lossy WebP at quality 75.</summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, warmupCount: 3, iterationCount: 12)]
+public class ThumbnailWebPBenchmarks
+{
+    private byte[] _jpeg = null!;
+
+    [GlobalSetup]
+    public void Setup() => _jpeg = JpegData.SkiaJpeg(JpegData.Pixels(), 90);
+
+    [Benchmark(Description = "OneImage Image.Thumbnail(bytes, 400) -> WebP q75")]
+    public int OneImage()
+    {
+        using var ms = new MemoryStream(64 << 10);
+        global::OneImage.Image.Thumbnail(_jpeg, 400).Save(ms, new global::OneImage.WebPFormat(), new SaveOptions { EncoderOptions = new global::OneImage.WebPEncoderOptions { Quality = 75 } });
+        return (int)ms.Length;
+    }
+
+    [Benchmark(Description = "SkiaSharp scaled decode + resize + WebP q75", Baseline = true)]
+    public int Skia()
+    {
+        using var codec = SKCodec.Create(new MemoryStream(_jpeg));
+        SKSizeI size = codec.GetScaledDimensions(1f / 8);
+        using var decoded = new SKBitmap(new SKImageInfo(size.Width, size.Height, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        codec.GetPixels(decoded.Info, decoded.GetPixels());
+        int h = (int)Math.Round(400.0 * codec.Info.Height / codec.Info.Width);
+        using SKBitmap small = decoded.Resize(new SKImageInfo(400, h, SKColorType.Rgba8888, SKAlphaType.Opaque), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
+        using var image = SKImage.FromBitmap(small);
+        using SKData data = image.Encode(SKEncodedImageFormat.Webp, 75);
+        return (int)data.Size;
+    }
+
+    [Benchmark(Description = "ImageSharp load(TargetSize) + Resize + WebP q75")]
+    public int ImageSharp()
+    {
+        var options = new DecoderOptions { TargetSize = new Size(400, 267) };
+        using SharpRgb img = SharpImage.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(options, _jpeg);
+        img.Mutate(x => x.Resize(400, 0));
+        using var ms = new MemoryStream(64 << 10);
+        img.Save(ms, new SixLabors.ImageSharp.Formats.Webp.WebpEncoder { Quality = 75 });
+        return (int)ms.Length;
+    }
+
+    [Benchmark(Description = "NetVips thumbnail_buffer + webpsave_buffer q75")]
+    public int NetVips()
+    {
+        using VipsImage img = VipsImage.ThumbnailBuffer(_jpeg, 400);
+        return img.WebpsaveBuffer(q: 75).Length;
+    }
+}
+
 /// <summary>Watermark: a 600 x 200 RGBA overlay at (100, 100) on a 6000 x 4000 RGB picture held in memory; the result is written to an RGB buffer.</summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, warmupCount: 3, iterationCount: 12)]

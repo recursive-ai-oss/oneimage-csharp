@@ -197,4 +197,31 @@ public class ThumbnailTests
         Assert.InRange(p.A, 127, 129);
         Assert.InRange(p.G, 198, 202);
     }
+
+    [Fact]
+    public void ThumbnailSavesAsWebPAndOtherFormatsByExtension()
+    {
+        byte[] file = Jpeg(Flat(800, 600, (x, y) => new Rgb24((byte)(x / 4), (byte)(y / 3), 90)));
+        string dir = Path.Combine(AppContext.BaseDirectory, "thumb-out");
+        Directory.CreateDirectory(dir);
+        string src = Path.Combine(dir, "in.jpg");
+        File.WriteAllBytes(src, file);
+        try
+        {
+            foreach (string ext in new[] { ".webp", ".png", ".jpg", ".tif" })
+            {
+                string dst = Path.Combine(dir, "t" + ext);
+                Image.Thumbnail(src, 200).Save(dst);
+                Image back = Image.Load(dst);
+                Assert.Equal((200, 150), (back.Width, back.Height));
+                Rgb24 p = back.ToArray<Rgb24>()[(75 * 200) + 100];
+                Assert.InRange(p.R, 85, 160);
+                Assert.InRange(p.G, 50, 105);
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }
