@@ -410,6 +410,7 @@ Image.Load(input)
 | `GaussianSharpen(sigma)` | `GaussianSharpen(sigma)` | Same kernel and defaults (sigma 3), within 2 levels. It filters stored values like ImageSharp; pass `linear: true` for linear light. |
 | `DetectEdges(KnownEdgeDetectorKernels.X, grayscale)` | `DetectEdges(EdgeDetector.X, grayscale)` | Same kernels (Sobel, Prewitt, Scharr, RobertsCross, Kayyali, Laplacian3x3, Laplacian5x5, LaplacianOfGaussian, Kirsch, Robinson), same results to the level. With `grayscale: true` (the default) the result is a gray image without alpha, where ImageSharp returns an RGB image of equal channels. |
 | `EntropyCrop(threshold)` | `EntropyCrop(threshold)` | Same rectangle. Eager, like `Trim`; an image with no detail is returned as it is. |
+| `HistogramEqualization(options)` (`Method`, `LuminanceLevels`, `ClipHistogram`, `ClipLimit`, `NumberOfTiles`) | `HistogramEqualization(method, luminanceLevels, clipHistogram, clipLimit, tiles)` | Same defaults (global, 256, no clipping, 350, 8) and output within 1 level at 8 bits on our comparisons, for global, `AdaptiveTileInterpolation` and `AdaptiveSlidingWindow`, with and without clipping. Like ImageSharp it equalizes luminance (Rec. 709) and writes the new luminance to all three color channels, so color is not preserved; alpha is carried over. `tiles` is at least 2. ImageSharp refuses an image shorter than the sliding window; this does not. |
 
 ### Color matrix, preset looks, color blindness, opacity
 
@@ -538,7 +539,6 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 
 | ImageSharp | OneImage today | Closest workaround |
 |---|---|---|
-| `HistogramEqualization(options)` (global, adaptive tile, sliding window) | None. `Histogram` gives the data; `AutoLevel` covers the auto-level method. | `Levels` or `Curves` with values you compute from `Histogram`. |
 | `CalculateIntegralImage()` | None as a public API (`AdaptiveThreshold` sums windows internally). | `Histogram` and `Statistics` cover the common uses. |
 
 `BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`, and `ProjectiveTransformBuilder` by `Perspective` (see [Perspective transforms](#perspective-transforms)). `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.

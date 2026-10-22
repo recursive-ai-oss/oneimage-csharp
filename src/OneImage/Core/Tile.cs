@@ -394,12 +394,16 @@ internal sealed class RenderContext
     public RenderContext(int degree, TileCache cache, TileCache streamCache, CancellationToken cancellationToken)
     {
         Degree = degree;
+        OuterDegree = degree;
         CancellationToken = cancellationToken;
         Cache = cache;
         StreamCache = streamCache;
     }
 
     public int Degree { get; }
+
+    /// <summary>Gets the degree of the call this context belongs to: the same as <see cref="Degree"/>, except in a nested context, which keeps the outer call's value for work that must fork once per node (a whole-image pre-pass).</summary>
+    public int OuterDegree { get; private init; }
 
     public CancellationToken CancellationToken { get; }
 
@@ -411,7 +415,7 @@ internal sealed class RenderContext
     public TileCache CacheFor(Node node) => node.Streaming ? StreamCache : Cache;
 
     /// <summary>Gets the context for work done inside an already-parallel tile computation: same token and cache, degree 1.</summary>
-    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken);
+    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken) { OuterDegree = Degree };
 
     public static RenderContext Create(int maxDegree, CancellationToken cancellationToken) =>
         new(ImageEngine.ResolveDegree(maxDegree), TileCache.Global, TileCache.Streaming, cancellationToken);

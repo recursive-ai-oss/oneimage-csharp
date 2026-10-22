@@ -251,6 +251,17 @@ img.Quantize(64, Dither.Atkinson, quantizer: Quantizer.Octree);       // Wu (def
 
 They are lazy and apply to every frame. `AutoLevel` counts the 8-bit luminance (Rec. 709) histogram exactly, so results do not depend on the thread count. `AdaptiveThreshold` reads a margin of `width / 16` pixels around each tile. Ordered dithers run per tile; error diffusion runs once, in row order, when the first tile is requested, and gives the same pixels whatever the thread count.
 
+**Histogram equalization**
+
+```csharp
+img.HistogramEqualization();                                                    // global; 256 levels, no clipping
+img.HistogramEqualization(HistogramEqualizationMethod.AdaptiveTileInterpolation, clipHistogram: true);   // local contrast on an 8 x 8 grid, clipped at 350
+img.HistogramEqualization(HistogramEqualizationMethod.AdaptiveSlidingWindow, tiles: 16);                 // a window around every pixel; slower
+img.HistogramEqualization(luminanceLevels: 65536);                              // 16-bit images at full precision
+```
+
+It works on gray and RGB images, is lazy, and applies to every frame. The luminance (Rec. 709 weights) of each pixel is mapped through the cumulative histogram; **an RGB pixel becomes gray**, since the new luminance is written to all three channels (this is what ImageSharp does too, and the output agrees with it within 1 level at 8 bits). Alpha is carried over. The global and tile methods count the whole image once before the first tile comes out; the sliding window needs only the neighborhood of each tile, but its cost per pixel grows with the window size (`width / tiles`). Clipping (`clipHistogram`, `clipLimit`) cuts bins above the limit and spreads the excess evenly in whole counts; the limit is an absolute count per bin, so it should scale with tile size. The XML docs describe the tile geometry, window edges and rounding in full. Results do not depend on the thread count.
+
 **Analysis**
 
 ```csharp

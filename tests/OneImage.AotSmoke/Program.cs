@@ -91,6 +91,17 @@ if (effects.ToArray<Rgba32>().Length != 60000 || snapshot.DetectEdges(EdgeDetect
     return 1;
 }
 
+// Histogram equalization: global, tile interpolation with clipping, sliding window.
+Image equalized = snapshot.HistogramEqualization();
+Image equalizedTiles = snapshot.HistogramEqualization(HistogramEqualizationMethod.AdaptiveTileInterpolation, clipHistogram: true);
+Image equalizedWindow = snapshot.Crop(0, 0, 120, 100).HistogramEqualization(HistogramEqualizationMethod.AdaptiveSlidingWindow, clipHistogram: true, tiles: 4);
+if (equalized.ToArray<Rgba32>().Length != 60000 || equalizedTiles.ToArray<Rgba32>().Length != 60000 || equalizedWindow.ToArray<Rgba32>().Length != 12000
+    || !equalized.DescribeGraph().Contains("histogram_equalization", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("equalization smoke failed");
+    return 1;
+}
+
 // Compression layer: deflate/inflate and LZW round trips.
 byte[] sample = new byte[100_000];
 for (int i = 0; i < sample.Length; i++)
