@@ -40,7 +40,7 @@ internal sealed class LayoutLine
 }
 
 /// <summary>
-/// Lays text out: shaping (one glyph per code point from the character map, plus kerning), Unicode line breaking, greedy line
+/// Lays text out: OpenType shaping, Unicode line breaking, greedy line
 /// filling (with the word breaking modes), justification and alignment. Line breaking works on the text and reaches the glyphs
 /// only through each glyph's text offset, so a different shaping step does not change it.
 /// </summary>
@@ -174,8 +174,9 @@ internal sealed class TextLayout
         return text.Length;
     }
 
-    // Shaping: code points go to the OpenType shaper (character map, GSUB substitutions, GPOS positioning). Tabs and zero width
-    // non-joiners end a shaping run: nothing substitutes or kerns across them.
+    // Shaping: code points go to the OpenType shaper (character map, GSUB substitutions, GPOS positioning). Tabs, zero width
+    // non-joiners, zero width spaces and soft hyphens end a shaping run: nothing substitutes or kerns across them. The last two
+    // are break opportunities, and a ligature spanning one would swallow it.
     private void Shape(string text, int start, int end)
     {
         _pending = 0;
@@ -201,7 +202,7 @@ internal sealed class TextLayout
                 int gid = _face.GetGlyphIndex(' ');
                 Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = _tabUnits, IsSpace = true });
             }
-            else if (cp == 0x200C)
+            else if (cp is 0x200C or 0x200B or 0x00AD)
             {
                 FlushRun(end);
             }
@@ -210,11 +211,11 @@ internal sealed class TextLayout
                 if (_pending == _cps.Length)
                 {
                     Array.Resize(ref _cps, _pending * 2);
-                    Array.Resize(ref _clusters, _pending * 2);
+                    Array.Resize(ref _runClusters, _pending * 2);
                 }
 
                 _cps[_pending] = cp;
-                _clusters[_pending++] = i;
+                _runClusters[_pending++] = i;
             }
 
             i += len;
@@ -225,7 +226,7 @@ internal sealed class TextLayout
 
     private readonly List<ShapedRunGlyph> _run = [];
     private int[] _cps = new int[64];
-    private int[] _clusters = new int[64];
+    private int[] _runClusters = new int[64];
     private int _pending;
 
     private void FlushRun(int paragraphEnd)
@@ -236,7 +237,7 @@ internal sealed class TextLayout
         }
 
         _run.Clear();
-        TextShaper.Shape(_face, _cps.AsSpan(0, _pending), _clusters.AsSpan(0, _pending), _language, _features, _run);
+        TextShaper.Shape(_face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run);
         for (int k = 0; k < _run.Count; k++)
         {
             ShapedRunGlyph r = _run[k];
@@ -272,8 +273,9 @@ internal sealed class TextLayout
             return false;
         }
 
+        // A glyph that continues the cluster of the one before it (a mark, or one more glyph of a multiple substitution) is no start.
         int at = Glyphs[k].Cluster - _paragraphStart;
-        return _breaks[at] != 0 && _clusters[at] != 0;
+        return _breaks[at] != 0 && ClusterStart[k];
     }
 
     // Computes the break opportunities and cluster starts of one paragraph into pooled arrays.
@@ -347,7 +349,9 @@ internal sealed class TextLayout
         {
             for (int k = g0; k < g1; k++)
             {
-                ClusterStart.Add(_clusters[Glyphs[k].Cluster - start] != 0);
+                // A glyph starts a cluster when its first character does and the glyph before it is not from the same character
+                // (a character the font turns into several glyphs).
+                ClusterStart.Add(_clusters[Glyphs[k].Cluster - start] != 0 && (k == g0 || Glyphs[k - 1].Cluster != Glyphs[k].Cluster));
             }
 
             FillLines(g0, g1, start, end);

@@ -431,7 +431,7 @@ foreach (bool lossless in new[] { true, false })
     int ligated = OneImage.Text.TextMeasurer.GetCharacterBounds("afib", plain).Count;
     int separate = OneImage.Text.TextMeasurer.GetCharacterBounds("afib", noLigatures).Count;
     var marked = OneImage.Text.TextMeasurer.GetCharacterBounds("a\u0301 \u03B1\u0301 \u0438\u0306", plain);
-    if (ligated != 3 || separate != 4 || marked.Count < 6)
+    if (ligated != 3 || separate != 4 || marked.Count != 5)
     {
         Console.Error.WriteLine("shaping smoke failed");
         return 1;

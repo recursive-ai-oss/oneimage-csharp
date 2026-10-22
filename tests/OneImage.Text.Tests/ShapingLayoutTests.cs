@@ -206,14 +206,15 @@ public class ShapingLayoutTests
     [Fact]
     public void MarksSitOnTheirBaseInTheDrawnOutline()
     {
-        // a + combining acute: the accent's ink lies above the letter and within its width.
+        // a + combining acute is one cluster, so one box: its ink is the letter's plus the accent above it, within the letter's width.
         IReadOnlyList<GlyphBounds> accent = TextMeasurer.GetCharacterBounds("a\u0301", Options(100));
-        Assert.Equal(2, accent.Count);
-        System.Drawing.RectangleF letter = accent[0].Ink;
-        System.Drawing.RectangleF mark = accent[1].Ink;
-        Assert.True(mark.Bottom <= letter.Top + 0.5f, $"mark {mark} letter {letter}");
-        Assert.True(mark.Left >= letter.Left - 5 && mark.Right <= letter.Right + 5, $"mark {mark} letter {letter}");
-        Assert.Equal(0f, accent[1].Bounds.Width, 0.001);
+        System.Drawing.RectangleF letter = TextMeasurer.GetCharacterBounds("a", Options(100))[0].Ink;
+        Assert.Single(accent);
+        System.Drawing.RectangleF both = accent[0].Ink;
+        Assert.True(both.Top < letter.Top - 1f, $"cluster {both} letter {letter}");
+        Assert.Equal(letter.Bottom, both.Bottom, 0.01);
+        Assert.True(both.Left >= letter.Left - 5 && both.Right <= letter.Right + 5, $"cluster {both} letter {letter}");
+        Assert.Equal(TextMeasurer.GetCharacterBounds("a", Options(100))[0].Bounds.Width, accent[0].Bounds.Width, 0.001);
     }
 
     [Fact]
