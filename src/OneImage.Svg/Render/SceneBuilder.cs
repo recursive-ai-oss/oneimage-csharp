@@ -69,6 +69,25 @@ internal sealed partial class SceneBuilder
 
         /// <summary>Index in <see cref="Out"/> where this frame's own nodes start.</summary>
         public int OutStart { get; init; }
+
+        /// <summary>Set on the frame of a shape that has markers and on the frames of the marker instances drawn for it.</summary>
+        public MarkerFrame? Marker { get; init; }
+    }
+
+    // The marker state of a frame, kept apart so frames of everything else stay small (a use fan-out makes many of them).
+    private sealed class MarkerFrame
+    {
+        /// <summary>For the frame of a shape that has markers: the parts of the shape (fill, stroke, markers) in <c>paint-order</c>, appended to the frame's output when it closes.</summary>
+        public List<RNode>[]? Parts { get; init; }
+
+        /// <summary>For that frame: the markers still to be instantiated, one at a time so a marker that contains itself is seen as active.</summary>
+        public MarkerPlan? Pending { get; init; }
+
+        /// <summary>For a marker instance frame: the marker element to forget when the frame closes.</summary>
+        public SvgElement? Target { get; init; }
+
+        /// <summary>For a marker instance frame: the <c>use</c> chain of the shape the marker belongs to, put back when the frame closes (a marker's content starts a chain of its own, since markers are guarded separately).</summary>
+        public HashSet<SvgElement>? SavedUseChain { get; init; }
     }
 
     private const double AntialiasPad = 0.5;
@@ -81,6 +100,8 @@ internal sealed partial class SceneBuilder
     }
 
     private static readonly string[] DefaultLanguages = ["en"];
+    private readonly HashSet<SvgElement> _activeMarkers = [];
+    private readonly Dictionary<SvgElement, List<MarkerVertex>> _markerVertices = [];
 
     private readonly SvgDocument _doc;
     private readonly SvgLimits _limits;
@@ -90,7 +111,7 @@ internal sealed partial class SceneBuilder
     private readonly int _imageDepth;
     private readonly Budget _budget;
     private readonly Dictionary<SvgElement, Picture?> _pictures = [];
-    private readonly HashSet<SvgElement> _active = [];
+    private HashSet<SvgElement> _active = [];
     private readonly Dictionary<SvgElement, (Path? Path, Path? Dotted)> _pathCache = [];
     private double _rootFontSize = SvgStyle.DefaultFontSize;
     private bool _hasContent;
@@ -176,9 +197,9 @@ internal sealed partial class SceneBuilder
         var top = new List<RNode>();
         List<RNode> output = top;
         RLayer? layer = null;
-        if (st.Opacity < 1 || rootDeco is not null)
+        if (st.NeedsLayer || rootDeco is not null)
         {
-            layer = new RLayer { Children = [], Opacity = (float)st.Opacity };
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend };
             output = layer.Children;
         }
 
@@ -213,6 +234,11 @@ internal sealed partial class SceneBuilder
             Frame f = stack.Peek();
             if (f.Next >= f.Kids.Count)
             {
+                if (f.Marker?.Pending is not null && PushNextMarker(stack, f))
+                {
+                    continue;
+                }
+
                 stack.Pop();
                 Close(stack, f);
                 continue;
@@ -238,6 +264,27 @@ internal sealed partial class SceneBuilder
         if (f.UseTarget is not null)
         {
             _active.Remove(f.UseTarget);
+        }
+
+        if (f.Marker is { } marker)
+        {
+            if (marker.Target is not null)
+            {
+                _activeMarkers.Remove(marker.Target);
+            }
+
+            if (marker.SavedUseChain is not null)
+            {
+                _active = marker.SavedUseChain;
+            }
+
+            if (marker.Parts is not null)
+            {
+                foreach (List<RNode> part in marker.Parts)
+                {
+                    f.Out.AddRange(part);
+                }
+            }
         }
 
         if (f.Layer is { } layer && layer.Children.Count > 0)
@@ -374,7 +421,7 @@ internal sealed partial class SceneBuilder
                 throw new ImageLimitException($"Groups with opacity are nested more than {maxLayers} deep.");
             }
 
-            layer = new RLayer { Children = [], Opacity = (float)st.Opacity };
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend };
             output = layer.Children;
             depth++;
         }
@@ -415,7 +462,7 @@ internal sealed partial class SceneBuilder
             return;
         }
 
-        Open(stack, f, e.Children, st, ctm, f.Vp, clip, st.Opacity < 1 || deco is not null, maxLayers: _limits.MaxLayerDepth, deco: deco);
+        Open(stack, f, e.Children, st, ctm, f.Vp, clip, st.NeedsLayer || deco is not null, maxLayers: _limits.MaxLayerDepth, deco: deco);
     }
 
     private void PushUse(Stack<Frame> stack, Frame f, SvgElement e)
@@ -459,7 +506,7 @@ internal sealed partial class SceneBuilder
         Length? uh = Length.TryParse(e.Attr("height") ?? string.Empty, out Length lh) ? lh : null;
         _active.Add(target);
         (ResolvedPaint ctxFill, ResolvedPaint ctxStroke, BBoxHolder useBox) = ContextPaints(f, st, ctm);
-        Open(stack, f, [target], st, ctm, f.Vp, useClip, st.Opacity < 1 || useDeco is not null, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth, ctxFill, ctxStroke, useBox, useDeco);
+        Open(stack, f, [target], st, ctm, f.Vp, useClip, st.NeedsLayer || useDeco is not null, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth, ctxFill, ctxStroke, useBox, useDeco);
     }
 
     private static bool IsAncestorOrSelf(SvgElement candidate, SvgElement of)
@@ -527,7 +574,7 @@ internal sealed partial class SceneBuilder
 
         clip = OverflowClip(clip, e, ctm, x, y, w, h);
 
-        Open(stack, f, e.Children, st, inner, vp, clip, st.Opacity < 1 || deco is not null, maxLayers: _limits.MaxLayerDepth, deco: deco);
+        Open(stack, f, e.Children, st, inner, vp, clip, st.NeedsLayer || deco is not null, maxLayers: _limits.MaxLayerDepth, deco: deco);
     }
 
     private static Length ParseLength(string? v) => v is not null && Length.TryParse(v, out Length l) ? l : Length.Zero;
@@ -900,7 +947,9 @@ internal sealed partial class SceneBuilder
             fill = false;
         }
 
-        if (!fill && !stroke)
+        // Markers of the shape's vertices (path, line, polyline and polygon only), drawn even when the shape itself paints nothing.
+        MarkerPlan? markers = PlanMarkers(e, st, f, ctm, fillPaint, strokePaint);
+        if (!fill && !stroke && markers is null)
         {
             return;
         }
@@ -917,9 +966,9 @@ internal sealed partial class SceneBuilder
             return;
         }
 
-        bool layered = (st.Opacity < 1 && fill && stroke) || deco is not null;
+        bool layered = markers is not null ? (st.Opacity < 1 || st.Blend != BlendMode.Normal || deco is not null) : ((st.Opacity < 1 && fill && stroke) || st.Blend != BlendMode.Normal || deco is not null);
         float groupOpacity = layered ? 1f : (float)st.Opacity;
-        var node = new RPath
+        RPath? node = new RPath
         {
             Geometry = geometry,
             StrokeGeometry = stroke && cap != StrokeCap.Butt ? dotted : null,
@@ -969,13 +1018,23 @@ internal sealed partial class SceneBuilder
             node.Y1 = Math.Min(node.Y1, cb.Bottom + 1);
             if (node.X0 > node.X1 || node.Y0 > node.Y1)
             {
-                return;
+                if (markers is null)
+                {
+                    return;
+                }
+
+                node = null;
             }
         }
 
-        if (layered)
+        if (markers is not null)
         {
-            var layer = new RLayer { Children = [node], Opacity = (float)st.Opacity, X0 = node.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1, ContentX1 = node.ContentX1, ContentY1 = node.ContentY1 };
+            markers.Clip = clip;
+            EmitMarkers(stack, f, st, ctm, markers, node, layered, deco);
+        }
+        else if (layered)
+        {
+            var layer = new RLayer { Children = [node!], Opacity = (float)st.Opacity, Blend = st.Blend, X0 = node!.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1, ContentX1 = node.ContentX1, ContentY1 = node.ContentY1 };
             if (deco is not null)
             {
                 FinishLayer(stack, layer, deco, f.Out, f.LayerDepth + 1);
@@ -987,7 +1046,7 @@ internal sealed partial class SceneBuilder
         }
         else
         {
-            f.Out.Add(node);
+            f.Out.Add(node!);
         }
     }
 

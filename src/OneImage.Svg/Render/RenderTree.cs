@@ -79,6 +79,41 @@ internal sealed class RPath : RNode
     /// <summary>The region the shape is limited to (a viewport), in scene space, or <see langword="null"/>.</summary>
     public Path? Clip { get; init; }
 
+    /// <summary>A copy that paints only the fill or only the stroke (<c>paint-order</c> puts markers between them).</summary>
+    public RPath Part(bool fill)
+    {
+        return new RPath
+        {
+            Geometry = Geometry,
+            Ctm = Ctm,
+            StrokeGeometry = StrokeGeometry,
+            HasFill = fill && HasFill,
+            FillColor = FillColor,
+            FillPaint = FillPaint,
+            StrokePaint = StrokePaint,
+            StrokeFirst = false,
+            FillOpacity = FillOpacity,
+            EvenOdd = EvenOdd,
+            HasStroke = !fill && HasStroke,
+            StrokeColor = StrokeColor,
+            StrokeOpacity = StrokeOpacity,
+            StrokeWidth = StrokeWidth,
+            Cap = Cap,
+            Join = Join,
+            MiterLimit = MiterLimit,
+            Dash = Dash,
+            DashOffset = DashOffset,
+            Antialias = Antialias,
+            Clip = Clip,
+            X0 = X0,
+            Y0 = Y0,
+            X1 = X1,
+            Y1 = Y1,
+            ContentX1 = ContentX1,
+            ContentY1 = ContentY1,
+        };
+    }
+
     /// <summary>
     /// The stroke outline in the geometry's own space for a flattening tolerance, kept for the next tile of the same render.
     /// </summary>
@@ -111,6 +146,9 @@ internal sealed class RLayer : RNode
 
     /// <summary>Gets a value indicating whether, when this layer is a mask, its alpha is the coverage (<c>mask-type: alpha</c>) instead of its luminance.</summary>
     public bool MaskAlpha { get; init; }
+
+    /// <summary>How the finished group blends with what is behind it (<c>mix-blend-mode</c>); normal is plain source-over.</summary>
+    public BlendMode Blend { get; init; }
 }
 
 /// <summary>

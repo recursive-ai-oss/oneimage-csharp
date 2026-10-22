@@ -18,9 +18,12 @@ internal static class PathData
     /// equal) closed, or <see langword="null"/> when there is none: SVG draws such a subpath as a dot under round and square caps,
     /// which the stroker does for a closed figure.
     /// </summary>
-    public static bool Parse(ReadOnlySpan<char> data, out Path path, out Path? dotted)
+    public static bool Parse(ReadOnlySpan<char> data, out Path path, out Path? dotted) => Parse(data, out path, out dotted, null);
+
+    /// <summary>As the other overload, and records the segments into <paramref name="markers"/> (when given) for marker placement.</summary>
+    public static bool Parse(ReadOnlySpan<char> data, out Path path, out Path? dotted, MarkerPath? markers)
     {
-        var b = new Dual();
+        var b = new Dual(markers);
         int i = 0;
         char cmd = '\0';
         bool first = true;
@@ -209,14 +212,18 @@ internal static class PathData
     {
         private readonly PathBuilder _main = new();
         private readonly PathBuilder _dotted = new();
+        private readonly MarkerPath? _rec;
         private bool _segments;
         private bool _moved;
         private bool _any;
         private float _sx;
         private float _sy;
 
+        public Dual(MarkerPath? rec) => _rec = rec;
+
         public void MoveTo(float x, float y)
         {
+            _rec?.MoveTo(x, y);
             Flush();
             _main.MoveTo(x, y);
             _dotted.MoveTo(x, y);
@@ -228,6 +235,7 @@ internal static class PathData
 
         public void LineTo(float x, float y)
         {
+            _rec?.LineTo(x, y);
             _main.LineTo(x, y);
             _dotted.LineTo(x, y);
             Note(x, y);
@@ -235,6 +243,7 @@ internal static class PathData
 
         public void QuadraticBezierTo(float cx, float cy, float x, float y)
         {
+            _rec?.QuadTo(cx, cy, x, y);
             _main.QuadraticBezierTo(cx, cy, x, y);
             _dotted.QuadraticBezierTo(cx, cy, x, y);
             Note(cx, cy);
@@ -243,6 +252,7 @@ internal static class PathData
 
         public void CubicBezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
         {
+            _rec?.CubicTo(c1x, c1y, c2x, c2y, x, y);
             _main.CubicBezierTo(c1x, c1y, c2x, c2y, x, y);
             _dotted.CubicBezierTo(c1x, c1y, c2x, c2y, x, y);
             Note(c1x, c1y);
@@ -252,6 +262,7 @@ internal static class PathData
 
         public void ArcTo(float rx, float ry, float rotation, bool large, bool sweep, float x, float y)
         {
+            _rec?.ArcTo(rx, ry, rotation, large, sweep, x, y);
             _main.ArcTo(rx, ry, rotation, large, sweep, x, y);
             _dotted.ArcTo(rx, ry, rotation, large, sweep, x, y);
             Note(x, y);
@@ -259,6 +270,7 @@ internal static class PathData
 
         public void Close()
         {
+            _rec?.Close();
             _main.Close();
             _dotted.Close();
             _segments = false;

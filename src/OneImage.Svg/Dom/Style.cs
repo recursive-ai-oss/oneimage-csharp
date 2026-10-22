@@ -15,6 +15,12 @@ internal enum PaintKind
     ContextStroke,
 }
 
+/// <summary>The ids of the markers a shape asks for; <see langword="null"/> where there is none.</summary>
+internal sealed record MarkerRefs(string? Start, string? Mid, string? End)
+{
+    public static MarkerRefs None { get; } = new(null, null, null);
+}
+
 /// <summary>A <c>fill</c> or <c>stroke</c> value.</summary>
 /// <param name="Kind">What kind of paint.</param>
 /// <param name="Color">The color for <see cref="PaintKind.Color"/> (straight alpha).</param>
@@ -78,9 +84,21 @@ internal struct SvgStyle
     /// <summary>The <c>paint-order</c> as three base-4 digits, first painted first: 0 fill, 1 stroke, 2 markers. Normal is fill, stroke, markers.</summary>
     public int PaintOrder;
 
+    /// <summary>The ids of the markers (<c>marker-start</c>, <c>marker-mid</c>, <c>marker-end</c>), or <see langword="null"/> when none is set. Inherited. One shared reference, so a style stays small.</summary>
+    public MarkerRefs? Markers;
+
     // Not inherited.
     public double Opacity;
     public bool Displayed;
+
+    /// <summary><c>mix-blend-mode</c>: how the element's group blends with what is behind it.</summary>
+    public BlendMode Blend;
+
+    /// <summary><c>isolation: isolate</c>: the element's group is composited on its own, so blend modes inside it only see the group.</summary>
+    public bool Isolate;
+
+    /// <summary>Gets whether the element's content has to be painted into a group of its own and composited as one.</summary>
+    public readonly bool NeedsLayer => Opacity < 1 || Blend != BlendMode.Normal || Isolate;
 
     public static SvgStyle Initial => new()
     {
@@ -115,6 +133,8 @@ internal struct SvgStyle
         SvgStyle s = parent;
         s.Opacity = 1;
         s.Displayed = true;
+        s.Blend = BlendMode.Normal;
+        s.Isolate = false;
         if (e.Props.Count == 0)
         {
             return s;
@@ -279,6 +299,48 @@ internal struct SvgStyle
                 case "display":
                     s.Displayed = value != "none";
                     break;
+                case "mix-blend-mode":
+                    if (TryBlend(value, out BlendMode bm))
+                    {
+                        s.Blend = bm;
+                    }
+
+                    break;
+                case "isolation":
+                    if (value is "auto" or "isolate")
+                    {
+                        s.Isolate = value == "isolate";
+                    }
+
+                    break;
+                case "marker-start":
+                    if (TryMarker(value, out string? ms))
+                    {
+                        s.Markers = (s.Markers ?? MarkerRefs.None) with { Start = ms };
+                    }
+
+                    break;
+                case "marker-mid":
+                    if (TryMarker(value, out string? mm))
+                    {
+                        s.Markers = (s.Markers ?? MarkerRefs.None) with { Mid = mm };
+                    }
+
+                    break;
+                case "marker-end":
+                    if (TryMarker(value, out string? me))
+                    {
+                        s.Markers = (s.Markers ?? MarkerRefs.None) with { End = me };
+                    }
+
+                    break;
+                case "marker":
+                    if (TryMarker(value, out string? all))
+                    {
+                        s.Markers = new MarkerRefs(all, all, all);
+                    }
+
+                    break;
                 case "image-rendering":
                     if (value is "optimizeSpeed" or "pixelated" or "crisp-edges" or "auto" or "optimizeQuality" or "smooth" or "high-quality")
                     {
@@ -321,6 +383,12 @@ internal struct SvgStyle
             case "shape-rendering": s.Antialias = p.Antialias; break;
             case "image-rendering": s.Pixelated = p.Pixelated; break;
             case "display": s.Displayed = true; break;
+            case "marker-start": s.Markers = (s.Markers ?? MarkerRefs.None) with { Start = p.Markers?.Start }; break;
+            case "marker-mid": s.Markers = (s.Markers ?? MarkerRefs.None) with { Mid = p.Markers?.Mid }; break;
+            case "marker-end": s.Markers = (s.Markers ?? MarkerRefs.None) with { End = p.Markers?.End }; break;
+            case "marker": s.Markers = p.Markers; break;
+            case "mix-blend-mode": s.Blend = p.Blend; break;
+            case "isolation": s.Isolate = p.Isolate; break;
             case "font-size": s.FontSize = p.FontSize; break;
         }
 
@@ -373,7 +441,7 @@ internal struct SvgStyle
 
     private static bool Inherited(string name) => name is "fill" or "stroke" or "fill-opacity" or "stroke-opacity" or "fill-rule" or "paint-order" or "clip-rule"
         or "stroke-width" or "stroke-linecap" or "stroke-linejoin" or "stroke-miterlimit" or "stroke-dasharray" or "stroke-dashoffset"
-        or "visibility" or "shape-rendering" or "image-rendering" or "font-size" or "color";
+        or "visibility" or "shape-rendering" or "image-rendering" or "font-size" or "color" or "marker" or "marker-start" or "marker-mid" or "marker-end";
 
     private static void InitialOne(ref SvgStyle s, string name)
     {
@@ -397,10 +465,67 @@ internal struct SvgStyle
             case "visibility": s.Visible = i.Visible; break;
             case "shape-rendering": s.Antialias = i.Antialias; break;
             case "image-rendering": s.Pixelated = i.Pixelated; break;
+            case "marker-start": s.Markers = (s.Markers ?? MarkerRefs.None) with { Start = null }; break;
+            case "marker-mid": s.Markers = (s.Markers ?? MarkerRefs.None) with { Mid = null }; break;
+            case "marker-end": s.Markers = (s.Markers ?? MarkerRefs.None) with { End = null }; break;
+            case "marker": s.Markers = null; break;
+            case "mix-blend-mode": s.Blend = BlendMode.Normal; break;
+            case "isolation": s.Isolate = false; break;
             case "display": s.Displayed = true; break;
             case "font-size": s.FontSize = i.FontSize; break;
             case "color": s.Color = i.Color; break;
         }
+    }
+
+    // CSS Compositing: the blend modes of mix-blend-mode. plus-lighter is the additive blend.
+    private static bool TryBlend(string value, out BlendMode mode)
+    {
+        mode = value switch
+        {
+            "normal" => BlendMode.Normal,
+            "multiply" => BlendMode.Multiply,
+            "screen" => BlendMode.Screen,
+            "overlay" => BlendMode.Overlay,
+            "darken" => BlendMode.Darken,
+            "lighten" => BlendMode.Lighten,
+            "color-dodge" => BlendMode.ColorDodge,
+            "color-burn" => BlendMode.ColorBurn,
+            "hard-light" => BlendMode.HardLight,
+            "soft-light" => BlendMode.SoftLight,
+            "difference" => BlendMode.Difference,
+            "exclusion" => BlendMode.Exclusion,
+            "hue" => BlendMode.Hue,
+            "saturation" => BlendMode.Saturation,
+            "color" => BlendMode.Color,
+            "luminosity" => BlendMode.Luminosity,
+            "plus-lighter" => BlendMode.Add,
+            _ => (BlendMode)(-1),
+        };
+        return mode >= 0;
+    }
+
+    // A marker reference: none, or url(#id) (anything else is an invalid declaration).
+    internal static bool TryMarker(string value, out string? id)
+    {
+        id = null;
+        ReadOnlySpan<char> v = value.AsSpan().Trim();
+        if (v.Equals("none", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!v.StartsWith("url(", StringComparison.OrdinalIgnoreCase) || v.IndexOf(')') is not (var close and > 0) || !v[(close + 1)..].Trim().IsEmpty)
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> iri = v[4..close].Trim().Trim('\'').Trim('"').Trim();
+        if (iri.Length > 1 && iri[0] == '#')
+        {
+            id = iri[1..].ToString();
+        }
+
+        return true;
     }
 
     private static bool TryOpacity(string v, out double result)
