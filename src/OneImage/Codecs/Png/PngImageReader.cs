@@ -19,6 +19,12 @@ internal static class PngImageReader
 
     private const int BatchBytes = 1 << 16;
 
+    // Big non-interlaced images inflate the next batch on a pool thread while this thread unfilters the current one. Inflating
+    // is the larger half of the work, so decode time approaches the inflate time. Smaller images stay on one thread: the
+    // handoff would cost more than it saves.
+    private const long PipelineMinBytes = 1 << 20;
+    private const int PipelineBatchBytes = 1 << 17;
+
     // The inflater decodes a little ahead of what is asked for (its window); the cap must not fire on that read-ahead.
     private const long InflateSlack = 1 << 20;
 
@@ -55,11 +61,14 @@ internal static class PngImageReader
         }
 
         int rawRowLen = (int)rawRowMax + 1;
-        int batchRows = Math.Max(1, BatchBytes / rawRowLen);
+        bool pipelined = !st.Interlaced && (long)Math.Min(h, rowsWanted) * rawRowLen >= PipelineMinBytes;
+        int batchRows = Math.Max(1, (pipelined ? PipelineBatchBytes : BatchBytes) / rawRowLen);
         batchRows = Math.Min(batchRows, h);
         int outRowMax = checked(w * outBpp);
 
         byte[]? raw = null;
+        byte[]? raw2 = null;
+        Task? pending = null;
         byte[]? prev = null;
         byte[]? outBuf = null;
         byte[]? frame = null;
@@ -67,12 +76,49 @@ internal static class PngImageReader
         try
         {
             raw = ArrayPool<byte>.Shared.Rent(checked(batchRows * rawRowLen));
+            if (pipelined)
+            {
+                raw2 = ArrayPool<byte>.Shared.Rent(raw.Length);
+            }
+
             prev = ArrayPool<byte>.Shared.Rent((int)rawRowMax);
             outBuf = ArrayPool<byte>.Shared.Rent(checked(batchRows * outRowMax));
             if (!st.Interlaced)
             {
                 Array.Clear(prev, 0, (int)rawRowMax);
                 int rows = Math.Min(h, rowsWanted);
+                if (raw2 != null)
+                {
+                    byte[][] bufs = [raw, raw2];
+                    int batches = (rows + batchRows - 1) / batchRows;
+                    reader.ReadExactly(raw.AsSpan(0, Math.Min(batchRows, rows) * rawRowLen));
+                    for (int b = 0; b < batches; b++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        if (b + 1 < batches)
+                        {
+                            byte[] next = bufs[(b + 1) & 1];
+                            int bytes = Math.Min(batchRows, rows - ((b + 1) * batchRows)) * rawRowLen;
+                            PngDataReader rd = reader;
+                            pending = Task.Run(() => rd.ReadExactly(next.AsSpan(0, bytes)), ct);
+                        }
+
+                        int y = b * batchRows;
+                        int cnt = Math.Min(batchRows, rows - y);
+                        Unfilter(st, w, cnt, rawRowLen, bpp, bufs[b & 1], prev, outBuf, outRowMax);
+                        target.Rows(y, outBuf, cnt);
+                        if (pending != null)
+                        {
+                            Task t = pending;
+                            pending = null;
+                            t.GetAwaiter().GetResult();
+                        }
+                    }
+
+                    reader.VerifyCurrentChunk();
+                    return;
+                }
+
                 for (int y0 = 0; y0 < rows; y0 += batchRows)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -130,7 +176,21 @@ internal static class PngImageReader
         }
         finally
         {
+            // A background inflate may still be writing into a buffer; wait for it before the buffers go back to the pool.
+            // Its own failure, if any, is not reported when another error is already leaving.
+            if (pending != null)
+            {
+                try
+                {
+                    pending.Wait(CancellationToken.None);
+                }
+                catch (AggregateException)
+                {
+                }
+            }
+
             ContainerIo.Return(ref raw);
+            ContainerIo.Return(ref raw2);
             ContainerIo.Return(ref prev);
             ContainerIo.Return(ref outBuf);
             ContainerIo.Return(ref frame);
@@ -146,6 +206,11 @@ internal static class PngImageReader
     private static void Batch(PngDataReader reader, PngInfo st, int pw, int n, int rawRowLen, int bpp, byte[] raw, byte[] prev, byte[] outBuf, int outRow)
     {
         reader.ReadExactly(raw.AsSpan(0, n * rawRowLen));
+        Unfilter(st, pw, n, rawRowLen, bpp, raw, prev, outBuf, outRow);
+    }
+
+    private static void Unfilter(PngInfo st, int pw, int n, int rawRowLen, int bpp, byte[] raw, byte[] prev, byte[] outBuf, int outRow)
+    {
         int rowBytes = rawRowLen - 1;
         ReadOnlySpan<byte> above = prev.AsSpan(0, rowBytes);
         for (int r = 0; r < n; r++)

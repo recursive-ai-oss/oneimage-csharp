@@ -52,6 +52,76 @@ public class PngFilterTests
     }
 
     [Fact]
+    public void VectorPaethAndSubMatchTheScalarReference()
+    {
+        var rnd = new Random(3);
+        foreach (int bpp in new[] { 3, 4 })
+        {
+            foreach (int len in new[] { 1, 2, 3, 7, 8, 15, 16, 17, 31, 33, 64, 129, 2000 })
+            {
+                for (int round = 0; round < 8; round++)
+                {
+                    byte[] row = new byte[len * bpp];
+                    byte[] prev = new byte[len * bpp];
+                    rnd.NextBytes(row);
+                    rnd.NextBytes(prev);
+                    if (round == 1)
+                    {
+                        Array.Fill(row, (byte)255);
+                        Array.Fill(prev, (byte)0);
+                    }
+
+                    byte[] s1 = (byte[])row.Clone(), v1 = (byte[])row.Clone();
+                    PngFilter.UnPaethScalar(s1, prev, bpp);
+                    PngFilter.UnPaethVector(v1, prev, bpp);
+                    Assert.Equal(s1, v1);
+                    byte[] s3 = (byte[])row.Clone(), v3 = (byte[])row.Clone();
+                    PngFilter.UnSubScalar(s3, bpp);
+                    if (v3.Length >= 16)
+                    {
+                        PngFilter.UnSubVector(v3, bpp);
+                        Assert.Equal(s3, v3);
+                    }
+                }
+            }
+        }
+
+        TestContext.Current.SendDiagnosticMessage($"Vector128.IsHardwareAccelerated={System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated}");
+    }
+
+    [Fact]
+    public void VectorForwardFiltersMatchTheScalarReference()
+    {
+        var rnd = new Random(4);
+        foreach (int bpp in new[] { 1, 2, 3, 4, 6, 8 })
+        {
+            foreach (int len in new[] { 5, 9, 15, 16, 17, 31, 33, 64, 129, 1000 })
+            {
+                int n = len * bpp;
+                for (int round = 0; round < 4; round++)
+                {
+                    byte[] raw = new byte[n];
+                    byte[] prev = new byte[n];
+                    rnd.NextBytes(raw);
+                    rnd.NextBytes(prev);
+                    if (round == 1)
+                    {
+                        Array.Fill(raw, (byte)255);
+                    }
+
+                    foreach (int filter in new[] { 1, 3, 4 })
+                    {
+                        byte[] s = new byte[n], v = new byte[n];
+                        PngFilter.ApplyScalar(filter, raw, prev, s, bpp);
+                        PngFilter.ApplyVector(filter, raw, prev, v, bpp);
+                        Assert.Equal(s, v);
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void ForwardFiltersInvertThroughUnfilterAndScoreMatchesScalar()
     {
         var rnd = new Random(2);

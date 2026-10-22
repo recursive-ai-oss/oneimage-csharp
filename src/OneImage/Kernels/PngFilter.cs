@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -31,6 +32,66 @@ internal static class PngFilter
     }
 
     internal static void UnSub(Span<byte> row, int bpp)
+    {
+        if ((bpp == 3 || bpp == 4) && Vector128.IsHardwareAccelerated && row.Length >= 16)
+        {
+            UnSubVector(row, bpp);
+            return;
+        }
+
+        UnSubScalar(row, bpp);
+    }
+
+    // Sub is a running per-channel sum along the row, so a block of pixels is a log-step prefix sum (byte shifts and adds)
+    // plus the previous block's last pixel. Byte adds wrap, which is the filter's arithmetic modulo 256.
+    internal static void UnSubVector(Span<byte> row, int bpp)
+    {
+        int n = row.Length;
+        int i = 0;
+        if (bpp == 4)
+        {
+            Vector128<byte> shl4 = Vector128.Create(0x80, 0x80, 0x80, 0x80, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11).AsByte();
+            Vector128<byte> shl8 = Vector128.Create(0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 2, 3, 4, 5, 6, 7).AsByte();
+            Vector128<byte> last = Vector128.Create(12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15).AsByte();
+            Vector128<byte> carry = Vector128<byte>.Zero;
+            for (; i + 16 <= n; i += 16)
+            {
+                Vector128<byte> v = Vector128.Create<byte>(row.Slice(i, 16));
+                v += Vector128.Shuffle(v, shl4);
+                v += Vector128.Shuffle(v, shl8);
+                v += carry;
+                v.CopyTo(row.Slice(i, 16));
+                carry = Vector128.Shuffle(v, last);
+            }
+        }
+        else
+        {
+            Vector128<byte> shl3 = Vector128.Create(0x80, 0x80, 0x80, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12).AsByte();
+            Vector128<byte> shl6 = Vector128.Create(0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9).AsByte();
+            Vector128<byte> shl12 = Vector128.Create(0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 2, 3).AsByte();
+            Vector128<byte> last = Vector128.Create(9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11, 9).AsByte();
+            Vector128<byte> carry = Vector128<byte>.Zero;
+            // 16 bytes are read but only the 12 that hold four whole pixels are stored; the next block starts there.
+            for (; i + 16 <= n; i += 12)
+            {
+                Vector128<byte> v = Vector128.Create<byte>(row.Slice(i, 16));
+                v += Vector128.Shuffle(v, shl3);
+                v += Vector128.Shuffle(v, shl6);
+                v += Vector128.Shuffle(v, shl12);
+                v += carry;
+                BinaryPrimitives.WriteUInt64LittleEndian(row.Slice(i, 8), v.AsUInt64().GetElement(0));
+                BinaryPrimitives.WriteUInt32LittleEndian(row.Slice(i + 8, 4), v.AsUInt32().GetElement(2));
+                carry = Vector128.Shuffle(v, last);
+            }
+        }
+
+        for (; i < n; i++)
+        {
+            row[i] += row[i - bpp];
+        }
+    }
+
+    internal static void UnSubScalar(Span<byte> row, int bpp)
     {
         if (bpp == 4 && row.Length >= 4)
         {
@@ -135,6 +196,69 @@ internal static class PngFilter
 
     internal static void UnPaeth(Span<byte> row, ReadOnlySpan<byte> prev, int bpp)
     {
+        if ((bpp == 3 || bpp == 4) && Vector128.IsHardwareAccelerated)
+        {
+            UnPaethVector(row, prev, bpp);
+            return;
+        }
+
+        UnPaethScalar(row, prev, bpp);
+    }
+
+    // One pixel per step with the channels in the low lanes of a Vector128<short>. The recurrence runs through the left
+    // neighbour, so pixels cannot be done side by side; the win is that all channels of a pixel share one instruction stream
+    // and no per-channel branches or byte stores. Values stay in 0..255 after the mask, so 16-bit lanes never overflow
+    // (|a+b-2c| <= 510).
+    internal static void UnPaethVector(Span<byte> row, ReadOnlySpan<byte> prev, int bpp)
+    {
+        int n = row.Length;
+        prev = prev.Slice(0, n);
+        Vector128<short> mask = Vector128.Create((short)0xFF);
+        Vector128<short> a = Vector128<short>.Zero, c = Vector128<short>.Zero;
+        for (int i = 0; i + bpp <= n; i += bpp)
+        {
+            Vector128<short> x = Widen(LoadPixel(row, i, bpp));
+            Vector128<short> b = Widen(LoadPixel(prev, i, bpp));
+            a = (x + PaethSelect(a, b, c)) & mask;
+            StorePixel(row, i, bpp, Narrow(a));
+            c = b;
+        }
+    }
+
+    private static Vector128<short> Widen(uint pixel) => Vector128.WidenLower(Vector128.CreateScalar(pixel).AsByte()).AsInt16();
+
+    private static uint Narrow(Vector128<short> v) => Vector128.Narrow(v.AsUInt16(), v.AsUInt16()).AsUInt32().ToScalar();
+
+    // A 3-byte pixel is read as 4 bytes when the row has one more byte; the extra byte only lands in a lane that is never stored.
+    private static uint LoadPixel(ReadOnlySpan<byte> s, int i, int bpp)
+    {
+        if (bpp == 4)
+        {
+            return BinaryPrimitives.ReadUInt32LittleEndian(s.Slice(i));
+        }
+
+        if (i + 4 <= s.Length)
+        {
+            return BinaryPrimitives.ReadUInt32LittleEndian(s.Slice(i)) & 0xFFFFFF;
+        }
+
+        return (uint)(s[i] | (s[i + 1] << 8) | (s[i + 2] << 16));
+    }
+
+    private static void StorePixel(Span<byte> s, int i, int bpp, uint v)
+    {
+        if (bpp == 4)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(s.Slice(i), v);
+            return;
+        }
+
+        BinaryPrimitives.WriteUInt16LittleEndian(s.Slice(i), (ushort)v);
+        s[i + 2] = (byte)(v >> 16);
+    }
+
+    internal static void UnPaethScalar(Span<byte> row, ReadOnlySpan<byte> prev, int bpp)
+    {
         int n = row.Length;
         if (bpp == 4 || bpp == 3)
         {
@@ -204,6 +328,103 @@ internal static class PngFilter
     // ---- Forward filters, used by the encoder. dest has the same length as raw. ----
 
     public static void Apply(int filter, ReadOnlySpan<byte> raw, ReadOnlySpan<byte> prev, Span<byte> dest, int bpp)
+    {
+        if (filter is 1 or 3 or 4 && Vector128.IsHardwareAccelerated && raw.Length >= bpp + 16)
+        {
+            ApplyVector(filter, raw, prev, dest, bpp);
+            return;
+        }
+
+        ApplyScalar(filter, raw, prev, dest, bpp);
+    }
+
+    // Forward Sub, Average and Paeth read only unfiltered bytes, so 16 output bytes are independent of each other.
+    // Every output byte comes out identical to the scalar form.
+    internal static void ApplyVector(int filter, ReadOnlySpan<byte> raw, ReadOnlySpan<byte> prev, Span<byte> dest, int bpp)
+    {
+        int n = raw.Length;
+        prev = prev.Slice(0, n);
+        dest = dest.Slice(0, n);
+        int head = Math.Min(bpp, n);
+        int i = head;
+        switch (filter)
+        {
+            case 1:
+                raw[..head].CopyTo(dest);
+                for (; i + 16 <= n; i += 16)
+                {
+                    (Vector128.Create<byte>(raw.Slice(i, 16)) - Vector128.Create<byte>(raw.Slice(i - bpp, 16))).CopyTo(dest.Slice(i, 16));
+                }
+
+                for (; i < n; i++)
+                {
+                    dest[i] = (byte)(raw[i] - raw[i - bpp]);
+                }
+
+                break;
+            case 3:
+                for (int k = 0; k < head; k++)
+                {
+                    dest[k] = (byte)(raw[k] - (prev[k] >> 1));
+                }
+
+                Vector128<byte> low7 = Vector128.Create((byte)0x7F);
+                for (; i + 16 <= n; i += 16)
+                {
+                    Vector128<byte> a = Vector128.Create<byte>(raw.Slice(i - bpp, 16));
+                    Vector128<byte> b = Vector128.Create<byte>(prev.Slice(i, 16));
+                    // floor((a + b) / 2) without widening: (a & b) + ((a ^ b) >> 1).
+                    Vector128<byte> avg = (a & b) + ((Vector128.ShiftRightLogical((a ^ b).AsUInt16(), 1).AsByte()) & low7);
+                    (Vector128.Create<byte>(raw.Slice(i, 16)) - avg).CopyTo(dest.Slice(i, 16));
+                }
+
+                for (; i < n; i++)
+                {
+                    dest[i] = (byte)(raw[i] - ((raw[i - bpp] + prev[i]) >> 1));
+                }
+
+                break;
+            default:
+                for (int k = 0; k < head; k++)
+                {
+                    dest[k] = (byte)(raw[k] - prev[k]);
+                }
+
+                for (; i + 16 <= n; i += 16)
+                {
+                    (Vector128<ushort> alo, Vector128<ushort> ahi) = Vector128.Widen(Vector128.Create<byte>(raw.Slice(i - bpp, 16)));
+                    (Vector128<ushort> blo, Vector128<ushort> bhi) = Vector128.Widen(Vector128.Create<byte>(prev.Slice(i, 16)));
+                    (Vector128<ushort> clo, Vector128<ushort> chi) = Vector128.Widen(Vector128.Create<byte>(prev.Slice(i - bpp, 16)));
+                    Vector128<short> plo = PaethSelect(alo.AsInt16(), blo.AsInt16(), clo.AsInt16());
+                    Vector128<short> phi = PaethSelect(ahi.AsInt16(), bhi.AsInt16(), chi.AsInt16());
+                    Vector128<byte> pred = Vector128.Narrow(plo.AsUInt16(), phi.AsUInt16());
+                    (Vector128.Create<byte>(raw.Slice(i, 16)) - pred).CopyTo(dest.Slice(i, 16));
+                }
+
+                for (; i < n; i++)
+                {
+                    dest[i] = (byte)(raw[i] - Paeth(raw[i - bpp], prev[i], prev[i - bpp]));
+                }
+
+                break;
+        }
+    }
+
+    // The Paeth predictor on 16-bit lanes holding 0..255 (see Paeth for the rule and tie order).
+    private static Vector128<short> PaethSelect(Vector128<short> a, Vector128<short> b, Vector128<short> c)
+    {
+        Vector128<short> pa = b - c;
+        Vector128<short> pb = a - c;
+        Vector128<short> pc = pa + pb;
+        pa = Vector128.Abs(pa);
+        pb = Vector128.Abs(pb);
+        pc = Vector128.Abs(pc);
+        Vector128<short> useA = Vector128.LessThanOrEqual(pa, pb) & Vector128.LessThanOrEqual(pa, pc);
+        Vector128<short> useB = Vector128.LessThanOrEqual(pb, pc);
+        return Vector128.ConditionalSelect(useA, a, Vector128.ConditionalSelect(useB, b, c));
+    }
+
+    internal static void ApplyScalar(int filter, ReadOnlySpan<byte> raw, ReadOnlySpan<byte> prev, Span<byte> dest, int bpp)
     {
         int n = raw.Length;
         int head = Math.Min(bpp, n);
