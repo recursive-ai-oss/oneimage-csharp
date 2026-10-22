@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using OneImage;
 using SharpFuzz;
 
 // One fuzz executable, one target per input surface. The target is chosen by the ONEIMAGE_FUZZ_TARGET environment
@@ -50,10 +51,25 @@ internal static class Program
                 target(System.IO.File.ReadAllBytes(args[i]));
             }
 
+            // Managed heap still in use after a full collection: growth across repeated replays points at a leak.
+            Console.WriteLine($"replayed {args.Length - 1} inputs; live heap {GC.GetTotalMemory(true) >> 10} KiB");
+
             return 0;
         }
 
-        Fuzzer.LibFuzzer.Run(span => target(span));
+        // Instrumented library code may only run once libFuzzer has attached, so configuration happens on the first input.
+        bool configured = false;
+        Fuzzer.LibFuzzer.Run(span =>
+        {
+            if (!configured)
+            {
+                // Keep the shared tile cache small so the run's memory limit measures leaks, not the cache's default 256 MiB budget.
+                ImageEngine.CacheBudgetBytes = 16L << 20;
+                configured = true;
+            }
+
+            target(span);
+        });
         return 0;
     }
 }
