@@ -114,7 +114,7 @@ public class FilterLocalityStreamingTests
     public void OtherFiltersOnHugeSequentialSourceStayInBoundedMemory()
     {
         const int W = 8000;
-        const int H = 12000;
+        const int H = 24000;
         long frameBytes = (long)W * H * 4;
         foreach ((string name, Func<Image, Image> op) in new (string, Func<Image, Image>)[]
         {

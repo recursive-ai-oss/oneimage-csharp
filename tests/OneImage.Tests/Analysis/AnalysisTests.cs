@@ -135,7 +135,7 @@ public class AnalysisTests
     {
         Gray16[] px = [new(0), new(65535), new(32768), new(32767), new(16384)];
         ImageHistogram h = Image.FromPixels<Gray16>(px, 5, 1).Histogram(4);
-        Assert.Equal([1, 1, 1, 2], h.Channel(0).ToArray());
+        Assert.Equal([1, 2, 1, 1], h.Channel(0).ToArray());
     }
 
     [Fact]

@@ -45,7 +45,7 @@ public class FilterVipsComparisonTests
 
         // libvips blurs stored values; its mask stops where the value falls below min_ampl, 0.0111 being about 3 sigma.
         using Vips blurred = v.Gaussblur(sigma, minAmpl: 0.0111, precision: NetVips.Enums.Precision.Float);
-        byte[] theirs = blurred.WriteToMemory<byte>();
+        byte[] theirs = blurred.WriteToMemory<float>().Select(f => (byte)Math.Clamp(Math.Floor(f + 0.5f), 0, 255)).ToArray();
         byte[] ours = Resample.ResampleAccuracyTests.ToBytes(Resample.ResampleAccuracyTests.ImageOf(raw, W, H, PixelFormat.Rgb8).GaussianBlur(sigma, linear: false), PixelFormat.Rgb8);
         (int Max, double Mean) all = Compare(ours, theirs, 3, 0);
         (int Max, double Mean) inner = Compare(ours, theirs, 3, (int)Math.Ceiling(3 * sigma));
