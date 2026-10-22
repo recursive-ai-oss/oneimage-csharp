@@ -34,6 +34,7 @@
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
     <!-- ImageSharp is a second oracle for the tone operations. -->
     <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" />
   </ItemGroup>
 
   <ItemGroup>

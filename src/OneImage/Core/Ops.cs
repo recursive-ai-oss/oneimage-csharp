@@ -12,10 +12,30 @@ public readonly record struct OpParameter(string Name, object Value);
 /// <summary>A language-neutral description of one graph node: the operation name and its serializable parameters.</summary>
 public sealed class OpDescriptor
 {
+    private readonly Func<OpParameter[]>? _factory;
+    private OpParameter[]? _parameters;
+
     internal OpDescriptor(string name, params OpParameter[] parameters)
     {
         Name = name;
-        Parameters = parameters;
+        _parameters = Check(name, parameters);
+    }
+
+    /// <summary>A descriptor whose parameters are built the first time someone reads them, for ops whose parameters are costly to describe (a path) and rarely looked at.</summary>
+    internal OpDescriptor(string name, Func<OpParameter[]> parameters)
+    {
+        Name = name;
+        _factory = parameters;
+    }
+
+    /// <summary>Gets the operation name, for example <c>crop</c> or <c>invert</c>.</summary>
+    public string Name { get; }
+
+    /// <summary>Gets the parameters in declaration order.</summary>
+    public IReadOnlyList<OpParameter> Parameters => _parameters ??= Check(Name, _factory!());
+
+    private static OpParameter[] Check(string name, OpParameter[] parameters)
+    {
         foreach (OpParameter p in parameters)
         {
             if (p.Value is not (long or double or bool or string))
@@ -23,13 +43,9 @@ public sealed class OpDescriptor
                 throw new ArgumentException($"Parameter '{p.Name}' of op '{name}' must be long, double, bool or string.", nameof(parameters));
             }
         }
+
+        return parameters;
     }
-
-    /// <summary>Gets the operation name, for example <c>crop</c> or <c>invert</c>.</summary>
-    public string Name { get; }
-
-    /// <summary>Gets the parameters in declaration order.</summary>
-    public IReadOnlyList<OpParameter> Parameters { get; }
 
     /// <summary>Formats the descriptor as <c>name(a=1, b=x)</c> using the invariant culture.</summary>
     /// <returns>The text form.</returns>

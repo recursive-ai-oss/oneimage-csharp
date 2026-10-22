@@ -23,7 +23,7 @@ public enum LockAccess
 /// canvas next writes it. A canvas is not thread-safe: use one writer, and hand snapshots to other threads.
 /// Dispose returns pooled memory; forgetting to dispose is safe (the garbage collector reclaims the buffers).
 /// </summary>
-public sealed class Canvas : IDisposable
+public sealed partial class Canvas : IDisposable
 {
     private TileGrid _grid;
     private object _token = new();

@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -45,6 +45,7 @@ case "$target" in
   ico)     seeds=ico;         prefix='\x00'; patterns='*.ico'; maxlen=65536 ;;
   gif)     seeds=gif;         prefix='\x00'; patterns='*.gif'; maxlen=65536 ;;
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
+  svg)     seeds=svgpath;     prefix='';     patterns='*.txt'; maxlen=4096 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac

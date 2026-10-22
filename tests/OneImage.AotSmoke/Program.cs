@@ -285,5 +285,22 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Drawing: build and parse paths, fill an image and a canvas (anti-aliased, a blend mode, linear light) and check both agree.
+{
+    OneImage.Drawing.Path shape = OneImage.Drawing.Path.Combine(OneImage.Drawing.Path.Circle(100, 80, 60), OneImage.Drawing.Path.ParseSvg("M10 10 L 90 20 Q 60 90 20 60 Z"));
+    Image filled = snapshot.Fill(new Rgba32(200, 40, 40, 200), shape, rule: OneImage.Drawing.IntersectionRule.EvenOdd);
+    Image lit = snapshot.Fill(new Rgba32(200, 40, 40, 200), shape, blend: BlendMode.Multiply, linear: true);
+    using var drawn = snapshot.ToCanvas();
+    drawn.Fill(new Rgba32(200, 40, 40, 200), shape, rule: OneImage.Drawing.IntersectionRule.EvenOdd);
+    Rgba32[] a = filled.ToArray<Rgba32>();
+    var b = new Rgba32[a.Length];
+    drawn.CopyTo<Rgba32>(b, new ImageRect(0, 0, 300, 200));
+    if (!a.AsSpan().SequenceEqual(b) || lit.ToArray<Rgba32>().Length != a.Length || !OneImage.Drawing.Path.TryParseSvg(shape.ToSvg(), out _))
+    {
+        Console.Error.WriteLine("drawing smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

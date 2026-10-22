@@ -544,3 +544,7 @@ OneImage reads and writes PNG, JPEG, WebP, GIF, TIFF, BMP and ICO. ImageSharp 3.
 ### Not in either library
 
 Layers, masks and groups with Photoshop blend modes, PSD, and vector formats are further out than the items above and are not in ImageSharp either.
+
+## Drawing shapes
+
+Filling shapes with a solid color maps closely to ImageSharp.Drawing; the names and the differences (default fill rule, non-anti-aliased edge rule, pixel-coordinate conventions) are in [drawing.md](drawing.md). Strokes, gradient and pattern brushes, clipping and text are not available yet.

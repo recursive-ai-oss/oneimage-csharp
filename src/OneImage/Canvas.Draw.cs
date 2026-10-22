@@ -1,0 +1,152 @@
+using System.Numerics;
+using OneImage.Drawing;
+using Path = OneImage.Drawing.Path;
+
+namespace OneImage;
+
+public sealed partial class Canvas
+{
+    /// <summary>
+    /// Fills the inside of <paramref name="path"/> with <paramref name="brush"/>, in place. The geometry, coverage, color and
+    /// option rules are those of <see cref="Image.Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/>,
+    /// and the pixels written are byte for byte what <c>Snapshot().Fill(...)</c> would show. Only the tiles the path can touch are
+    /// written (shared tiles are copied first), so a small shape on a large canvas costs a few tiles. The fill runs on the calling thread.
+    /// </summary>
+    /// <param name="brush">What to paint with; see <see cref="Brush.Solid"/>.</param>
+    /// <param name="path">The outline, in canvas pixel coordinates.</param>
+    /// <param name="antialias">Smooth edges. The default is <see langword="true"/>.</param>
+    /// <param name="rule">Inside rule for overlapping parts. The default is <see cref="IntersectionRule.NonZero"/>.</param>
+    /// <param name="opacity">Multiplier for the brush alpha, 0 to 1. The default is 1.</param>
+    /// <param name="blend">Blend mode. The default is <see cref="BlendMode.Normal"/>.</param>
+    /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
+    /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
+    /// <param name="transform">Applied to the path before filling. The default is none.</param>
+    /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="brush"/> or <paramref name="path"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
+    /// <exception cref="ImageOperationException">The canvas is CMYK or Lab, the composition would make a canvas without alpha transparent, or the transform leaves the finite range.</exception>
+    /// <exception cref="ImageLimitException">The path flattens to too many segments (<see cref="Path.MaxFlattenedPoints"/>).</exception>
+    public void Fill(Brush brush, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(brush);
+        ArgumentNullException.ThrowIfNull(path);
+        FillCore(brush, path, FillSettings.Check(antialias, rule, opacity, blend, composition, linear, transform, Format));
+    }
+
+    /// <summary>Fills <paramref name="path"/> with one color, in place; see <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/>.</summary>
+    /// <param name="color">The color, straight alpha, in the canvas's color space.</param>
+    /// <param name="path">The outline, in canvas pixel coordinates.</param>
+    /// <param name="antialias">Smooth edges. The default is <see langword="true"/>.</param>
+    /// <param name="rule">Inside rule for overlapping parts. The default is <see cref="IntersectionRule.NonZero"/>.</param>
+    /// <param name="opacity">Multiplier for the color's alpha, 0 to 1. The default is 1.</param>
+    /// <param name="blend">Blend mode. The default is <see cref="BlendMode.Normal"/>.</param>
+    /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
+    /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
+    /// <param name="transform">Applied to the path before filling. The default is none.</param>
+    /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="path"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
+    /// <exception cref="ImageOperationException">The canvas is CMYK or Lab, the composition would make a canvas without alpha transparent, or the transform leaves the finite range.</exception>
+    /// <exception cref="ImageLimitException">The path flattens to too many segments.</exception>
+    public void Fill(Rgba32 color, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null) =>
+        Fill(Brush.Solid(color), path, antialias, rule, opacity, blend, composition, linear, transform);
+
+    /// <summary>Lays one color over every pixel, in place; see <see cref="Image.Fill(Rgba32, float, BlendMode, AlphaComposition, bool)"/>.</summary>
+    /// <param name="color">The color, straight alpha, in the canvas's color space.</param>
+    /// <param name="opacity">Multiplier for the color's alpha, 0 to 1. The default is 1.</param>
+    /// <param name="blend">Blend mode. The default is <see cref="BlendMode.Normal"/>.</param>
+    /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
+    /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
+    /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
+    /// <exception cref="ImageOperationException">The canvas is CMYK or Lab, or the composition would make a canvas without alpha transparent.</exception>
+    public void Fill(Rgba32 color, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false) =>
+        Fill(Brush.Solid(color), Rectangle(Width, Height), false, IntersectionRule.NonZero, opacity, blend, composition, linear);
+
+    /// <summary>Replaces every pixel with <paramref name="color"/>, in place; see <see cref="Image.Clear"/>.</summary>
+    /// <param name="color">The color, straight alpha, in the canvas's color space.</param>
+    /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
+    /// <exception cref="ImageOperationException">The canvas is CMYK or Lab.</exception>
+    public void Clear(Rgba32 color) =>
+        Fill(Brush.Solid(color), Rectangle(Width, Height), false, IntersectionRule.NonZero, 1f, BlendMode.Normal, Format.HasAlpha ? AlphaComposition.Src : AlphaComposition.SrcOver);
+
+    private static Path Rectangle(int width, int height) => Path.Rectangle(0, 0, width, height);
+
+    private void FillCore(Brush brush, Path path, FillSettings s)
+    {
+        Raster raster = Raster.Build(path, s.Transform, Width, Height, s.Tolerance);
+        if (s.Linear)
+        {
+            // Linear light converts through the image pipeline; the tiles it produces replace the touched ones.
+            Node filled = Snapshot().FillCore(brush, path, s).Root;
+            RenderContext context = RenderContext.Create(1, CancellationToken.None);
+            for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
+            {
+                for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
+                {
+                    if (raster.MayTouch(tx, ty))
+                    {
+                        Tile source = filled.GetTile(tx, ty, context);
+                        try
+                        {
+                            source.Span.CopyTo(WritableTile(tx, ty, willOverwriteAll: true).Span);
+                        }
+                        finally
+                        {
+                            source.Release();
+                        }
+                    }
+                }
+            }
+
+            return;
+        }
+
+        FillPlan plan = FillPlan.Create(Format, brush, s);
+        // Writable tiles are taken one by one (the tile table is single-writer); painting them is independent per tile and
+        // runs in parallel. Each tile's result depends only on its own rasterization, so the output never depends on scheduling.
+        var touched = new List<(int Tx, int Ty, Tile Tile)>();
+        for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
+        {
+            for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
+            {
+                if (raster.MayTouch(tx, ty))
+                {
+                    touched.Add((tx, ty, WritableTile(tx, ty, willOverwriteAll: false)));
+                }
+            }
+        }
+
+        int degree = ImageEngine.ResolveDegree(0);
+        if (degree <= 1 || touched.Count < 4)
+        {
+            foreach ((int tx, int ty, Tile tile) in touched)
+            {
+                PaintTile(raster, plan, s, tx, ty, tile);
+            }
+
+            return;
+        }
+
+        Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => PaintTile(raster, plan, s, touched[i].Tx, touched[i].Ty, touched[i].Tile));
+    }
+
+    private void PaintTile(Raster raster, FillPlan plan, FillSettings s, int tx, int ty, Tile tile)
+    {
+        int x = tx << Tile.Shift, y = ty << Tile.Shift;
+        int tw = Math.Min(Tile.Size, Width - x), th = Math.Min(Tile.Size, Height - y);
+        RasterScratch scratch = RasterScratch.Rent();
+        try
+        {
+            if (TileRasterizer.Rasterize(raster, tx, ty, tw, th, scratch, s.Antialias, s.Rule))
+            {
+                plan.Paint(tile.Span, tw, th, x, y, scratch);
+            }
+        }
+        finally
+        {
+            RasterScratch.Return(scratch);
+        }
+    }
+}
