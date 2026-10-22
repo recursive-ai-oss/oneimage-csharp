@@ -43,7 +43,7 @@ public sealed class StreamingTests : IDisposable
         {
             while (!stop.IsCancellationRequested)
             {
-                peak = Math.Max(peak, GC.GetTotalMemory(false));
+                peak = Math.Max(peak, LiveHeap.Read(baseline, frameBytes / 10));
                 Thread.Sleep(2);
             }
         });

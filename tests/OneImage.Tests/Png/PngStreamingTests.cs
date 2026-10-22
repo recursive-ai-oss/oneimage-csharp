@@ -15,7 +15,7 @@ public sealed class PngStreamingTests : IDisposable
         private readonly Thread _thread;
         private long _peak;
 
-        public PeakSampler()
+        public PeakSampler(long limit)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -26,7 +26,7 @@ public sealed class PngStreamingTests : IDisposable
             {
                 while (!_stop.IsCancellationRequested)
                 {
-                    _peak = Math.Max(_peak, GC.GetTotalMemory(false));
+                    _peak = Math.Max(_peak, LiveHeap.Read(Baseline, limit));
                     Thread.Sleep(2);
                 }
             });
@@ -123,7 +123,7 @@ public sealed class PngStreamingTests : IDisposable
         var sink = new CountingSink(W, H, info.Frames[0].Format);
 
         long growth;
-        using (var sampler = new PeakSampler())
+        using (var sampler = new PeakSampler(frameBytes / 10))
         {
             PngFormat.Instance.Decoder.DecodeFrame(fs, info, 0, new DecodeRequest(new ImageRect(0, 0, W, H)), sink, ImageLimits.Default, CancellationToken.None);
             growth = sampler.Growth;
@@ -145,7 +145,7 @@ public sealed class PngStreamingTests : IDisposable
         Image img = Image.Load(path).Invert();
         Assert.Equal((W, H), (img.Width, img.Height));
         long growth;
-        using (var sampler = new PeakSampler())
+        using (var sampler = new PeakSampler(frameBytes / 10))
         {
             img.Save(Stream.Null, PngFormat.Instance, new SaveOptions { EncoderOptions = new PngEncoderOptions { CompressionLevel = 0, Filter = PngFilterMode.None, ColorMode = PngColorMode.Truecolor } });
             growth = sampler.Growth;
