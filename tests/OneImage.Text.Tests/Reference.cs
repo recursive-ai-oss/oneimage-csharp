@@ -39,7 +39,7 @@ internal static class Reference
         }
     }
 
-    public static RefTextOptions Options(RefFont font, TextOptions o)
+    public static RichTextOptions Options(RefFont font, TextOptions o)
     {
         var r = new RichTextOptions(font)
         {

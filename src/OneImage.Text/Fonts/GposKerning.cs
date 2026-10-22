@@ -7,8 +7,9 @@ namespace OneImage.Text.Fonts;
 /// </summary>
 internal sealed class GposKerning
 {
-    private const int MaxLookups = 64;
-    private const int MaxSubtables = 256;
+    // A font that lists many lookups with many subtables can only make kerning slow, never wrong; these bounds keep one pair lookup cheap.
+    private const int MaxLookups = 32;
+    private const int MaxSubtables = 64;
 
     private readonly ReadOnlyMemory<byte> _gpos;
     private readonly int _lookupList;

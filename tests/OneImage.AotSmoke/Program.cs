@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using OneImage;
 using OneImage.Compression;
+using OneImage.Text;
 
 // Exercises the library from a NativeAOT-published app; grows as the library does.
 if (string.IsNullOrEmpty(Library.Name))
@@ -372,6 +373,31 @@ foreach (bool lossless in new[] { true, false })
             Console.Error.WriteLine("brush smoke failed");
             return 1;
         }
+    }
+}
+
+// Text: fonts of each container, layout, measurement and drawing, through the separate text package.
+{
+    string dir = Path.Combine(AppContext.BaseDirectory, "fonts");
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily noto = fonts.Add(Path.Combine(dir, "NotoSans-Subset-Regular.woff"));
+    fonts.AddCollection(Path.Combine(dir, "NotoSans-Subset.ttc"));
+    OneImage.Text.FontFamily cjk = fonts.Add(Path.Combine(dir, "NotoSansCJK-Subset.otf"));
+    var options = new OneImage.Text.TextOptions(noto.CreateFont(28)) { Origin = new System.Numerics.Vector2(8, 6), WrappingLength = 150 };
+    const string text = "Hello AV world, kerned and wrapped.";
+    OneImage.Text.TextMetrics metrics = OneImage.Text.TextMeasurer.Measure(text, options);
+    var white = new Rgba32[300 * 200];
+    Array.Fill(white, new Rgba32(255, 255, 255, 255));
+    Image drawn = Image.FromPixels<Rgba32>(white, 300, 200)
+        .DrawText(text, options, OneImage.Drawing.Brush.Solid(new Rgba32(0, 0, 0, 255)), OneImage.Drawing.Pen.Solid(new Rgba32(200, 0, 0, 255), 1));
+    Rgba32[] pixels = drawn.ToArray<Rgba32>();
+    var cjkOptions = new OneImage.Text.TextOptions(cjk.CreateFont(30));
+    using var textCanvas = new Canvas(200, 60, PixelFormat.Rgba8);
+    textCanvas.DrawText("\u65e5\u672c\u8a9e AV", cjkOptions, new Rgba32(255, 255, 255, 255));
+    if (metrics.LineCount < 3 || !pixels.Any(p => p.R < 100 && p.G < 100) || !pixels.Any(p => p.R > 150 && p.G < 100) || textCanvas.Snapshot().ToArray<Rgba32>().All(p => p.A == 0))
+    {
+        Console.Error.WriteLine("text smoke failed");
+        return 1;
     }
 }
 

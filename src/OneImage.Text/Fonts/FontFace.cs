@@ -6,6 +6,7 @@ namespace OneImage.Text.Fonts;
 internal sealed class FontFace
 {
     private const int MaxCachedOutlines = 8192;
+    private const int MaxCachedKerningPairs = 1 << 16;
 
     private readonly Dictionary<uint, ReadOnlyMemory<byte>> _tables;
     private readonly ReadOnlyMemory<byte> _hmtx;
@@ -16,6 +17,7 @@ internal sealed class FontFace
     private readonly KernTable? _kern;
     private readonly GposKerning? _gpos;
     private readonly ConcurrentDictionary<int, Outline> _outlines = new();
+    private readonly ConcurrentDictionary<uint, int> _kerning = new();
 
     private FontFace(Dictionary<uint, ReadOnlyMemory<byte>> tables)
     {
@@ -236,7 +238,29 @@ internal sealed class FontFace
     }
 
     /// <summary>Kerning between two glyphs: the change to the first glyph's advance, in font units.</summary>
-    public int GetKerning(int left, int right) => _gpos is not null ? _gpos.Get(left, right) : (_kern?.Get(left, right) ?? 0);
+    public int GetKerning(int left, int right)
+    {
+        if (_gpos is null && _kern is null)
+        {
+            return 0;
+        }
+
+        // Pair lookups walk coverage tables and class definitions; text repeats the same pairs, so remember them.
+        uint key = ((uint)left << 16) | (uint)(right & 0xFFFF);
+        if (_kerning.TryGetValue(key, out int cached))
+        {
+            return cached;
+        }
+
+        int value = _gpos is not null ? _gpos.Get(left, right) : _kern!.Get(left, right);
+        if (_kerning.Count >= MaxCachedKerningPairs)
+        {
+            _kerning.Clear();
+        }
+
+        _kerning[key] = value;
+        return value;
+    }
 
     private ReadOnlyMemory<byte> Table(string tag, bool required)
     {

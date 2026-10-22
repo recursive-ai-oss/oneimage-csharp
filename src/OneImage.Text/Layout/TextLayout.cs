@@ -262,6 +262,7 @@ internal sealed class TextLayout
                 full += Glyphs[k].Advance;
             }
 
+            // Spaces after a word may hang past the limit: only the word itself has to fit.
             float trimmed = full;
             for (int k = segEnd - 1; k >= seg && Glyphs[k].IsSpace; k--)
             {

@@ -11,6 +11,12 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneImage/OneImage.csproj" />
+    <ProjectReference Include="../../src/OneImage.Text/OneImage.Text.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The text smoke loads these next to the executable. -->
+    <Content Include="../testdata/fonts/*.ttf;../testdata/fonts/*.otf;../testdata/fonts/*.ttc;../testdata/fonts/*.woff" Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

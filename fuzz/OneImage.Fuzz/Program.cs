@@ -27,6 +27,7 @@ internal static class Program
         ["gif"] = CodecTargets.Gif,
         ["webp"] = CodecTargets.WebP,
         ["svg"] = DrawingTargets.Svg,
+        ["font"] = FontTarget.Run,
     };
 
     private static int Main(string[] args)

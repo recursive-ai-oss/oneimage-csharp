@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg font   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -47,6 +47,7 @@ case "$target" in
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
   svg)     seeds=svgpath;     prefix='';     patterns='*.txt'; maxlen=4096 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
+  font)    seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc *.woff'; maxlen=262144 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac
 
@@ -72,6 +73,7 @@ if [[ "$target" == webp && -z "$(ls -A "$work/webp-seeds" 2>/dev/null)" ]]; then
   ONEIMAGE_FUZZ_TARGET=webp "$dotnet_bin" "$bin/OneImage.Fuzz.dll" seeds-webp "$work/webp-seeds" >/dev/null
 fi
 "$instrument" "$bin/OneImage.dll" >/dev/null
+[[ "$target" != font ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
 
 corpus="$work/corpus/$target"
 findings="$work/findings/$target"
