@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <Content Include="../testdata/fonts/**" Link="testdata/fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../testdata/unicode/**" Link="testdata/unicode/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

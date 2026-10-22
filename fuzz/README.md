@@ -1,6 +1,6 @@
 # Fuzzing
 
-One executable (`fuzz/OneImage.Fuzz`) holds one target per input surface: `jpeg`, `inflate`, `lzw`, `icc`, `exif`, `tiff`, `png`, `bmp`, `ico`, `gif`, `webp`, `svg` (SVG path data into the drawing code), `font` (TrueType, OpenType/CFF, TTC and WOFF files through parsing, glyph outlines, kerning, layout and drawing).
+One executable (`fuzz/OneImage.Fuzz`) holds one target per input surface: `jpeg`, `inflate`, `lzw`, `icc`, `exif`, `tiff`, `png`, `bmp`, `ico`, `gif`, `webp`, `svg` (SVG path data into the drawing code), `font` (TrueType, OpenType/CFF, TTC and WOFF files through parsing, glyph outlines, kerning, layout and drawing), `breaking` (arbitrary UTF-16 text, unpaired surrogates included, through line breaking, grapheme segmentation and layout in every word breaking and justification mode, checking that no line starts inside a grapheme cluster; seeded from the Unicode break test files).
 Targets that read files go through the public `Image.Identify` / `Image.Load` / `CopyPixelsTo` path with tight `ImageLimits`; the compression,
 ICC and EXIF targets drive the parsers directly. Only `ImageException` (and `OperationCanceledException`) may come out. Any other exception,
 a hang (libFuzzer `-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.

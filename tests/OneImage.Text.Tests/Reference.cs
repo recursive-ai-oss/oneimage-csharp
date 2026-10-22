@@ -51,6 +51,8 @@ internal static class Reference
             KerningMode = o.Kerning == KerningMode.None ? SixLabors.Fonts.KerningMode.None : SixLabors.Fonts.KerningMode.Auto,
             HorizontalAlignment = o.HorizontalAlignment switch { HorizontalAlignment.Center => SixLabors.Fonts.HorizontalAlignment.Center, HorizontalAlignment.Right => SixLabors.Fonts.HorizontalAlignment.Right, _ => SixLabors.Fonts.HorizontalAlignment.Left },
             VerticalAlignment = o.VerticalAlignment switch { VerticalAlignment.Center => SixLabors.Fonts.VerticalAlignment.Center, VerticalAlignment.Bottom => SixLabors.Fonts.VerticalAlignment.Bottom, _ => SixLabors.Fonts.VerticalAlignment.Top },
+            WordBreaking = o.WordBreaking switch { WordBreaking.BreakAll => SixLabors.Fonts.WordBreaking.BreakAll, WordBreaking.KeepAll => SixLabors.Fonts.WordBreaking.KeepAll, WordBreaking.BreakWord => SixLabors.Fonts.WordBreaking.BreakWord, _ => SixLabors.Fonts.WordBreaking.Standard },
+            TextJustification = o.TextJustification switch { TextJustification.InterWord => SixLabors.Fonts.TextJustification.InterWord, TextJustification.InterCharacter => SixLabors.Fonts.TextJustification.InterCharacter, _ => SixLabors.Fonts.TextJustification.None },
             TextAlignment = o.TextAlignment switch { TextAlignment.Center => SixLabors.Fonts.TextAlignment.Center, TextAlignment.End => SixLabors.Fonts.TextAlignment.End, _ => SixLabors.Fonts.TextAlignment.Start },
         };
         return r;

@@ -53,8 +53,9 @@ public sealed class TextOptions
     }
 
     /// <summary>
-    /// Gets or sets the length in pixels at which lines wrap; 0 or less means no wrapping (the default). Lines break after spaces
-    /// and after a hyphen that is followed by a letter; a word longer than the length keeps its own line and overflows. Explicit
+    /// Gets or sets the length in pixels at which lines wrap; 0 or less means no wrapping (the default). Lines end at the break
+    /// opportunities of the Unicode line breaking algorithm (see <see cref="WordBreaking"/>); by default a word longer than the
+    /// length keeps its own line and overflows. Explicit
     /// line breaks (LF, CR, CRLF, U+0085, U+2028, U+2029) always break.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is NaN or infinite.</exception>
@@ -157,6 +158,18 @@ public sealed class TextOptions
     /// </summary>
     public IList<FontFeature> Features { get; } = [];
 
+    /// <summary>
+    /// Gets or sets where wrapped lines may end: at the Unicode line break opportunities (the default), between any two characters,
+    /// not within East Asian text, or with long words broken. See <see cref="Text.WordBreaking"/>.
+    /// </summary>
+    public WordBreaking WordBreaking { get; set; }
+
+    /// <summary>
+    /// Gets or sets how lines are stretched to <see cref="WrappingLength"/>. The default is <see cref="Text.TextJustification.None"/>.
+    /// Justification needs a wrapping length and does nothing without one.
+    /// </summary>
+    public TextJustification TextJustification { get; set; }
+
     /// <summary>Makes a copy of these options.</summary>
     /// <returns>A new, independent object with the same settings.</returns>
     public TextOptions Clone()
@@ -182,5 +195,7 @@ public sealed class TextOptions
         VerticalAlignment = VerticalAlignment,
         TextAlignment = TextAlignment,
         Kerning = Kerning,
+        WordBreaking = WordBreaking,
+        TextJustification = TextJustification,
     };
 }

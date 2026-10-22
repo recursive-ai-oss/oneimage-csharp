@@ -30,13 +30,13 @@ public readonly record struct LineMetrics
     public float LineHeight { get; init; }
 }
 
-/// <summary>The advance box of one character (code point) in laid-out text.</summary>
+/// <summary>The advance box of one character (extended grapheme cluster) in laid-out text.</summary>
 public readonly record struct GlyphBounds
 {
-    /// <summary>Gets the index in the text (UTF-16 code units) of the character.</summary>
+    /// <summary>Gets the index in the text (UTF-16 code units) of the first code point of the character.</summary>
     public int Index { get; init; }
 
-    /// <summary>Gets the Unicode scalar value, or U+FFFD for an unpaired surrogate.</summary>
+    /// <summary>Gets the Unicode scalar value of the first code point, or U+FFFD for an unpaired surrogate.</summary>
     public int CodePoint { get; init; }
 
     /// <summary>Gets the zero-based line the character is on.</summary>

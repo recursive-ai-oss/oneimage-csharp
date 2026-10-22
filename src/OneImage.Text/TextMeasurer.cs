@@ -36,10 +36,10 @@ public static class TextMeasurer
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public static int CountLines(string text, TextOptions options) => TextLayout.Create(text, options).Lines.Count;
 
-    /// <summary>Gets the advance box of every character in layout order.</summary>
+    /// <summary>Gets the advance box of every character in layout order. A character is a grapheme cluster: a base with its combining marks, an emoji sequence, a Hangul syllable block, a flag.</summary>
     /// <param name="text">The text.</param>
     /// <param name="options">Font, origin, wrapping and alignment.</param>
-    /// <returns>One entry per laid-out character; zero-width format characters have none.</returns>
+    /// <returns>One entry per laid-out grapheme cluster; zero-width format characters have none.</returns>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public static IReadOnlyList<GlyphBounds> GetCharacterBounds(string text, TextOptions options) => TextLayout.Create(text, options).ToCharacterBounds();
 }

@@ -37,6 +37,15 @@ public class TextBenchmarks : IDisposable
     private byte[] _fontBytes = null!;
     private OursOptions _ours = null!;
     private RichTextOptions _theirs = null!;
+    private OursOptions _oursLong = null!;
+    private OursOptions _oursBreakAll = null!;
+    private OursOptions _oursJustify = null!;
+    private RichTextOptions _theirsLong = null!;
+    private RichTextOptions _theirsBreakAll = null!;
+    private RichTextOptions _theirsJustify = null!;
+    private string _long = null!;
+    private byte[] _breaks = null!;
+    private byte[] _clusters = null!;
     private Ours.Canvas _canvas = null!;
     private Ours.Rgba32[] _source = null!;
     private Ours.Rgba32[] _out = null!;
@@ -56,6 +65,17 @@ public class TextBenchmarks : IDisposable
         SixLabors.Fonts.Font theirs = fam.CreateFont(24);
         _ours = new OursOptions(ours) { Origin = new System.Numerics.Vector2(50, 50), WrappingLength = 900 };
         _theirs = new RichTextOptions(theirs) { Origin = new System.Numerics.Vector2(50, 50), WrappingLength = 900 };
+        // A long paragraph: about 24,000 characters of prose with hyphens, numbers, quotation marks and brackets, wrapped at 600 px.
+        const string Mixed = "A well-known \u201Cexample\u201D (see section 12.5) costs $1,234.56 or 45% less, e-mail us at once. ";
+        _long = string.Concat(Enumerable.Repeat(Paragraph + " " + Mixed, 28));
+        _oursLong = new OursOptions(ours) { WrappingLength = 600 };
+        _oursBreakAll = new OursOptions(ours) { WrappingLength = 600, WordBreaking = OneImage.Text.WordBreaking.BreakAll };
+        _oursJustify = new OursOptions(ours) { WrappingLength = 600, TextJustification = OneImage.Text.TextJustification.InterWord };
+        _theirsLong = new RichTextOptions(theirs) { WrappingLength = 600 };
+        _theirsBreakAll = new RichTextOptions(theirs) { WrappingLength = 600, WordBreaking = SixLabors.Fonts.WordBreaking.BreakAll };
+        _theirsJustify = new RichTextOptions(theirs) { WrappingLength = 600, TextJustification = SixLabors.Fonts.TextJustification.InterWord };
+        _breaks = new byte[_long.Length + 1];
+        _clusters = new byte[_long.Length + 1];
         _canvas = new Ours.Canvas(Size, Size, Ours.PixelFormat.Rgba8);
         _sharp = new SharpRgba(Size, Size);
         _source = new Ours.Rgba32[Size * Size];
@@ -103,6 +123,39 @@ public class TextBenchmarks : IDisposable
 
     [Benchmark(Description = "SixLabors.Fonts: measure paragraph (ink bounds)")]
     public float MeasureBoundsTheirs() => SharpMeasurer.MeasureBounds(Paragraph, _theirs).Height;
+
+    [Benchmark(Description = "OneImage: wrap long paragraph (24k chars, UAX #14)")]
+    [BenchmarkCategory("wrap")]
+    public float WrapLongOurs() => OursMeasurer.MeasureAdvance(_long, _oursLong).Height;
+
+    [Benchmark(Description = "SixLabors.Fonts: wrap long paragraph (24k chars)")]
+    [BenchmarkCategory("wrap")]
+    public float WrapLongTheirs() => SharpMeasurer.MeasureAdvance(_long, _theirsLong).Height;
+
+    [Benchmark(Description = "OneImage: wrap long paragraph, BreakAll")]
+    [BenchmarkCategory("wrap")]
+    public float WrapLongBreakAllOurs() => OursMeasurer.MeasureAdvance(_long, _oursBreakAll).Height;
+
+    [Benchmark(Description = "SixLabors.Fonts: wrap long paragraph, BreakAll")]
+    [BenchmarkCategory("wrap")]
+    public float WrapLongBreakAllTheirs() => SharpMeasurer.MeasureAdvance(_long, _theirsBreakAll).Height;
+
+    [Benchmark(Description = "OneImage: wrap long paragraph, InterWord justified")]
+    [BenchmarkCategory("wrap")]
+    public float WrapLongJustifyOurs() => OursMeasurer.MeasureAdvance(_long, _oursJustify).Height;
+
+    [Benchmark(Description = "SixLabors.Fonts: wrap long paragraph, InterWord justified")]
+    [BenchmarkCategory("wrap")]
+    public float WrapLongJustifyTheirs() => SharpMeasurer.MeasureAdvance(_long, _theirsJustify).Height;
+
+    [Benchmark(Description = "OneImage: line break opportunities + grapheme clusters only (24k chars)")]
+    [BenchmarkCategory("wrap")]
+    public int SegmentOnly()
+    {
+        OneImage.Text.Unicode.LineBreaker.Fill(_long, _breaks);
+        OneImage.Text.Unicode.Graphemes.Fill(_long, _clusters);
+        return _breaks[100] + _clusters[100];
+    }
 
     [Benchmark(Description = "OneImage: paragraph as path")]
     public int PathOurs() => TextBuilder.GeneratePath(Paragraph, _ours).Verbs.Length;

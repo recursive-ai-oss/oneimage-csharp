@@ -1,6 +1,8 @@
+using System.Buffers;
 using System.Numerics;
 using OneImage.Text.Fonts;
 using OneImage.Text.Shaping;
+using OneImage.Text.Unicode;
 
 namespace OneImage.Text.Layout;
 
@@ -38,9 +40,9 @@ internal sealed class LayoutLine
 }
 
 /// <summary>
-/// Lays text out: shaping (one glyph per code point from the character map, plus kerning), line breaking, greedy line filling and
-/// alignment. The shaping and line-breaking steps are the seams where ligature and mark handling and full Unicode line breaking
-/// plug in; everything after them works on shaped glyph runs and break flags only.
+/// Lays text out: shaping (one glyph per code point from the character map, plus kerning), Unicode line breaking, greedy line
+/// filling (with the word breaking modes), justification and alignment. Line breaking works on the text and reaches the glyphs
+/// only through each glyph's text offset, so a different shaping step does not change it.
 /// </summary>
 internal sealed class TextLayout
 {
@@ -52,6 +54,14 @@ internal sealed class TextLayout
     private readonly FeatureSet _features;
     private readonly uint _language;
     private readonly float _tabUnits;
+    private readonly WordBreaking _wordBreaking;
+    private readonly TextJustification _justification;
+
+    // Break data of the paragraph being laid out, indexed by UTF-16 offset from its start (rented, returned after each paragraph).
+    private byte[] _breaks = [];
+    private byte[] _clusters = [];
+    private int _paragraphStart;
+    private int _firstGlyph = -1;
 
     private TextLayout(TextOptions o)
     {
@@ -78,6 +88,8 @@ internal sealed class TextLayout
 
         _features = FeatureSet.Create(settings);
         _tabUnits = o.TabWidth * _face.GetAdvance(_face.GetGlyphIndex(' '));
+        _wordBreaking = o.WordBreaking;
+        _justification = o.TextJustification;
         LineHeight = px * o.LineSpacing;
         float natural = m.LineHeight * _scale;
 
@@ -98,6 +110,9 @@ internal sealed class TextLayout
     public List<ShapedGlyph> Glyphs { get; } = [];
 
     public List<LayoutLine> Lines { get; } = [];
+
+    /// <summary>Whether each glyph starts a grapheme cluster (false for combining marks and other continuations).</summary>
+    public List<bool> ClusterStart { get; } = [];
 
     /// <summary>Pen x of each glyph in font units from its line's start.</summary>
     public List<float> PenX { get; } = [];
@@ -248,8 +263,8 @@ internal sealed class TextLayout
     private static bool IsBreakingSpace(int cp) =>
         cp is 0x20 or 0x09 or 0x1680 or (>= 0x2000 and <= 0x2006) or (>= 0x2008 and <= 0x200A) or 0x205F or 0x3000;
 
-    // Line breaking: a break may come before glyph k when the glyph before it ends a run of spaces, or is a hyphen between word
-    // characters. Full Unicode line breaking replaces this predicate.
+    // Line breaking: a line may end before glyph k when the text offset it starts at is a break opportunity of the Unicode line
+    // breaking algorithm (as adjusted by the word breaking mode) and also starts a grapheme cluster.
     private bool CanBreakBefore(int paragraphStart, int k)
     {
         if (k <= paragraphStart)
@@ -257,20 +272,62 @@ internal sealed class TextLayout
             return false;
         }
 
-        ShapedGlyph prev = Glyphs[k - 1];
-        ShapedGlyph cur = Glyphs[k];
-        if (prev.IsSpace && !cur.IsSpace)
-        {
-            return true;
-        }
+        int at = Glyphs[k].Cluster - _paragraphStart;
+        return _breaks[at] != 0 && _clusters[at] != 0;
+    }
 
-        if (prev.CodePoint is '-' or 0x2010 && !cur.IsSpace && k - 2 >= paragraphStart)
+    // Computes the break opportunities and cluster starts of one paragraph into pooled arrays.
+    private void PrepareBreaks(string text, int start, int end)
+    {
+        int length = end - start;
+        _paragraphStart = start;
+        _breaks = ArrayPool<byte>.Shared.Rent(length + 1);
+        _clusters = ArrayPool<byte>.Shared.Rent(length + 1);
+        ReadOnlySpan<char> span = text.AsSpan(start, length);
+        LineBreaker.Fill(span, _breaks);
+        Graphemes.Fill(span, _clusters);
+        switch (_wordBreaking)
         {
-            int before = Glyphs[k - 2].CodePoint;
-            return before < 0x10000 && char.IsLetterOrDigit((char)before) && cur.CodePoint is not ('-' or (>= '0' and <= '9'));
-        }
+            case WordBreaking.BreakAll:
+                // Every cluster boundary is an opportunity, except in front of white space, which stays with the word before it.
+                for (int i = 1; i < length; i++)
+                {
+                    if (_clusters[i] != 0 && !char.IsWhiteSpace(span[i]))
+                    {
+                        _breaks[i] = LineBreaker.Allowed;
+                    }
+                }
 
-        return false;
+                break;
+            case WordBreaking.KeepAll:
+                // No opportunity right after an East Asian wide or fullwidth character; spaces still break.
+                for (int i = 1; i < length; i++)
+                {
+                    if (_breaks[i] == LineBreaker.Allowed)
+                    {
+                        int prev = span[i - 1];
+                        if (char.IsLowSurrogate(span[i - 1]) && i >= 2 && char.IsHighSurrogate(span[i - 2]))
+                        {
+                            prev = char.ConvertToUtf32(span[i - 2], span[i - 1]);
+                        }
+
+                        if (LineBreaker.IsEastAsianWide(prev))
+                        {
+                            _breaks[i] = LineBreaker.None;
+                        }
+                    }
+                }
+
+                break;
+        }
+    }
+
+    private void ReleaseBreaks()
+    {
+        ArrayPool<byte>.Shared.Return(_breaks);
+        ArrayPool<byte>.Shared.Return(_clusters);
+        _breaks = [];
+        _clusters = [];
     }
 
     private void AddParagraph(string text, int start, int end)
@@ -284,6 +341,26 @@ internal sealed class TextLayout
             return;
         }
 
+        PrepareBreaks(text, start, end);
+        _firstGlyph = g0;
+        try
+        {
+            for (int k = g0; k < g1; k++)
+            {
+                ClusterStart.Add(_clusters[Glyphs[k].Cluster - start] != 0);
+            }
+
+            FillLines(g0, g1, start, end);
+        }
+        finally
+        {
+            ReleaseBreaks();
+        }
+    }
+
+    // Greedy line filling over the segments between break opportunities.
+    private void FillLines(int g0, int g1, int start, int end)
+    {
         int lineStart = g0;
         float lineW = 0; // font units, including spaces accepted so far
         int seg = g0;
@@ -315,19 +392,129 @@ internal sealed class TextLayout
                 lineW = 0;
             }
 
-            lineW += full;
+            if (_wordBreaking == WordBreaking.BreakWord && _wrap > 0 && trimmed * _scale > _wrap)
+            {
+                // The word does not fit even on a line of its own: fill lines cluster by cluster.
+                int visibleEnd = segEnd;
+                while (visibleEnd > seg && Glyphs[visibleEnd - 1].IsSpace)
+                {
+                    visibleEnd--;
+                }
+
+                int i = seg;
+                while (i < visibleEnd)
+                {
+                    int j = i + 1;
+                    float cw = Glyphs[i].Advance;
+                    while (j < visibleEnd && !ClusterStart[j])
+                    {
+                        cw += Glyphs[j].Advance;
+                        j++;
+                    }
+
+                    if (i > lineStart && (lineW + cw) * _scale > _wrap)
+                    {
+                        AddLine(lineStart, i, TextIndex(lineStart, start), TextEnd(i, start, end) - TextIndex(lineStart, start));
+                        lineStart = i;
+                        lineW = 0;
+                    }
+
+                    lineW += cw;
+                    i = j;
+                }
+
+                for (int k = visibleEnd; k < segEnd; k++)
+                {
+                    lineW += Glyphs[k].Advance;
+                }
+            }
+            else
+            {
+                lineW += full;
+            }
+
             seg = segEnd;
         }
 
         AddLine(lineStart, g1, TextIndex(lineStart, start), end - TextIndex(lineStart, start));
     }
 
-    private int TextIndex(int glyph, int paragraphStart) => glyph < Glyphs.Count ? Glyphs[glyph].Cluster : paragraphStart;
+    // A paragraph's first line starts at the paragraph's first character even when invisible zero-width characters come before the
+    // first glyph; later lines start at their first glyph, which is always at a break opportunity and a cluster start.
+    private int TextIndex(int glyph, int paragraphStart) => glyph == _firstGlyph || glyph >= Glyphs.Count ? paragraphStart : Glyphs[glyph].Cluster;
 
     private int TextEnd(int glyph, int paragraphStart, int paragraphEnd) => glyph < Glyphs.Count ? Glyphs[glyph].Cluster : paragraphEnd;
 
+    // Stretches a line to the wrapping length by widening glyph advances: the spaces between words (InterWord) or the gaps between
+    // clusters (InterCharacter). Lines at or beyond the length, and lines with nothing to widen, are left alone.
+    private void Justify(int g0, int g1)
+    {
+        int first = g0;
+        while (first < g1 && Glyphs[first].IsSpace)
+        {
+            first++;
+        }
+
+        int last = g1;
+        while (last > first && Glyphs[last - 1].IsSpace)
+        {
+            last--;
+        }
+
+        if (last <= first)
+        {
+            return;
+        }
+
+        float width = 0;
+        for (int k = g0; k < last; k++)
+        {
+            width += Glyphs[k].Advance;
+        }
+
+        float slack = (_wrap / _scale) - width;
+        if (!(slack > 0))
+        {
+            return;
+        }
+
+        int count = 0;
+        for (int k = first; k < last - 1; k++)
+        {
+            if (IsWidenable(k))
+            {
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return;
+        }
+
+        float extra = slack / count;
+        for (int k = first; k < last - 1; k++)
+        {
+            if (IsWidenable(k))
+            {
+                ShapedGlyph g = Glyphs[k];
+                g.Advance += extra;
+                Glyphs[k] = g;
+            }
+        }
+    }
+
+    private bool IsWidenable(int k) => _justification == TextJustification.InterWord
+        ? (Glyphs[k].IsSpace && Glyphs[k].CodePoint != '\t') || Glyphs[k].CodePoint == 0xA0
+        : ClusterStart[k + 1];
+
     private void AddLine(int g0, int g1, int textStart, int textLength)
     {
+        if (_justification != TextJustification.None && _wrap > 0)
+        {
+            Justify(g0, g1);
+        }
+
         // Pen positions, then the width without trailing spaces (unless the line is only spaces).
         float x = 0;
         for (int k = g0; k < g1; k++)
@@ -449,13 +636,26 @@ internal sealed class TextLayout
                     ink = new System.Drawing.RectangleF(gx + (ax * _scale), gy - (by * _scale), (bx - ax) * _scale, (by - ay) * _scale);
                 }
 
+                var box = new System.Drawing.RectangleF(l.Left + (PenX[k] * _scale), l.Baseline - AscentInLine, g.Advance * _scale, LineHeight);
+                if (!ClusterStart[k] && k > l.GlyphStart && list.Count > 0)
+                {
+                    // A combining mark or other continuation: one box for the whole grapheme cluster, never split.
+                    GlyphBounds head = list[^1];
+                    list[^1] = head with
+                    {
+                        Bounds = System.Drawing.RectangleF.Union(head.Bounds, box),
+                        Ink = head.Ink.IsEmpty ? ink : ink.IsEmpty ? head.Ink : System.Drawing.RectangleF.Union(head.Ink, ink),
+                    };
+                    continue;
+                }
+
                 list.Add(new GlyphBounds
                 {
                     Ink = ink,
                     Index = g.Cluster,
                     CodePoint = g.CodePoint,
                     Line = i,
-                    Bounds = new System.Drawing.RectangleF(l.Left + (PenX[k] * _scale), l.Baseline - AscentInLine, g.Advance * _scale, LineHeight),
+                    Bounds = box,
                 });
             }
         }
