@@ -332,5 +332,37 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Brushes: gradients (also in linear light), a hatch, an image brush, path gradient and recolor; Image and Canvas must agree.
+{
+    OneImage.Drawing.Path disc = OneImage.Drawing.Path.Circle(120, 90, 70);
+    var red = new Rgba32(220, 30, 20, 255);
+    var blue = new Rgba32(20, 40, 230, 255);
+    var tile = Image.FromPixels<Rgba32>(new[] { red, blue, blue, red }, 2, 2);
+    OneImage.Drawing.Brush[] brushes =
+    [
+        OneImage.Drawing.Brush.LinearGradient(new System.Numerics.Vector2(0, 0), new System.Numerics.Vector2(300, 200), [new(0f, red), new(1f, blue)]),
+        OneImage.Drawing.Brush.RadialGradient(new System.Numerics.Vector2(120, 90), 60, [new(0f, red), new(1f, new Rgba32(20, 40, 230, 0))], OneImage.Drawing.GradientRepetition.Reflect),
+        OneImage.Drawing.Brush.EllipticGradient(new System.Numerics.Vector2(120, 90), new System.Numerics.Vector2(180, 90), 0.5f, [new(0f, red), new(1f, blue)]),
+        OneImage.Drawing.Brush.PathGradient([new(40, 20), new(200, 30), new(180, 160), new(50, 150)], [red, blue, red, blue]),
+        OneImage.Drawing.Brush.Hatch(OneImage.Drawing.HatchStyle.ForwardDiagonal, red, blue),
+        OneImage.Drawing.Brush.FromImage(tile),
+        OneImage.Drawing.Brush.Recolor(new Rgba32(10, 20, 30, 255), red, 0.3f),
+    ];
+    foreach (OneImage.Drawing.Brush brush in brushes)
+    {
+        Image viaImage = snapshot.Fill(brush, disc, linear: true);
+        using var onCanvas = snapshot.ToCanvas();
+        onCanvas.Fill(brush, disc, linear: true);
+        Rgba32[] x = viaImage.ToArray<Rgba32>();
+        var y = new Rgba32[x.Length];
+        onCanvas.CopyTo<Rgba32>(y, new ImageRect(0, 0, 300, 200));
+        if (!x.AsSpan().SequenceEqual(y) || !snapshot.Fill(brush, disc).ToArray<Rgba32>().AsSpan().SequenceEqual(snapshot.Fill(brush, disc).ToArray<Rgba32>()))
+        {
+            Console.Error.WriteLine("brush smoke failed");
+            return 1;
+        }
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

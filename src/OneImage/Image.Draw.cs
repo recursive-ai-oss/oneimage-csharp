@@ -43,7 +43,7 @@ public sealed partial class Image
     /// <b>Animation.</b> Every frame gets the same fill, with the path in each frame's own pixel grid.
     /// </para>
     /// </summary>
-    /// <param name="brush">What to paint with; see <see cref="Brush.Solid"/>.</param>
+    /// <param name="brush">What to paint with; see <see cref="Brush"/> for solid, gradient, pattern, image and recolor brushes.</param>
     /// <param name="path">The outline.</param>
     /// <param name="antialias">Smooth edges. The default is <see langword="true"/>.</param>
     /// <param name="rule">Inside rule for overlapping parts. The default is <see cref="IntersectionRule.NonZero"/>.</param>
@@ -133,7 +133,8 @@ public sealed partial class Image
         // Linear light: fill in the linear variant of the profile, convert back, and keep the untouched tiles from the original.
         Image lin = ToLinearLight(out ColorProfile original);
         float[]? solid = brush.TryGetSolid(out Rgba32 c) ? LinearSolid(c, original, lin.Format) : null;
-        FillPlan linPlan = FillPlan.Create(lin.Format, brush, s, solid);
+        Brush linBrush = solid != null ? brush : brush.Linearized(ColorMap.Create(this));
+        FillPlan linPlan = FillPlan.Create(lin.Format, linBrush, s, solid);
         var sources = new RasterSource[nodes.Length];
         var filled = new Node[nodes.Length];
         for (int i = 0; i < nodes.Length; i++)

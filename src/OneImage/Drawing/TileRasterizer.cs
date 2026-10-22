@@ -28,6 +28,7 @@ internal sealed class RasterScratch
     public readonly float[] Over = new float[Tile.Size * 4];
     public readonly float[] Result = new float[Tile.Size * 4];
     public readonly float[] BrushRow = new float[Tile.Size * 4];
+    public readonly float[] Straight = new float[Tile.Size * 4];
 
     public static RasterScratch Rent() => Pool.TryTake(out RasterScratch? s) ? s : new RasterScratch();
 

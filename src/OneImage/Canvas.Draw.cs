@@ -12,7 +12,7 @@ public sealed partial class Canvas
     /// and the pixels written are byte for byte what <c>Snapshot().Fill(...)</c> would show. Only the tiles the path can touch are
     /// written (shared tiles are copied first), so a small shape on a large canvas costs a few tiles. The fill runs on the calling thread.
     /// </summary>
-    /// <param name="brush">What to paint with; see <see cref="Brush.Solid"/>.</param>
+    /// <param name="brush">What to paint with; see <see cref="Brush"/> for solid, gradient, pattern, image and recolor brushes.</param>
     /// <param name="path">The outline, in canvas pixel coordinates.</param>
     /// <param name="antialias">Smooth edges. The default is <see langword="true"/>.</param>
     /// <param name="rule">Inside rule for overlapping parts. The default is <see cref="IntersectionRule.NonZero"/>.</param>

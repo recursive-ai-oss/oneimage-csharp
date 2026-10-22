@@ -258,13 +258,13 @@ public class FillTests
     // A brush that is not recognized as solid takes the row-by-row path; for a plain color it must agree with the solid fast path.
     private sealed class RowBrush(Rgba32 color) : Brush
     {
-        internal override bool TryGetSolid(out Rgba32 c)
+        public override bool TryGetSolid(out Rgba32 c)
         {
             c = default;
             return false;
         }
 
-        internal override void FillRow(int x, int y, Span<float> rgba)
+        public override void FillRow(int x, int y, Span<float> rgba)
         {
             for (int i = 0; i < rgba.Length; i += 4)
             {
@@ -275,7 +275,7 @@ public class FillTests
             }
         }
 
-        internal override OpParameter[] Describe() => [new("brush", "row")];
+        public override IReadOnlyList<OpParameter> Describe() => [new("brush", "row")];
     }
 
     [Fact]
@@ -292,7 +292,17 @@ public class FillTests
         }
 
         Assert.True(worst <= 1, $"worst difference {worst}");
-        Assert.Throws<ImageOperationException>(() => b.Fill(new RowBrush(color), Scene(), linear: true));
+
+        // In linear light a row brush is converted after the call and must agree with the solid fill, which converts its color once.
+        Rgba32[] solidLinear = b.Fill(color, Scene(), linear: true).ToArray<Rgba32>();
+        Rgba32[] rowsLinear = b.Fill(new RowBrush(color), Scene(), linear: true).ToArray<Rgba32>();
+        int worstLinear = 0;
+        for (int i = 0; i < solidLinear.Length; i++)
+        {
+            worstLinear = Math.Max(worstLinear, Math.Max(Math.Max(Math.Abs(solidLinear[i].R - rowsLinear[i].R), Math.Abs(solidLinear[i].G - rowsLinear[i].G)), Math.Max(Math.Abs(solidLinear[i].B - rowsLinear[i].B), Math.Abs(solidLinear[i].A - rowsLinear[i].A))));
+        }
+
+        Assert.True(worstLinear <= 1, $"worst linear difference {worstLinear}");
     }
 
     [Fact]

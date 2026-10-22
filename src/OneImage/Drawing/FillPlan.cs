@@ -66,6 +66,7 @@ internal sealed class FillPlan
     }
 
     private readonly Fast _fast;
+    private readonly bool _opaqueReplace; // normal source-over at full opacity: an opaque brush pixel on a covered pixel is the result
     private readonly byte _cr, _cg, _cb;
     private readonly float _fr, _fg, _fb, _alpha; // color in 0..255 and its alpha times opacity
 
@@ -78,6 +79,7 @@ internal sealed class FillPlan
         Solid = brush.TryGetSolid(out Rgba32 color);
         if (!Solid)
         {
+            _opaqueReplace = s.Blend == BlendMode.Normal && s.Composition == AlphaComposition.SrcOver && s.Opacity >= 1f;
             SolidWork = [];
             return;
         }
@@ -154,11 +156,6 @@ internal sealed class FillPlan
 
     public static FillPlan Create(PixelFormat format, Brush brush, FillSettings settings, float[]? solidWork = null)
     {
-        if (!brush.TryGetSolid(out _) && settings.Linear)
-        {
-            throw new ImageOperationException("Only solid brushes can be painted in linear light so far.");
-        }
-
         return new FillPlan(format, brush, settings, solidWork);
     }
 
@@ -314,8 +311,39 @@ internal sealed class FillPlan
         int ch = Work.ChannelCount;
         int count = n * ch;
         int bpp = Format.BytesPerPixel;
-        Span<float> back = s.Back.AsSpan(0, count), over = s.Over.AsSpan(0, count), result = s.Result.AsSpan(0, count);
         Span<byte> pixels = row.Slice(x0 * bpp, n * bpp);
+        Span<float> rgba = default;
+        if (!Solid)
+        {
+            rgba = s.BrushRow.AsSpan(0, n * 4);
+            if (Brush.ReadsBackdrop)
+            {
+                Span<float> backdrop = s.Straight.AsSpan(0, n * 4);
+                ConvertKernel.ConvertRow(pixels, Format, SpanCast.AsBytes(backdrop), PixelFormat.RgbaF32, n);
+                Brush.FillRow(originX + x0, y, backdrop, rgba);
+            }
+            else
+            {
+                Brush.FillRow(originX + x0, y, rgba);
+            }
+
+            // Opaque brush colors over fully covered pixels replace them: no need to read the backdrop and blend.
+            if (_opaqueReplace && AllOpaqueAndCovered(cov.Slice(x0, n), rgba))
+            {
+                if (Format == PixelFormat.Rgba8)
+                {
+                    BrushKernel.RgbaF32ToRgba8(rgba, pixels);
+                }
+                else
+                {
+                    ConvertKernel.ConvertRow(SpanCast.AsBytes(rgba), PixelFormat.RgbaF32, pixels, Format, n);
+                }
+
+                return;
+            }
+        }
+
+        Span<float> back = s.Back.AsSpan(0, count), over = s.Over.AsSpan(0, count), result = s.Result.AsSpan(0, count);
         ConvertKernel.ConvertRow(pixels, Format, SpanCast.AsBytes(back), Work, n);
         if (Solid)
         {
@@ -326,8 +354,6 @@ internal sealed class FillPlan
         }
         else
         {
-            Span<float> rgba = s.BrushRow.AsSpan(0, n * 4);
-            Brush.FillRow(originX + x0, y, rgba);
             ConvertKernel.ConvertRow(SpanCast.AsBytes(rgba), PixelFormat.RgbaF32, SpanCast.AsBytes(over), Work, n);
         }
 
@@ -347,5 +373,18 @@ internal sealed class FillPlan
         }
 
         ConvertKernel.ConvertRow(SpanCast.AsBytes(result), Work, pixels, Format, n);
+    }
+
+    private static bool AllOpaqueAndCovered(ReadOnlySpan<float> cov, ReadOnlySpan<float> rgba)
+    {
+        for (int i = 0; i < cov.Length; i++)
+        {
+            if (cov[i] < 1f || rgba[(i * 4) + 3] < 1f)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

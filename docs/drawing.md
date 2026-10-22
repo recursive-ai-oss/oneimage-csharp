@@ -1,6 +1,6 @@
 # Drawing
 
-Vector fills and strokes for `Image` and `Canvas`: paths, an anti-aliased rasterizer, solid brushes, pens (width, joins, caps, dashes), blend modes. Gradient and image brushes, clipping and text build on the same layers (see [Extending](#extending)).
+Vector fills and strokes for `Image` and `Canvas`: paths, an anti-aliased rasterizer, solid, gradient, pattern, image and recolor brushes, pens (width, joins, caps, dashes), blend modes. Clipping and text build on the same layers (see [Extending](#extending)).
 
 ```csharp
 using OneImage;
@@ -27,7 +27,7 @@ A fill is five steps, each knowing nothing of the next:
 1. **Geometry.** `Path` is an immutable list of figures: move, line, quadratic, cubic, close. `PathBuilder`, the shape factories (`Rectangle`, `RoundedRectangle`, `Ellipse`, `Circle`, `Polygon`, `Polyline`, `RegularPolygon`, `Star`, `Combine`) and `Path.TryParseSvg` produce paths; `Transform`, `Translate`, `Scale`, `Rotate` and `Reverse` return new ones. Arcs (SVG elliptical arcs included) are stored as cubics of at most 90°.
 2. **Flatten.** Curves become straight segments within 0.1 pixel (`Path.DefaultTolerance`). A curve whose control polygon lies wholly outside the image is replaced by its chord, which has the same winding effect, so curves that are huge or far away cost nothing.
 3. **Coverage.** The segments are clipped to the image (above and below dropped; left of the image folded onto x = 0, where it still sets the winding; right of it dropped) and sorted into buckets by tile row. A tile is rasterized from its row's bucket only, so rendering one tile never touches the rest of the shape. Anti-aliasing is exact area accumulation (the signed-area method of font-rs and stb_truetype): each edge adds the area to its right in every pixel it crosses; a running sum along the row gives the covered fraction. Non-zero takes `min(|sum|, 1)`, even-odd folds the sum with period 2. Without anti-aliasing a pixel is in when its center is.
-4. **Paint.** A `Brush` supplies the color for the covered pixels. The only brush so far is `Brush.Solid`; the rasterizer never sees it and the brush never sees geometry.
+4. **Paint.** A `Brush` supplies the color for the covered pixels, one row at a time (see [Brushes](#brushes)); the rasterizer never sees it and the brush never sees geometry.
 5. **Composite.** The paint is combined with the pixels through the same kernels as `Composite` (`BlendMode`, `AlphaComposition`, premultiplied float). The operator is applied at full strength and mixed back by the coverage, so for Normal/source-over this is the usual alpha blend, and other modes keep soft edges. 8-bit RGB and RGBA with Normal/source-over have a direct path; fully covered pixels of replacing operators are written without a blend.
 
 ## Semantics worth knowing
@@ -39,7 +39,79 @@ A fill is five steps, each knowing nothing of the next:
 - **SVG path data.** `TryParseSvg` reads M, L, H, V, C, S, Q, T, A, Z in both cases. It is strict (first error fails the whole parse), bounded (64 Mi characters, 2²⁵ commands), and never throws. It is fuzzed (`fuzz/run.sh svg`).
 - **Known limit.** Where outline parts of opposite direction cross inside one pixel, their areas cancel and that pixel is slightly under-covered.
 
-## Compared with ImageSharp.Drawing 2.1.7
+## Brushes
+
+```csharp
+var sunset = Brush.LinearGradient(new Vector2(0, 0), new Vector2(0, 600),
+    [new(0f, new Rgba32(255, 200, 80, 255)), new(0.6f, new Rgba32(220, 60, 90, 255)), new(1f, new Rgba32(30, 20, 90, 255))]);
+canvas.Fill(sunset, Path.Rectangle(0, 0, 800, 600));
+canvas.Fill(Brush.Hatch(HatchStyle.ForwardDiagonal, new Rgba32(255, 255, 255, 120)), Path.Circle(400, 300, 150));
+img = img.Fill(Brush.FromImage(texture, offsetX: 10), Path.Star(300, 200, 5, 60, 140));
+```
+
+| Factory | Paints |
+|---|---|
+| `Brush.Solid(color)` | one color |
+| `Brush.LinearGradient(start, end, stops, repetition, premultiplied)` | position = projection of the pixel center on the line start→end |
+| `Brush.RadialGradient(center, radius, stops, ...)` | position = distance from the center / radius |
+| `Brush.EllipticGradient(center, axisEnd, axisRatio, stops, ..., squaredDistance)` | position = normalized distance in an ellipse whose first axis runs from the center to `axisEnd` and whose other axis is `axisRatio` times as long |
+| `Brush.PathGradient(points, colors, centerColor, center)` | barycentric blend of the vertex colors and a center color over the triangles (center, point *i*, point *i*+1); transparent outside them |
+| `Brush.Pattern(foreground, background, bool[,] cells, transform)` | a tiled two-color bitmap, cells indexed `[row, column]` |
+| `Brush.Hatch(HatchStyle, foreground, background, transform)` | `Horizontal`, `Vertical`, `ForwardDiagonal`, `BackwardDiagonal`, `Percent10`, `Percent20`, `Min` (4 × 4 cells) |
+| `Brush.FromImage(source, region, offsetX, offsetY, transform, tile)` | the pixels of an image, repeated (or placed once with `tile: false`) |
+| `Brush.Recolor(source, target, threshold)` | the target color where the pixels already there are close to the source color |
+
+**Coordinates.** A brush works in the image's pixel grid, at pixel centers, and does not move with the shape: two fills with one brush line up. A fill's `transform` moves only the path. Patterns and image brushes take their own `transform` (pattern or source space to image space, row-vector `Matrix3x2`; each pixel takes the cell or source pixel under its center, without smoothing); gradients take their geometry in image pixels.
+
+**Gradient colors.** Stops are sorted by position (stable, so two stops at one position make a hard edge); before the first stop the first color holds and after the last the last. Positions outside 0..1 are allowed. `GradientRepetition` says what happens for positions outside 0..1: `None` extends the end colors, `Repeat` starts over each unit (negative positions too), `Reflect` runs back and forth, `DontFill` leaves them transparent (both ends inclusive).
+
+**Interpolation.** Colors blend linearly in the numbers they are given in, which is the image's encoded values (as CSS, SVG and editors do), and by default *premultiplied* by alpha, so red fading to transparent blue stays red as it fades. `premultiplied: false` blends straight colors, where red to transparent blue passes through purple; this is what ImageSharp.Drawing does, and the two agree when every stop is opaque. With `linear: true` the stop colors are converted to linear light first, interpolation runs in linear light, and the fill converts back with everything else: black to white then has its midpoint at sRGB 188, not 128. The conversion uses the image's own profile curve (a 4096-step table from the same profile conversion the pixels get), so brush colors and pixels agree for matrix/curve profiles; for gray images a color is first reduced to gray with Rec. 709 weights. `PathGradient`, pattern, hatch and recolor colors are converted the same way; an image brush's texels are converted as they are read.
+
+**Recolor.** With *d* the Euclidean distance between a pixel and `source` over straight R, G, B, A in 0..1, the strength is `max(0, 1 − d² / (4 · threshold))` (1 for an exact match, 0 from *d* = 2·√threshold); the pixel then becomes the target painted with its alpha times that strength. Threshold 0 changes exact matches only. The formula was fitted to ImageSharp's `RecolorBrush` on opaque pixels (agreement to 1 level); on pixels with partial alpha ImageSharp's result differs a little, and it is not matched. In linear fills the comparison happens in linear light.
+
+**Image brush.** The source is read once, on first use, as 8-bit straight RGBA from its first frame; a region over 2²⁶ pixels is refused (`ImageLimitException`; pass a smaller `region`). The fill node lists the source image as an input, and its descriptor names that node. Failures reading the source surface when the pixels are computed.
+
+**Hostile input.** Stops with NaN or infinite positions, no stops, a zero-length gradient line or axis, a zero, negative or NaN radius or ratio, empty patterns, singular or non-finite transforms, a negative or NaN threshold and fewer than three path-gradient points are refused with `ArgumentException` or `ArgumentOutOfRangeException` when the brush is built. Rows asked for at any coordinate (including ±2³¹) never throw and never produce NaN.
+
+**Writing a brush.** Derive from `Brush` and implement `FillRow(x, y, rgba)`: write straight RGBA floats (0..1, in the image's space) for the run of pixels starting at image column `x` on row `y`; it is called from several threads on different tiles and must give the same numbers for the same pixel every time. A brush that needs the pixels already there (like `Recolor`) overrides `ReadsBackdrop` and the overload that receives them. `TryGetSolid` lets a one-color brush take the fast path and `Describe` names the brush in the op descriptor (the default says `custom`). In a `linear: true` fill the numbers a custom brush writes are treated as encoded values and converted to linear light after the call.
+
+**Speed.** Opaque brush pixels over fully covered pixels are written without reading the backdrop (8-bit RGBA through a vector kernel, `BrushKernel.RgbaF32ToRgba8`, with a scalar reference); everything else goes through the blend kernels. Measured on this workstation (2000 × 2000 RGBA, 4 threads, load 4–5, .NET 10; local smoke results, see `bench/OneImage.Benchmarks/Drawing/BrushBenchmarks.cs`):
+
+| Fill | OneImage (in place) | ImageSharp.Drawing | allocated |
+|---|---|---|---|
+| linear gradient, whole image, 3 stops | 5.1 ms | 11.3 ms | 28 KB vs 125 MB |
+| radial gradient in a circle | 6.2 ms | 98.8 ms | 24 KB vs 80 MB |
+| hatch over a 1000-point polygon | 4.7 ms | 12.5 ms | 63 KB vs 180 KB |
+| 64 × 64 image brush over the same polygon | 5.2 ms | 15.8 ms | 63 KB vs 532 KB |
+
+### Compared with ImageSharp.Drawing 2.1.7
+
+The same fill is rendered by both on a 96 × 64 backdrop and the RGBA bytes compared (test: `BrushImageSharpTests`); "mean" is per channel value, in levels.
+
+| Brush and case | mean | max | notes |
+|---|---|---|---|
+| linear gradient, three stops, None / Repeat / Reflect / DontFill, opaque and translucent backdrop | 0.000 | 0 | start at the image corner, see below |
+| hard stops; unsorted stops and stops outside 0..1 | 0.000 | 0 | |
+| translucent stops, `premultiplied: false` | 0.10–0.11 | 1 | rounding |
+| radial gradient, all four modes | 0.000 | 0 | |
+| elliptic gradient, all four modes, `squaredDistance: true`, slanted axis | 0.000–0.0001 | 1 | axis end mirrored, see below |
+| path gradient, hexagon (polygon moved half a pixel) | 0.011 | 136 | only on pixels on the outline; 0 of 5464 pixels away from it differ by more than 2 |
+| path gradient, concave L shape, default center | 0.009 | 4 | |
+| seven hatch presets, whole image and inside a rectangle | 0.000 | 0 | |
+| custom pattern, translucent colors | 0.000 | 0 | |
+| image brush: whole, region + offset, inside a rectangle, opacity 0.5 | 0.000–0.022 | 0–1 | the offset equals the rectangle's corner |
+| recolor, thresholds 0.02 / 0.1 / 0.3 (opaque pixels) | 0.000 | 0–1 | |
+
+Systematic differences, all by choice:
+
+- **Pixels behind a gradient's start.** ImageSharp mirrors them for a slanted line (position −0.3 looks like 0.3) and clamps them for an axis-aligned line even in Repeat mode. Here `None` clamps, `Repeat` continues the pattern backward and `DontFill` leaves them empty, on any line. The comparisons put the start at the image corner so no pixel lies behind it.
+- **Elliptic gradients.** ImageSharp turns a slanted ellipse the opposite way from its axis end (an axis pointing down-right draws an ellipse elongated up-right) and uses the *square* of the normalized distance as the position. Here the axis points at `axisEnd` and the position is the distance itself, like the radial gradient; `squaredDistance: true` gives ImageSharp's falloff. The comparison mirrors the axis end.
+- **Translucent stops** blend premultiplied by default, as said above.
+- **Anchoring.** ImageSharp anchors an image brush at the top-left of the shape's bounds (patterns at the image origin); here every brush is anchored in the image, so to match, use `offsetX`/`offsetY` equal to the shape's corner.
+- **Path gradient.** ImageSharp evaluates at pixel corners (x, y) and includes the outline; this library evaluates at pixel centers, so the same picture needs the points moved by half a pixel. The outline is inclusive here too (within 10⁻⁵).
+- **Recolor on partially transparent pixels** is not matched.
+
+## Compared with ImageSharp.Drawing 2.1.7 (coverage)
 
 Alpha plane of a white fill on a transparent 140 × 140 image, our output against theirs (test: `ImageSharpCoverageTests`):
 
@@ -110,6 +182,9 @@ Speed (local smoke result, 2000 x 2000 RGBA, solid color, load 0.4 at start, .NE
 |---|---|
 | `ctx.Fill(color, path)` | `img.Fill(color, path)` / `canvas.Fill(color, path)` |
 | `ctx.Fill(brush, path)`, `Brushes.Solid(c)` | `img.Fill(Brush.Solid(c), path)` |
+| `LinearGradientBrush`, `RadialGradientBrush`, `EllipticGradientBrush`, `PathGradientBrush`, `ColorStop`, `GradientRepetitionMode` | `Brush.LinearGradient`, `RadialGradient`, `EllipticGradient`, `PathGradient`, `ColorStop`, `GradientRepetition` |
+| `PatternBrush`, `Brushes.Horizontal` ... `Brushes.Min` | `Brush.Pattern`, `Brush.Hatch(HatchStyle, ...)` |
+| `ImageBrush`, `RecolorBrush` | `Brush.FromImage`, `Brush.Recolor` |
 | `ctx.Fill(color)` (whole image) | `img.Fill(color)`; `Clear(color)` replaces pixels |
 | `GraphicsOptions.Antialias` | `antialias:` |
 | `ShapeOptions.IntersectionRule` | `rule:` (`IntersectionRule.NonZero` is the default; set `rule:` explicitly when porting) |
@@ -127,12 +202,12 @@ Speed (local smoke result, 2000 x 2000 RGBA, solid color, load 0.4 at start, .NE
 | `ctx.DrawLine`, `DrawPolygon`, `DrawBeziers`, `Draw(pen, new RectangularPolygon(...))` | `DrawLine`, `DrawPolygon`, `DrawPolyline`, `DrawBeziers`, `DrawRectangle`, `DrawEllipse` |
 | `path.GenerateOutline(width, pattern, isClosed, joint, endcap)` | `path.GenerateOutline(pen)` / `path.GenerateOutline(width, join, cap, miterLimit, dashPattern, dashOffset)` |
 
-Not yet: gradient/pattern/image/recolor brushes, polygon boolean operations, `Clip`, text.
+Not yet: polygon boolean operations, `Clip`, text.
 
 ## Extending
 
 - **Stroker.** Done: see [Strokes](#strokes). Any new geometry (text outlines, boolean results) can be stroked by passing it to `Draw`.
-- **Brushes.** Subclass `Brush` (its members are internal for now): `FillRow(x, y, rgba)` writes straight RGBA floats for a run of pixels; the paint step already handles non-solid brushes through that row call, mixing by coverage and blend mode. Linear-light fills with non-solid brushes are refused until a brush can say how to convert itself.
+- **Brushes.** Subclass `Brush` (see *Writing a brush* above): `FillRow(x, y, rgba)` writes straight RGBA floats for a run of pixels; the paint step handles every brush through that row call, mixing by coverage and blend mode, in linear light too. Pens take any `Brush`.
 - **Clipping.** A clip is a second coverage source multiplied into the coverage before the paint step (`TileRasterizer` already yields one float row per pixel row).
 - **Text.** Glyph outlines are `Path`s; text is a fill of their combination.
 - **Layers.** A layer's mask is the same coverage plane; `BlendKernel.Row` is the composite step.

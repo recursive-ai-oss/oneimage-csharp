@@ -27,7 +27,7 @@ internal sealed class FillNode : Node
     private readonly FillPlan _plan;
 
     public FillNode(Node input, RasterSource source, FillPlan plan, OpDescriptor descriptor)
-        : base(input.Width, input.Height, input.Format, descriptor, input)
+        : base(input.Width, input.Height, input.Format, descriptor, [input, .. plan.Brush.Sources])
     {
         _source = source;
         _plan = plan;
