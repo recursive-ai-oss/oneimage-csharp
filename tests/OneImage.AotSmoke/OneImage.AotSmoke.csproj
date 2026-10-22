@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/OneImage/OneImage.csproj" />
     <ProjectReference Include="../../src/OneImage.Text/OneImage.Text.csproj" />
+    <ProjectReference Include="../../src/OneImage.Svg/OneImage.Svg.csproj" />
   </ItemGroup>
 
   <ItemGroup>

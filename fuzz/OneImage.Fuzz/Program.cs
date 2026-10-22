@@ -27,6 +27,7 @@ internal static class Program
         ["gif"] = CodecTargets.Gif,
         ["webp"] = CodecTargets.WebP,
         ["svg"] = DrawingTargets.Svg,
+        ["svg-xml"] = SvgXmlTarget.Run,
         ["font"] = FontTarget.Run,
         ["breaking"] = BreakingTarget.Run,
         ["brotli"] = BrotliTarget.Run,

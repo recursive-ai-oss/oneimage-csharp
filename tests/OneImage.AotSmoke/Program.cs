@@ -486,5 +486,24 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// SVG: registration, detection (plain and gzip) and the natural size.
+{
+    var svgConfig = new ImageConfiguration().Add(OneImage.Svg.SvgFormat.Instance);
+    byte[] svg = System.Text.Encoding.UTF8.GetBytes("<svg xmlns='http://www.w3.org/2000/svg' width='30mm' viewBox='0 0 40 20'/>");
+    using var gzBytes = new MemoryStream();
+    using (var gz = new System.IO.Compression.GZipStream(gzBytes, System.IO.Compression.CompressionLevel.Optimal, true))
+    {
+        gz.Write(svg);
+    }
+
+    ImageInfo plain = Image.Identify(svg, new LoadOptions { Configuration = svgConfig });
+    ImageInfo svgZipped = Image.Identify(gzBytes.ToArray(), new LoadOptions { Configuration = svgConfig });
+    if (plain.Width != 114 || plain.Height != 57 || svgZipped.Width != 114 || plain.Format.Name != "svg")
+    {
+        Console.Error.WriteLine("svg smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

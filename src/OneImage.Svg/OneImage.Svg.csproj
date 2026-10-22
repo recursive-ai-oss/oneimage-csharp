@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>$(LibName).Svg</AssemblyName>
+    <RootNamespace>$(LibName).Svg</RootNamespace>
+    <PackageId>$(PackagePrefix)$(LibName).Svg</PackageId>
+    <Description>SVG support for OneImage: reads static SVG (shapes, paths, gradients, patterns, clipping, masks, markers, filters and text) as an image format, rendered directly at the requested output size.</Description>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>image;imaging;svg;vector;rasterize;nativeaot;trimmable</PackageTags>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneImage/OneImage.csproj" />
+    <ProjectReference Include="../OneImage.Text/OneImage.Text.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="$(LibName).Svg.Tests" />
+    <InternalsVisibleTo Include="$(LibName).Fuzz" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>

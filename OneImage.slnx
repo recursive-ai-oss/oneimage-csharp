@@ -3,10 +3,12 @@
     <Project Path="src/OneImage/OneImage.csproj" />
     <Project Path="src/OneImage.Web/OneImage.Web.csproj" />
     <Project Path="src/OneImage.Text/OneImage.Text.csproj" />
+    <Project Path="src/OneImage.Svg/OneImage.Svg.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/OneImage.Tests/OneImage.Tests.csproj" />
     <Project Path="tests/OneImage.Text.Tests/OneImage.Text.Tests.csproj" />
+    <Project Path="tests/OneImage.Svg.Tests/OneImage.Svg.Tests.csproj" />
     <Project Path="tests/OneImage.AotSmoke/OneImage.AotSmoke.csproj" />
     <Project Path="tests/OneImage.Web.Tests/OneImage.Web.Tests.csproj" />
     <Project Path="tests/OneImage.Web.AotSmoke/OneImage.Web.AotSmoke.csproj" />
