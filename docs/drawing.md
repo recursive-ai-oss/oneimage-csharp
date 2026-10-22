@@ -1,6 +1,6 @@
 # Drawing
 
-Vector fills and strokes for `Image` and `Canvas`: paths, an anti-aliased rasterizer, solid, gradient, pattern, image and recolor brushes, pens (width, joins, caps, dashes), blend modes. Clipping and text build on the same layers (see [Extending](#extending)).
+Vector fills and strokes for `Image` and `Canvas`: paths, an anti-aliased rasterizer, solid, gradient, pattern, image and recolor brushes, pens (width, joins, caps, dashes), blend modes. Boolean operations on paths and clipping (see [Boolean operations and clipping](#boolean-operations-and-clipping)) and text build on the same layers (see [Extending](#extending)).
 
 ```csharp
 using OneImage;
@@ -176,6 +176,64 @@ Speed (local smoke result, 2000 x 2000 RGBA, solid color, load 0.4 at start, .NE
 | 300 circles, width 3 | 9.5 ms (6.6 ms as lazy `Image` + copy) | 36.3 ms | 7.4 / 34.8 MB |
 | dashed 400-point wave, width 3, 3:1 | 0.80 ms | 6.0 ms | 0.34 / 2.74 MB |
 
+## Boolean operations and clipping
+
+```csharp
+Path both = Path.Circle(100, 100, 60).Union(Path.Circle(150, 110, 50));          // one outline around both
+Path moon = Path.Circle(100, 100, 60).Subtract(Path.Circle(125, 90, 55));        // the first minus the second
+Path lens = a.Intersect(b);   Path odd = a.Xor(b);   Path merged = PathBoolean.UnionAll(circles);
+Path clean = Path.Polygon(selfCrossingPoints).Resolve(IntersectionRule.EvenOdd);   // no overlaps, no crossings
+Path grown = outline.Offset(12, StrokeJoin.Round);  Path shrunk = outline.Offset(-12);
+
+img = img.Clip(Path.Circle(300, 200, 120), i => i.GaussianBlur(8));             // blur only inside the circle
+canvas.Clip(heart, i => i.Invert().Grayscale());                                 // the same, in place
+img = img.Fill(Brush.Solid(red), Path.Rectangle(0, 0, 800, 600), clip: heart);   // paint only inside the heart
+```
+
+### Path booleans
+
+`BooleanOperation` is `Union`, `Intersection`, `Difference` (subject minus clip) or `Xor`. `path.Boolean(operation, other, subjectRule, clipRule, tolerance)` does any of them, and `Union`, `Intersect`, `Subtract` and `Xor` are the short forms. Each path is read as the region its closed figures enclose under its own `IntersectionRule` (non-zero by default), so self-intersecting paths, shapes with holes and paths that overlap themselves work as they do when filled. `PathBoolean.UnionAll(paths)` merges any number of paths in one pass; it resolves each path on its own first, so a path wound the other way, or with holes, does not cancel its neighbors. `Resolve(rule)` rewrites one path as non-overlapping polygons.
+
+- **Result.** A `Path` of straight-edged, closed polygons: curves are flattened first (`tolerance`, default 0.1 px, like a fill), so a union of two circles is a polygon with arcs of short segments. Outer contours and holes run in opposite directions, nothing overlaps and no two edges cross, so the result fills the same under either rule. Collinear vertices are removed, edges two shapes share on opposite sides vanish, and shapes that only touch at a point stay separate. An empty region gives `Path.Empty`.
+- **Exactness.** Every coordinate is rounded to a grid of 1/256 pixel, and intersection points are rounded to it too; all decisions (which side, which order, what crosses) are made in exact integer arithmetic. Collinear and coincident edges, edges meeting at a vertex, spikes, zero-area slivers and edges that cross at tiny angles are therefore handled without tolerances. Rounding an intersection moves the two edges by under 1/512 px, which can make a new crossing nearby; the engine finds and settles those too (a few rounds at most). The result does not depend on thread count (the work is single-threaded) or on the order of the input figures except for where each polygon starts.
+- **Limits.** Coordinates beyond ±33,554,432 px or more than 2²² flattened segments fail with `ImageLimitException`, as does an arrangement of more than 2²³ pieces or a comparison count past 2³¹. Time is about n log n plus the number of crossings (a 1000-point polygon against a 24-point star takes about 0.17 ms best case); a pentagram-like star of 2001 vertices (two million crossings) takes about 12 s.
+- **Offset.** `Offset(distance, join, miterLimit, rule)` falls out of the same machinery: the region unioned with (distance > 0) or minus (distance < 0) the band of points within |distance| of its boundary, built from a rectangle per edge and a wedge per corner (`Round`, `Miter` with a limit, `Bevel` or `Square`). Shrinking removes parts thinner than twice the distance. Corners of the result follow the join where the boundary turns away from the offset; elsewhere they stay sharp.
+
+### Clip
+
+`image.Clip(path, operations, antialias, rule, transform)` runs `operations` (a `Func<Image, Image>`, called once, now) and keeps the result only inside `path`: pixels outside are the input's own, pixels inside are the operations' result byte for byte, and pixels along the edge mix the two by the path's coverage (exact area, or the pixel center without `antialias`). The mix is made in premultiplied float values, as a layer mask would, and rounded to the format. Any chain works because it is lazy and ordinary: the operations never see the path. They do see the whole image, so a blur at the edge draws on pixels outside the path, and the operations must keep the image size and frame count (a different pixel format is converted back).
+
+Only tiles the path can reach ask the operations for pixels; tiles wholly inside are the operations' tiles, tiles wholly outside are the input's. On a 2000 x 2000 image a blur clipped to a circle computes the circle's tiles only. `canvas.Clip(...)` is the same in place, in parallel over tiles, with the same bytes as `Snapshot().Clip(...)`; because the operations read a snapshot, tiles it rewrites are copied once. Frames of an animation are clipped each with the path in their own grid. Clips nest: the operations can contain a `Clip`. The descriptor is named `clip` with the rule, anti-aliasing, transform and path as parameters.
+
+### Clipped fills and strokes
+
+`Fill` and `Draw` (with a `Pen`, or a color and width) on `Image` and `Canvas` take `clip:` and `clipRule:`. The clip path's coverage is multiplied into the shape's coverage row before painting, so only pixels inside both change and the clip edge is anti-aliased like any other; the clip is in image coordinates and `transform:` does not move it. With `antialias: false` both are sampled at pixel centers. This costs one extra rasterization per touched tile and nothing when `clip` is null. It works with every brush, blend mode and with `linear: true`. The helpers (`DrawLine`, `DrawPolygon`, ...) do not take a clip; wrap them in `Clip(...)`.
+
+### Compared with ImageSharp.Drawing 2.1.7
+
+Alpha plane of a white fill of each result on a transparent 140 x 140 image (test: `BooleanImageSharpTests`; the results of `Boolean` against `IPath.Clip(ShapeOptions, ...)`, each filled by its own library; mean and maximum difference in levels, then the filled area in pixels, ours / theirs):
+
+| Case | Union | Intersection | Difference | Xor |
+|---|---|---|---|---|
+| two overlapping circles | 0.22 / 32 | 0.11 / 34 | 0.17 / 32 | 0.33 / 32 |
+| 5-point star and a rectangle | 0.10 / 112 | 0.02 / 14 | 0.12 / 112 | 0.15 / 112 |
+| pentagram (self-intersecting) and a rectangle | 0.12 / 65 | 0.03 / 11 | 0.12 / 65 | 0.20 / 65 |
+| pentagram (even-odd) and a circle | 0.12 / 65 | 0.14 / 95 | 0.21 / 148 | 0.29 / 183 |
+| square with a square hole (even-odd) and a bar | 0.08 / 16 | 0.02 / 16 | 0.02 / 16 | 0.12 / 16 |
+| two rectangles sharing an edge | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| 1000-point blob and a 7-point star | 0.19 / 163 | 0.11 / 91 | 0.15 / 106 | 0.32 / 187 |
+| self-crossing bow tie and a circle | 0.13 / 127 | 0.15 / 76 | 0.13 / 127 | 0.27 / 127 |
+
+The maxima are single pixels at vertices, where the two libraries round slightly differently. Filled areas agree within about 1% (the largest gap is a small 680-pixel lens, 1.1%; most are under 0.3%); ours are exact on the 1/256 grid, which `BooleanTests` checks against analytic areas and a point-by-point brute-force definition of each operation, including random polygons and lattice polygons whose edges overlap and cross at lattice points constantly.
+
+Differences by choice:
+
+- ImageSharp's `IPath.Clip(...)` defaults to *difference*; here the operation is always named. Its `ShapeOptions.IntersectionRule` applies to both operands; here each has its own rule.
+- ImageSharp's `Clip` on a context applies the processors to the path's bounding rectangle and then masks with the path; here the operations are lazy and only the tiles the path reaches are computed.
+- Results are polygons of straight segments in both libraries; ours are snapped to 1/256 px and have collinear vertices removed.
+
+Speed (local smoke result, 2000 x 2000 RGBA, .NET 10, X64 AVX-512 host, shared and heavily loaded workstation, see `bench/OneImage.Benchmarks/Drawing/ClipBenchmarks.cs`; load 10-13, so treat as rough): union of 200 circles 9.5 ms vs 13.7 ms (3.2 MB vs 23 MB allocated); a 1000-point polygon minus a star 0.19 ms vs 0.12 ms (33 KB vs 205 KB); a Gaussian blur clipped to a circle 12.3 ms lazy + copy-out, 13.4 ms in place on a Canvas, vs 51.7 ms (the Canvas row allocates 9.6 MB of copied tiles against 0.4 MB).
+
 ## ImageSharp.Drawing names
 
 | ImageSharp.Drawing | OneImage |
@@ -194,6 +252,10 @@ Speed (local smoke result, 2000 x 2000 RGBA, solid color, load 0.4 at start, .NE
 | `RectangularPolygon`, `EllipsePolygon`, `RegularPolygon`, `Star`, `Polygon`, `ComplexPolygon` | `Path.Rectangle`, `Ellipse`/`Circle`, `RegularPolygon`, `Star`, `Polygon`, `Path.Combine` |
 | `Path.TryParseSvgPath` | `Path.TryParseSvg` |
 | `path.Transform`, `path.Bounds`, `path.Flatten()` | the same names on `Path` |
+| `subject.Clip(new ShapeOptions { ClippingOperation = ..., IntersectionRule = ... }, clips)` | `subject.Boolean(BooleanOperation, clip, subjectRule, clipRule)`; `Union`, `Intersect`, `Subtract`, `Xor`; `PathBoolean.UnionAll(paths)` |
+| `ClippingOperation.Union/Intersection/Difference/Xor` | `BooleanOperation.Union/Intersection/Difference/Xor` |
+| `ctx.Clip(path, c => c.GaussianBlur(8))` | `img.Clip(path, i => i.GaussianBlur(8))` / `canvas.Clip(path, ...)` |
+| `ctx.Fill(options, brush, path)` with a clipped region | `img.Fill(brush, path, clip: clipPath)` |
 | `ctx.Draw(pen, path)`, `ctx.Draw(color, width, path)` | `img.Draw(pen, path)`, `img.Draw(color, width, path)` / `canvas.Draw(...)` |
 | `Pens.Solid`, `Pens.Dash`, `Dot`, `DashDot`, `DashDotDot` | `Pen.Solid`, `Pen.Dash`, `Pen.Dot`, `Pen.DashDot`, `Pen.DashDotDot` |
 | `new SolidPen(new PenOptions(color, width) { JointStyle, EndCapStyle })` | `new Pen(brush, width, join, cap, miterLimit)` |
@@ -202,12 +264,12 @@ Speed (local smoke result, 2000 x 2000 RGBA, solid color, load 0.4 at start, .NE
 | `ctx.DrawLine`, `DrawPolygon`, `DrawBeziers`, `Draw(pen, new RectangularPolygon(...))` | `DrawLine`, `DrawPolygon`, `DrawPolyline`, `DrawBeziers`, `DrawRectangle`, `DrawEllipse` |
 | `path.GenerateOutline(width, pattern, isClosed, joint, endcap)` | `path.GenerateOutline(pen)` / `path.GenerateOutline(width, join, cap, miterLimit, dashPattern, dashOffset)` |
 
-Not yet: polygon boolean operations, `Clip`, text.
+Not yet: text.
 
 ## Extending
 
 - **Stroker.** Done: see [Strokes](#strokes). Any new geometry (text outlines, boolean results) can be stroked by passing it to `Draw`.
 - **Brushes.** Subclass `Brush` (see *Writing a brush* above): `FillRow(x, y, rgba)` writes straight RGBA floats for a run of pixels; the paint step handles every brush through that row call, mixing by coverage and blend mode, in linear light too. Pens take any `Brush`.
-- **Clipping.** A clip is a second coverage source multiplied into the coverage before the paint step (`TileRasterizer` already yields one float row per pixel row).
+- **Clipping.** Done: see [Boolean operations and clipping](#boolean-operations-and-clipping). A clip is a second coverage source multiplied into the coverage before the paint step (`TileRasterizer.ApplyClip`), and `ClipNode` is the same coverage used as a mask between an image and its processed copy.
 - **Text.** Glyph outlines are `Path`s; text is a fill of their combination.
 - **Layers.** A layer's mask is the same coverage plane; `BlendKernel.Row` is the composite step.

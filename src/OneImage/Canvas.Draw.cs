@@ -8,7 +8,7 @@ public sealed partial class Canvas
 {
     /// <summary>
     /// Fills the inside of <paramref name="path"/> with <paramref name="brush"/>, in place. The geometry, coverage, color and
-    /// option rules are those of <see cref="Image.Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/>,
+    /// option rules are those of <see cref="Image.Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?, Path, IntersectionRule)"/>,
     /// and the pixels written are byte for byte what <c>Snapshot().Fill(...)</c> would show. Only the tiles the path can touch are
     /// written (shared tiles are copied first), so a small shape on a large canvas costs a few tiles. The fill runs on the calling thread.
     /// </summary>
@@ -21,20 +21,22 @@ public sealed partial class Canvas
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the path before filling. The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the shape's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="brush"/> or <paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
     /// <exception cref="ImageOperationException">The canvas is CMYK or Lab, the composition would make a canvas without alpha transparent, or the transform leaves the finite range.</exception>
     /// <exception cref="ImageLimitException">The path flattens to too many segments (<see cref="Path.MaxFlattenedPoints"/>).</exception>
-    public void Fill(Brush brush, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
+    public void Fill(Brush brush, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(brush);
         ArgumentNullException.ThrowIfNull(path);
-        FillCore(brush, path, FillSettings.Check(antialias, rule, opacity, blend, composition, linear, transform, Format));
+        FillCore(brush, path, FillSettings.Check(antialias, rule, opacity, blend, composition, linear, transform, Format, clip, clipRule));
     }
 
-    /// <summary>Fills <paramref name="path"/> with one color, in place; see <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/>.</summary>
+    /// <summary>Fills <paramref name="path"/> with one color, in place; see <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?, Path, IntersectionRule)"/>.</summary>
     /// <param name="color">The color, straight alpha, in the canvas's color space.</param>
     /// <param name="path">The outline, in canvas pixel coordinates.</param>
     /// <param name="antialias">Smooth edges. The default is <see langword="true"/>.</param>
@@ -44,13 +46,15 @@ public sealed partial class Canvas
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the path before filling. The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the shape's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
     /// <exception cref="ImageOperationException">The canvas is CMYK or Lab, the composition would make a canvas without alpha transparent, or the transform leaves the finite range.</exception>
     /// <exception cref="ImageLimitException">The path flattens to too many segments.</exception>
-    public void Fill(Rgba32 color, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null) =>
-        Fill(Brush.Solid(color), path, antialias, rule, opacity, blend, composition, linear, transform);
+    public void Fill(Rgba32 color, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero) =>
+        Fill(Brush.Solid(color), path, antialias, rule, opacity, blend, composition, linear, transform, clip, clipRule);
 
     /// <summary>Lays one color over every pixel, in place; see <see cref="Image.Fill(Rgba32, float, BlendMode, AlphaComposition, bool)"/>.</summary>
     /// <param name="color">The color, straight alpha, in the canvas's color space.</param>
@@ -76,6 +80,7 @@ public sealed partial class Canvas
     private void FillCore(Brush brush, Path path, FillSettings s)
     {
         Raster raster = Raster.Build(path, s.Transform, Width, Height, s.Tolerance);
+        Raster? clip = s.Clip == null ? null : Raster.Build(s.Clip, Matrix3x2.Identity, Width, Height, s.Tolerance);
         if (s.Linear)
         {
             // Linear light converts through the image pipeline; the tiles it produces replace the touched ones.
@@ -85,7 +90,7 @@ public sealed partial class Canvas
             {
                 for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
                 {
-                    if (raster.MayTouch(tx, ty))
+                    if (raster.MayTouch(tx, ty) && (clip == null || clip.MayTouch(tx, ty)))
                     {
                         Tile source = filled.GetTile(tx, ty, context);
                         try
@@ -111,7 +116,7 @@ public sealed partial class Canvas
         {
             for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
             {
-                if (raster.MayTouch(tx, ty))
+                if (raster.MayTouch(tx, ty) && (clip == null || clip.MayTouch(tx, ty)))
                 {
                     touched.Add((tx, ty, WritableTile(tx, ty, willOverwriteAll: false)));
                 }
@@ -123,23 +128,24 @@ public sealed partial class Canvas
         {
             foreach ((int tx, int ty, Tile tile) in touched)
             {
-                PaintTile(raster, plan, s, tx, ty, tile);
+                PaintTile(raster, clip, plan, s, tx, ty, tile);
             }
 
             return;
         }
 
-        Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => PaintTile(raster, plan, s, touched[i].Tx, touched[i].Ty, touched[i].Tile));
+        Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => PaintTile(raster, clip, plan, s, touched[i].Tx, touched[i].Ty, touched[i].Tile));
     }
 
-    private void PaintTile(Raster raster, FillPlan plan, FillSettings s, int tx, int ty, Tile tile)
+    private void PaintTile(Raster raster, Raster? clip, FillPlan plan, FillSettings s, int tx, int ty, Tile tile)
     {
         int x = tx << Tile.Shift, y = ty << Tile.Shift;
         int tw = Math.Min(Tile.Size, Width - x), th = Math.Min(Tile.Size, Height - y);
         RasterScratch scratch = RasterScratch.Rent();
         try
         {
-            if (TileRasterizer.Rasterize(raster, tx, ty, tw, th, scratch, s.Antialias, s.Rule))
+            if (TileRasterizer.Rasterize(raster, tx, ty, tw, th, scratch, s.Antialias, s.Rule)
+                && (clip == null || TileRasterizer.ApplyClip(clip, tx, ty, tw, th, scratch, s.Antialias, s.ClipRule)))
             {
                 plan.Paint(tile.Span, tw, th, x, y, scratch);
             }

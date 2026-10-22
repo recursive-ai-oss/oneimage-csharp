@@ -344,6 +344,25 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Boolean path operations and clipping: a union and a difference, a blur clipped to the union on an image and a canvas, and a clipped fill.
+{
+    OneImage.Drawing.Path circleA = OneImage.Drawing.Path.Circle(110, 90, 60), circleB = OneImage.Drawing.Path.Circle(170, 100, 50);
+    OneImage.Drawing.Path united = OneImage.Drawing.PathBoolean.Union(circleA, circleB);
+    OneImage.Drawing.Path cut = OneImage.Drawing.PathBoolean.Subtract(circleA, circleB);
+    Rgba32[] viaImage = snapshot.Clip(united, i => i.GaussianBlur(4)).ToArray<Rgba32>();
+    using var clipped = snapshot.ToCanvas();
+    clipped.Clip(united, i => i.GaussianBlur(4));
+    var viaCanvas = new Rgba32[viaImage.Length];
+    clipped.CopyTo<Rgba32>(viaCanvas, new ImageRect(0, 0, 300, 200));
+    Rgba32[] marked = snapshot.Fill(new Rgba32(200, 40, 40, 255), OneImage.Drawing.Path.Rectangle(0, 0, 300, 200), clip: cut).ToArray<Rgba32>();
+    if (united.IsEmpty || cut.IsEmpty || !viaImage.AsSpan().SequenceEqual(viaCanvas) || marked.Length != viaImage.Length
+        || OneImage.Drawing.PathBoolean.UnionAll([circleA, circleB]).IsEmpty || OneImage.Drawing.PathBoolean.Offset(circleA, 5).IsEmpty)
+    {
+        Console.Error.WriteLine("clip smoke failed");
+        return 1;
+    }
+}
+
 // Brushes: gradients (also in linear light), a hatch, an image brush, path gradient and recolor; Image and Canvas must agree.
 {
     OneImage.Drawing.Path disc = OneImage.Drawing.Path.Circle(120, 90, 70);

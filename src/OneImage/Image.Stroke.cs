@@ -9,7 +9,7 @@ public sealed partial class Image
     /// <summary>
     /// Strokes <paramref name="path"/> with <paramref name="pen"/> (lazy): paints the line along the path, with the pen's width, joins,
     /// caps and dashes, in the pen's brush. Everything else (anti-aliasing, color space, blending, opacity, transform, animation, failure)
-    /// works as for <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/>.
+    /// works as for <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?, Path, IntersectionRule)"/>.
     /// <para>
     /// <b>How.</b> The path is turned into the outline of its stroke (<see cref="PathStrokeExtensions.GenerateOutline(Path, Pen, float)"/>) when this
     /// method is called, and that outline is filled with the non-zero rule, so the stroke's own overlaps (a self-crossing line, an inside
@@ -31,16 +31,18 @@ public sealed partial class Image
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the stroke outline (so it scales the width too). The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the stroke's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <returns>The image with the stroke painted.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="pen"/> or <paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
     /// <exception cref="ImageOperationException">The image is CMYK or Lab, or the composition would make an image without alpha transparent.</exception>
     /// <exception cref="ImageLimitException">The stroke is too complex.</exception>
-    public Image Draw(Pen pen, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
+    public Image Draw(Pen pen, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
     {
         ArgumentNullException.ThrowIfNull(pen);
         ArgumentNullException.ThrowIfNull(path);
-        FillSettings s = FillSettings.Check(antialias, IntersectionRule.NonZero, opacity, blend, composition, linear, transform, Format);
+        FillSettings s = FillSettings.Check(antialias, IntersectionRule.NonZero, opacity, blend, composition, linear, transform, Format, clip, clipRule);
         Path outline = path.GenerateOutline(pen, PathStrokeExtensions.ToleranceFor(transform));
         return FillCore(pen.Brush, outline, s, new FillLabel("stroke", path, pen.Describe()));
     }
@@ -55,11 +57,13 @@ public sealed partial class Image
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the stroke outline (so it scales the width too). The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the stroke's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <returns>The image with the stroke painted.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
-    public Image Draw(Rgba32 color, float width, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
-        => Draw(Pen.Solid(color, width), path, antialias, opacity, blend, composition, linear, transform);
+    public Image Draw(Rgba32 color, float width, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
+        => Draw(Pen.Solid(color, width), path, antialias, opacity, blend, composition, linear, transform, clip, clipRule);
 
     /// <summary>Draws a straight line from <paramref name="from"/> to <paramref name="to"/> with <paramref name="pen"/>; see <c>Draw</c> for every rule. Identical end points draw nothing.</summary>
     /// <param name="pen">Width, join, cap, dashes and brush.</param>

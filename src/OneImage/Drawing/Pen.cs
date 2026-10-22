@@ -6,7 +6,7 @@ namespace OneImage.Drawing;
 /// <summary>
 /// Describes how a line is drawn: what paints it (any <see cref="Brush"/>), how wide it is, how corners and ends look and
 /// whether it is dashed. A pen is immutable; the <c>With…</c> methods return changed copies. Pass one to
-/// <see cref="Image.Draw(Pen, Path, bool, float, BlendMode, AlphaComposition, bool, System.Numerics.Matrix3x2?)"/>.
+/// <see cref="Image.Draw(Pen, Path, bool, float, BlendMode, AlphaComposition, bool, System.Numerics.Matrix3x2?, Path, IntersectionRule)"/>.
 /// <para>
 /// Defaults: width 1, <see cref="StrokeJoin.Miter"/> joins with a miter limit of 4, <see cref="StrokeCap.Butt"/> ends, solid.
 /// The width is in path units (pixels, unless the draw call has a transform, which scales it). A dash pattern is a list of

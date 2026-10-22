@@ -8,7 +8,7 @@ public sealed partial class Canvas
 {
     /// <summary>
     /// Strokes <paramref name="path"/> with <paramref name="pen"/>, in place. The geometry and rules are those of
-    /// <see cref="Image.Draw(Pen, Path, bool, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/>, and the pixels written are byte for byte what
+    /// <see cref="Image.Draw(Pen, Path, bool, float, BlendMode, AlphaComposition, bool, Matrix3x2?, Path, IntersectionRule)"/>, and the pixels written are byte for byte what
     /// <c>Snapshot().Draw(...)</c> would show.
     /// </summary>
     /// <param name="pen">Width, join, cap, dashes and brush.</param>
@@ -19,17 +19,19 @@ public sealed partial class Canvas
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the stroke outline (so it scales the width too). The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the stroke's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <exception cref="ObjectDisposedException">The canvas was disposed.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="pen"/> or <paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
     /// <exception cref="ImageOperationException">The canvas is CMYK or Lab, or the composition would make a canvas without alpha transparent.</exception>
     /// <exception cref="ImageLimitException">The stroke is too complex.</exception>
-    public void Draw(Pen pen, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
+    public void Draw(Pen pen, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(pen);
         ArgumentNullException.ThrowIfNull(path);
-        FillSettings s = FillSettings.Check(antialias, IntersectionRule.NonZero, opacity, blend, composition, linear, transform, Format);
+        FillSettings s = FillSettings.Check(antialias, IntersectionRule.NonZero, opacity, blend, composition, linear, transform, Format, clip, clipRule);
         FillCore(pen.Brush, path.GenerateOutline(pen, PathStrokeExtensions.ToleranceFor(transform)), s);
     }
 
@@ -43,10 +45,12 @@ public sealed partial class Canvas
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the stroke outline (so it scales the width too). The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the stroke's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
-    public void Draw(Rgba32 color, float width, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
-        => Draw(Pen.Solid(color, width), path, antialias, opacity, blend, composition, linear, transform);
+    public void Draw(Rgba32 color, float width, Path path, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
+        => Draw(Pen.Solid(color, width), path, antialias, opacity, blend, composition, linear, transform, clip, clipRule);
 
     /// <summary>Draws a straight line from <paramref name="from"/> to <paramref name="to"/> with <paramref name="pen"/>; see <c>Draw</c> for every rule. Identical end points draw nothing.</summary>
     /// <param name="pen">Width, join, cap, dashes and brush.</param>

@@ -69,6 +69,52 @@ internal static class TileRasterizer
         return antialias ? Antialiased(raster.Edges, items, tx << Tile.Shift, ty << Tile.Shift, tw, th, s, rule) : Aliased(raster.Edges, items, tx << Tile.Shift, ty << Tile.Shift, tw, th, s, rule);
     }
 
+    /// <summary>
+    /// Multiplies the coverage already in <paramref name="s"/> by the coverage of a clip raster for the same tile and narrows each
+    /// row's span to where both are non-zero. Returns false when no pixel keeps any coverage.
+    /// </summary>
+    public static bool ApplyClip(Raster clip, int tx, int ty, int tw, int th, RasterScratch s, bool antialias, IntersectionRule rule)
+    {
+        RasterScratch c = RasterScratch.Rent();
+        try
+        {
+            if (!Rasterize(clip, tx, ty, tw, th, c, antialias, rule))
+            {
+                return false;
+            }
+
+            bool any = false;
+            for (int r = 0; r < th; r++)
+            {
+                int a = Math.Max(s.SpanStart[r], c.SpanStart[r]);
+                int b = Math.Min(s.SpanEnd[r], c.SpanEnd[r]);
+                if (a >= b || s.SpanStart[r] >= s.SpanEnd[r] || c.SpanStart[r] >= c.SpanEnd[r])
+                {
+                    s.SpanStart[r] = 0;
+                    s.SpanEnd[r] = 0;
+                    continue;
+                }
+
+                Span<float> cov = s.Coverage.AsSpan((r * Tile.Size) + a, b - a);
+                ReadOnlySpan<float> cc = c.Coverage.AsSpan((r * Tile.Size) + a, b - a);
+                for (int x = 0; x < cov.Length; x++)
+                {
+                    cov[x] *= cc[x];
+                }
+
+                s.SpanStart[r] = a;
+                s.SpanEnd[r] = b;
+                any = true;
+            }
+
+            return any;
+        }
+        finally
+        {
+            RasterScratch.Return(c);
+        }
+    }
+
     private static bool Antialiased(ReadOnlySpan<Edge> edges, ReadOnlySpan<int> items, int ox, int oy, int tw, int th, RasterScratch s, IntersectionRule rule)
     {
         const int stride = Tile.Size + 2;

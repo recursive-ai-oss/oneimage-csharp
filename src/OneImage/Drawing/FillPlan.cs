@@ -11,9 +11,11 @@ internal readonly record struct FillSettings(
     AlphaComposition Composition,
     bool Linear,
     System.Numerics.Matrix3x2 Transform,
-    float Tolerance)
+    float Tolerance,
+    Path? Clip = null,
+    IntersectionRule ClipRule = IntersectionRule.NonZero)
 {
-    public static FillSettings Check(bool antialias, IntersectionRule rule, float opacity, BlendMode blend, AlphaComposition composition, bool linear, System.Numerics.Matrix3x2? transform, PixelFormat format)
+    public static FillSettings Check(bool antialias, IntersectionRule rule, float opacity, BlendMode blend, AlphaComposition composition, bool linear, System.Numerics.Matrix3x2? transform, PixelFormat format, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
     {
         if (!(opacity >= 0f && opacity <= 1f))
         {
@@ -23,6 +25,11 @@ internal readonly record struct FillSettings(
         if (rule is not (IntersectionRule.NonZero or IntersectionRule.EvenOdd))
         {
             throw new ArgumentOutOfRangeException(nameof(rule));
+        }
+
+        if (clipRule is not (IntersectionRule.NonZero or IntersectionRule.EvenOdd))
+        {
+            throw new ArgumentOutOfRangeException(nameof(clipRule));
         }
 
         if (!BlendNames.IsDefined(blend))
@@ -51,7 +58,7 @@ internal readonly record struct FillSettings(
             throw new ImageOperationException($"Composition {composition} would make an image without alpha transparent; add an alpha channel first.");
         }
 
-        return new FillSettings(antialias, rule, opacity, blend, composition, linear, m, Path.DefaultTolerance);
+        return new FillSettings(antialias, rule, opacity, blend, composition, linear, m, Path.DefaultTolerance, clip, clipRule);
     }
 }
 

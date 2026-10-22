@@ -52,18 +52,20 @@ public sealed partial class Image
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light instead of the encoded space. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the path before filling (row-vector convention of <see cref="Matrix3x2"/>). The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the shape's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <returns>The image with the shape painted.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="brush"/> or <paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="opacity"/> is outside 0..1 (or NaN), an enum is undefined, or the transform is not finite.</exception>
     /// <exception cref="ImageOperationException">The image is CMYK or Lab, or the composition would make an image without alpha transparent.</exception>
-    public Image Fill(Brush brush, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null)
+    public Image Fill(Brush brush, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero)
     {
         ArgumentNullException.ThrowIfNull(brush);
         ArgumentNullException.ThrowIfNull(path);
-        return FillCore(brush, path, FillSettings.Check(antialias, rule, opacity, blend, composition, linear, transform, Format));
+        return FillCore(brush, path, FillSettings.Check(antialias, rule, opacity, blend, composition, linear, transform, Format, clip, clipRule));
     }
 
-    /// <summary>Fills <paramref name="path"/> with one color; see <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?)"/> for every detail.</summary>
+    /// <summary>Fills <paramref name="path"/> with one color; see <see cref="Fill(Brush, Path, bool, IntersectionRule, float, BlendMode, AlphaComposition, bool, Matrix3x2?, Path, IntersectionRule)"/> for every detail.</summary>
     /// <param name="color">The color, straight alpha, in the image's color space.</param>
     /// <param name="path">The outline.</param>
     /// <param name="antialias">Smooth edges. The default is <see langword="true"/>.</param>
@@ -73,12 +75,14 @@ public sealed partial class Image
     /// <param name="composition">Porter-Duff operator. The default is <see cref="AlphaComposition.SrcOver"/>.</param>
     /// <param name="linear">Blend in linear light. The default is <see langword="false"/>.</param>
     /// <param name="transform">Applied to the path before filling. The default is none.</param>
+    /// <param name="clip">Limits the drawing to the inside of this path (in image pixel coordinates, not moved by <paramref name="transform"/>): its coverage multiplies the shape's, so only pixels inside both change, and edges blend smoothly. The default is no clip. With <paramref name="antialias"/> off the clip is sampled at pixel centers.</param>
+    /// <param name="clipRule">Inside rule for the clip path. The default is <see cref="IntersectionRule.NonZero"/>.</param>
     /// <returns>The image with the shape painted.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="path"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An argument is out of range.</exception>
     /// <exception cref="ImageOperationException">The image is CMYK or Lab, or the composition would make an image without alpha transparent.</exception>
-    public Image Fill(Rgba32 color, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null) =>
-        Fill(Brush.Solid(color), path, antialias, rule, opacity, blend, composition, linear, transform);
+    public Image Fill(Rgba32 color, Path path, bool antialias = true, IntersectionRule rule = IntersectionRule.NonZero, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false, Matrix3x2? transform = null, Path? clip = null, IntersectionRule clipRule = IntersectionRule.NonZero) =>
+        Fill(Brush.Solid(color), path, antialias, rule, opacity, blend, composition, linear, transform, clip, clipRule);
 
     /// <summary>
     /// Lays one color over every pixel (lazy), combined with the existing pixels by <paramref name="blend"/> and
@@ -124,7 +128,7 @@ public sealed partial class Image
             for (int i = 0; i < nodes.Length; i++)
             {
                 Node n = _frames[i].Node;
-                nodes[i] = new FillNode(n, new RasterSource(path, s.Transform, n.Width, n.Height, s.Tolerance), plan, FillNode.Describe("fill", brush, path, s, label));
+                nodes[i] = new FillNode(n, new RasterSource(path, s.Transform, n.Width, n.Height, s.Tolerance), plan, FillNode.Describe("fill", brush, path, s, label), ClipSource(s, n));
             }
 
             return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);
@@ -141,7 +145,7 @@ public sealed partial class Image
         {
             Node ln = lin._frames[i].Node;
             sources[i] = new RasterSource(path, s.Transform, ln.Width, ln.Height, s.Tolerance);
-            filled[i] = new FillNode(ln, sources[i], linPlan, FillNode.Describe("fill", brush, path, s, label));
+            filled[i] = new FillNode(ln, sources[i], linPlan, FillNode.Describe("fill", brush, path, s, label), ClipSource(s, ln));
         }
 
         Image processed = new Image(filled, delays, LoopCount, lin.Metadata, SourceFormat).FromLinearLight(original, Format);
@@ -152,6 +156,9 @@ public sealed partial class Image
 
         return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);
     }
+
+    private static RasterSource? ClipSource(in FillSettings s, Node n) =>
+        s.Clip == null ? null : new RasterSource(s.Clip, System.Numerics.Matrix3x2.Identity, n.Width, n.Height, s.Tolerance);
 
     // The brush color in linear light, premultiplied, in the working format of a float fill: a one-pixel image carries it through
     // the same profile conversion the pixels get.

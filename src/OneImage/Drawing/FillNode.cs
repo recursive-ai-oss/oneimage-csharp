@@ -24,13 +24,15 @@ internal sealed class RasterSource
 internal sealed class FillNode : Node
 {
     private readonly RasterSource _source;
+    private readonly RasterSource? _clip;
     private readonly FillPlan _plan;
 
-    public FillNode(Node input, RasterSource source, FillPlan plan, OpDescriptor descriptor)
+    public FillNode(Node input, RasterSource source, FillPlan plan, OpDescriptor descriptor, RasterSource? clip = null)
         : base(input.Width, input.Height, input.Format, descriptor, [input, .. plan.Brush.Sources])
     {
         _source = source;
         _plan = plan;
+        _clip = clip;
     }
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)
@@ -66,13 +68,18 @@ internal sealed class FillNode : Node
             ImageRect rect = TileRect(tx, ty);
             foreach (FillNode layer in layers)
             {
-                if (!layer._source.Raster.MayTouch(tx, ty))
+                if (!layer._source.Raster.MayTouch(tx, ty) || (layer._clip != null && !layer._clip.Raster.MayTouch(tx, ty)))
                 {
                     continue;
                 }
 
                 FillSettings st = layer._plan.Settings;
                 if (!TileRasterizer.Rasterize(layer._source.Raster, tx, ty, rect.Width, rect.Height, scratch, st.Antialias, st.Rule))
+                {
+                    continue;
+                }
+
+                if (layer._clip != null && !TileRasterizer.ApplyClip(layer._clip.Raster, tx, ty, rect.Width, rect.Height, scratch, st.Antialias, st.ClipRule))
                 {
                     continue;
                 }
@@ -139,6 +146,12 @@ internal sealed class FillNode : Node
             new("m32", (double)s.Transform.M32),
             new("path", DescribePath(path)),
         };
+        if (s.Clip != null)
+        {
+            p.Add(new OpParameter("clip", DescribePath(s.Clip)));
+            p.Add(new OpParameter("clip-rule", s.ClipRule == IntersectionRule.NonZero ? "nonzero" : "evenodd"));
+        }
+
         if (extra != null)
         {
             p.AddRange(extra);
@@ -149,7 +162,7 @@ internal sealed class FillNode : Node
 
     // Small paths are described in full as SVG path data; a big one by its size and a 64-bit FNV-1a hash of its numbers,
     // so building a fill never costs a string as big as the path.
-    private static string DescribePath(Path path)
+    internal static string DescribePath(Path path)
     {
         if (path.Verbs.Length <= 1024)
         {
