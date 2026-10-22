@@ -11,7 +11,7 @@ public sealed class WebPPipelineTests
 {
     private const int W = 640;
     private const int H = 400;
-    private static readonly WebPFormat Format = new();
+    private static readonly WebPFormat Format = WebPFormat.Instance;
 
     private static byte[] Photo()
     {
