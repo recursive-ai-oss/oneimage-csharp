@@ -28,6 +28,9 @@ internal sealed class ConvolveSpec
     /// <summary>Gets a value indicating whether the result is the unsharp combination <c>orig + amount * (orig - filtered)</c>.</summary>
     public bool Unsharp { get; init; }
 
+    /// <summary>Gets a value indicating whether the result of the horizontal pass is limited to [0, 1] before the vertical pass (as some libraries store it in a clamped intermediate).</summary>
+    public bool ClampBetweenPasses { get; init; }
+
     /// <summary>Gets the unsharp amount.</summary>
     public float Amount { get; init; }
 
@@ -279,6 +282,10 @@ internal sealed class ConvolveNode : Node
                 }
 
                 h.AsSpan(need.Height * hstride, hstride).Clear();
+                if (_spec.ClampBetweenPasses)
+                {
+                    FilterKernel.Clamp01(h.AsSpan(0, need.Height * hstride));
+                }
             }
 
             int bpp = Format.BytesPerPixel;

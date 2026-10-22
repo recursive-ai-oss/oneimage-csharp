@@ -82,6 +82,15 @@ if (blurred.ToArray<Rgba32>().Length != 60000 || wide.ToArray<Rgba32>().Length !
     return 1;
 }
 
+// Neighbourhood effects: mosaic, oil paint, radial overlays, bokeh, Gaussian sharpening, edge detectors, entropy crop.
+Image effects = snapshot.Pixelate(5).OilPaint(8, 5).Vignette().Glow(new Rgba32(255, 255, 255, 255), 40).BokehBlur(4, 2, 3).GaussianSharpen(1.5);
+if (effects.ToArray<Rgba32>().Length != 60000 || snapshot.DetectEdges(EdgeDetector.Kirsch).ToArray<Gray8>().Length != 60000
+    || snapshot.DetectEdges(EdgeDetector.Laplacian3x3, grayscale: false).ToArray<Rgba32>().Length != 60000 || snapshot.EntropyCrop().Width < 1)
+{
+    Console.Error.WriteLine("effects smoke failed");
+    return 1;
+}
+
 // Compression layer: deflate/inflate and LZW round trips.
 byte[] sample = new byte[100_000];
 for (int i = 0; i < sample.Length; i++)

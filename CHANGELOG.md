@@ -10,6 +10,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `Image.Perspective`: a projective (perspective) transform from a `ProjectiveMatrix`, a `ProjectiveTransformBuilder` (taper, rotation, scale, skew, translation, matrices, with `Append` and `Prepend` forms) or four corner points. `ProjectiveMatrix` also builds quad-to-quad maps.
 - `Fit.BoxPad` and `Fit.Min` (ImageSharp's `ResizeMode.BoxPad` and `Min`), the aliases `Fit.Max` and `Fit.Crop`, and `Image.ResizeInto` for resizing into a rectangle of a canvas (`ResizeMode.Manual`).
 - Resampling filters `Hermite`, `Lanczos5`, `Lanczos8`, `Robidoux`, `RobidouxSharp`, `Spline` and `Welch`, with the aliases `Bicubic` and `Triangle`, in `Resize` and in the rotate, affine and perspective samplers.
+- Neighbourhood effects, matching ImageSharp 3.1.12: `Pixelate`, `OilPaint`, `Vignette`, `Glow`, `BokehBlur`, `GaussianSharpen`, `DetectEdges` (`EdgeDetector`: Sobel, Prewitt, Scharr, RobertsCross, Kayyali, Laplacian3x3/5x5, LaplacianOfGaussian, Kirsch, Robinson) and `EntropyCrop`. `OilPaint` centers its window, where ImageSharp's is shifted; see the migration guide.
 
 ## [1.0.0] - 2026-10-22
 

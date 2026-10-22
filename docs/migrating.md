@@ -362,11 +362,54 @@ long[] red = Image.Load(input).Histogram().Channel(0).ToArray();   // 256 bins; 
 |---|---|---|
 | `GaussianBlur(sigma)` | `GaussianBlur(sigma)` | Linear light by default (`linear: false` for stored values); edge mode defaults to clamp. |
 | `BoxBlur(radius)` | `BoxBlur(radius)` | Same window `2r+1`. |
-| `GaussianSharpen(sigma)` | `Sharpen(amount, radius, threshold)` | An unsharp mask with a Gaussian of sigma `radius`, so there is an `amount` and a `threshold`. The default is linear light; pass `linear: false` for the look most editors have. |
+| `GaussianSharpen(sigma)` | `GaussianSharpen(sigma)` | The same kernel (see [Effects](#effects)). `Sharpen(amount, radius, threshold)` is a different operator, an unsharp mask with an `amount` and a `threshold`; its default is linear light, pass `linear: false` for the look most editors have. |
 | `MedianBlur(radius, preserveAlpha)` | `Median(radius)` | Alpha is filtered like a color channel; there is no `preserveAlpha`. |
-| `DetectEdges()` (Sobel by default) | `Sobel(scale)` | Returns a gray image without alpha. Other edge kernels: use `Convolve`. |
+| `DetectEdges()` (Sobel by default) | `DetectEdges()` or `Sobel(scale)` | `DetectEdges` is ImageSharp's operator, unscaled (see [Effects](#effects)); `Sobel(scale)` divides by 4 so that a black-to-white step gives full scale, and always returns a gray image without alpha. |
 | custom convolution | `Convolve(float[,] kernel, divisor, offset)` | Correlation (not flipped); divisor defaults to the sum of the weights. |
 | none built in | `Histogram(bins)`, `Statistics()` | Per channel, whole frame 0, computed in parallel. |
+
+### Effects
+
+ImageSharp:
+
+```csharp
+using Image image = Image.Load(input);
+image.Mutate(x => x.Pixelate(8));
+image.Mutate(x => x.OilPaint(10, 15));
+image.Mutate(x => x.Vignette(Color.Black));
+image.Mutate(x => x.Glow(Color.White));
+image.Mutate(x => x.BokehBlur(32, 2, 3f));
+image.Mutate(x => x.GaussianSharpen(1.2f));
+image.Mutate(x => x.DetectEdges(KnownEdgeDetectorKernels.Kirsch));
+image.Mutate(x => x.EntropyCrop(0.5f));
+image.Save(output);
+```
+
+OneImage:
+
+```csharp
+Image.Load(input)
+    .Pixelate(8)
+    .OilPaint(levels: 10, brushSize: 8)
+    .Vignette(new Rgba32(0, 0, 0, 255))
+    .Glow(new Rgba32(255, 255, 255, 255))
+    .BokehBlur(radius: 32, components: 2, gamma: 3)
+    .GaussianSharpen(1.2)
+    .DetectEdges(EdgeDetector.Kirsch)
+    .EntropyCrop(0.5f)
+    .Save(output);
+```
+
+| ImageSharp | OneImage | Differences |
+|---|---|---|
+| `Pixelate(size)` | `Pixelate(size)` | Identical output: each block takes the color of the pixel at its center (not an average), in any pixel format. |
+| `OilPaint(levels, brushSize)` | `OilPaint(levels, brushSize)` | ImageSharp's window reaches only up and left of the pixel and is `brushSize / 2 + 1` wide, which shifts the picture by about a quarter of the brush. OneImage centers a full `brushSize` window, so its strokes are about twice as wide for the same number and nothing shifts; use about half the brush size for a similar look. Where two intensity bins tie, ImageSharp keeps the one reached first while scanning and OneImage the brighter. |
+| `Vignette(color, radiusX, radiusY, rectangle)` | `Vignette(color, radiusX, radiusY, area)` | Same falloff (within 1 level). Radii of 0 mean half the area's width and height, as in ImageSharp. Gray and RGB images only. |
+| `Glow(color, radius, rectangle)` | `Glow(color, radius, area)` | Same falloff (within 1 level), and the same default color: black, which darkens the center. |
+| `BokehBlur(radius, components, gamma)` | `BokehBlur(radius, components, gamma)` | Same complex-kernel family and defaults (32, 2, 3), computed on the stored premultiplied values like ImageSharp. With `gamma: 1` the results agree within 1 level; with a higher gamma, nearly black channels can differ by up to 20 levels, elsewhere 1 level. |
+| `GaussianSharpen(sigma)` | `GaussianSharpen(sigma)` | Same kernel and defaults (sigma 3), within 2 levels. It filters stored values like ImageSharp; pass `linear: true` for linear light. |
+| `DetectEdges(KnownEdgeDetectorKernels.X, grayscale)` | `DetectEdges(EdgeDetector.X, grayscale)` | Same kernels (Sobel, Prewitt, Scharr, RobertsCross, Kayyali, Laplacian3x3, Laplacian5x5, LaplacianOfGaussian, Kirsch, Robinson), same results to the level. With `grayscale: true` (the default) the result is a gray image without alpha, where ImageSharp returns an RGB image of equal channels. |
+| `EntropyCrop(threshold)` | `EntropyCrop(threshold)` | Same rectangle. Eager, like `Trim`; an image with no detail is returned as it is. |
 
 ## Behavior to expect after porting
 
@@ -411,10 +454,6 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 
 | ImageSharp | As of 1.0 | Closest workaround |
 |---|---|---|
-| `Pixelate(size)` | None. | `Resize` down with `filter: ResamplingFilter.Box`, then back up with `ResamplingFilter.Nearest`. |
-| `OilPaint(levels, brushSize)` | None. | None; per-pixel code on a `Canvas`. |
-| `Vignette(...)`, `Glow(...)` (overlays) | None. | Draw the radial falloff into a `Canvas` and `Composite` it. |
-| `BokehBlur(radius, components, gamma)` | None. `GaussianBlur` and `BoxBlur` exist. | `Convolve` with a disc-shaped kernel gives a plain (non-bokeh) lens blur. |
 | `Sepia`, `Kodachrome`, `Lomograph`, `Polaroid`, `BlackWhite` preset filters | None. | `ChannelMixer` can apply the sepia matrix; `Grayscale` followed by `Threshold` approximates `BlackWhite`. |
 | `ColorBlindness(mode)` (Protanopia, Deuteranopia, Tritanopia, Achromatopsia and the "-omaly" modes) | None. | `ChannelMixer` with the simulation matrix you want. |
 | `Filter(ColorMatrix)` and `KnownFilterMatrices` | No general 4×4/5×4 color matrix. | `ChannelMixer` takes a 3×3 or 3×4 RGB matrix; there is no alpha row. |
@@ -422,9 +461,6 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 | `AdaptiveThreshold(...)` | None. `Threshold(level)` is a global threshold. | None. |
 | `BinaryDither(...)` and `Dither(..., palette)` with `KnownDitherings` (Atkinson, Burkes, JarvisJudiceNinke, Sierra2/3/Lite, Stucki, StevensonArce, Bayer2x2/4x4/8x8/16x16, Ordered3x3) | `Quantize(colors, dither)` offers none, Floyd–Steinberg and an 8×8 ordered dither, and picks its own palette. | Quantize to 2 colors for a bilevel result. A caller-supplied palette and the other matrices are not available. |
 | `Quantize(KnownQuantizers.Octree / WebSafe / Werner, ...)` | One built-in quantizer; no `PaletteQuantizer`, web-safe or Werner palettes. | `Quantize(colors, ...)`. |
-| `GaussianSharpen(sigma)` | `Sharpen` is an unsharp mask, not the same kernel. | `Sharpen(...)`. |
-| `DetectEdges(...)` with Kayyali, Kirsch, Laplacian3x3/5x5, LaplacianOfGaussian, Prewitt, RobertsCross, Robinson, Scharr (and the compass variants) | `Sobel` only. | `Convolve` with the kernel you need. |
-| `EntropyCrop(threshold)` | None. `Trim` removes a uniform border, and `Anchor.Smart` picks a crop by detail when resizing. | `Trim` for borders, `Resize(..., anchor: Anchor.Smart)` for content-aware crops. |
 | `CalculateIntegralImage()` | None. | `Histogram` and `Statistics` cover the common uses. |
 
 `BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`, and `ProjectiveTransformBuilder` by `Perspective` (see [Perspective transforms](#perspective-transforms)). `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.

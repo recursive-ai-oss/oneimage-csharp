@@ -210,6 +210,28 @@ All are lazy, read only their tile plus a margin of the kernel radius (so they s
 - **Large blurs are approximated.** Gaussian sigma above 16 and box radius above 48 are computed on a reduced-resolution copy and enlarged, to keep streaming memory bounded. The result stays within a few 8-bit levels of the exact blur on photographs; see the XML docs for the measured difference. Below those limits the result is exact.
 - Results do not depend on the thread count.
 
+**Effects**
+
+```csharp
+img.Pixelate(size: 8);                                   // mosaic; each block takes its center pixel
+img.OilPaint(levels: 10, brushSize: 15);                 // painterly flattening
+img.Vignette(new Rgba32(0, 0, 0, 255));                  // darken towards the corners; radiusX:, radiusY:, area: are optional
+img.Glow(new Rgba32(255, 255, 255, 255), radius: 200);   // a radial tint, full color at the center
+img.BokehBlur(radius: 32, components: 2, gamma: 3);      // lens blur; bright points bloom into discs
+img.GaussianSharpen(sigma: 3);
+img.DetectEdges(EdgeDetector.Kirsch);                    // also Prewitt, Scharr, RobertsCross, Kayyali, Laplacian3x3/5x5, LaplacianOfGaussian, Robinson, Sobel
+img.DetectEdges(EdgeDetector.Scharr, grayscale: false);  // per color channel, keeps format and alpha
+img.EntropyCrop(threshold: 0.5f);                        // crop to the area with detail (eager, like Trim)
+```
+
+They are lazy (except `EntropyCrop`), read only their tile plus a margin (the radius, brush half-width or kernel size; none for `Pixelate`, `Vignette` and `Glow`), and apply to every frame.
+
+- **Working space.** These work on stored values (not linear light), as ImageSharp does; `GaussianSharpen(linear: true)` is the one that can switch. `OilPaint`, `Vignette`, `Glow` and `DetectEdges` accept gray and RGB images and refuse CMYK and Lab; `Pixelate` takes any format.
+- **Edges.** `BokehBlur`, `GaussianSharpen` and `DetectEdges` take `edge:` as the other filters do (clamp by default).
+- **Limits.** `BokehBlur` radius is 1 to 255 with 1 to 6 components (cost grows with the radius, not its square); `GaussianSharpen` sigma up to 42; `OilPaint` brush up to 255 and up to 1024 levels.
+- **`Vignette` and `Glow`** blend the color over the pixel (source-over, its alpha times the falloff). The vignette falloff is `0.9 * distance / sqrt(rx^2 + ry^2)`; the glow's is `1 - 0.95 * distance / radius`. Pass `area:` to confine the effect to a rectangle and center it there. The default glow color is black, as in ImageSharp.
+- Results do not depend on the thread count.
+
 **Analysis**
 
 ```csharp

@@ -13,6 +13,23 @@ namespace OneImage.Kernels;
 /// </summary>
 internal static class FilterKernel
 {
+    /// <summary>Limits every value to [0, 1] in place (NaN becomes 0).</summary>
+    public static void Clamp01(Span<float> values)
+    {
+        int vc = Vector<float>.Count;
+        int i = 0;
+        for (; i + vc <= values.Length; i += vc)
+        {
+            Vector.Min(Vector.Max(new Vector<float>(values.Slice(i, vc)), Vector<float>.Zero), Vector<float>.One).CopyTo(values.Slice(i, vc));
+        }
+
+        for (; i < values.Length; i++)
+        {
+            float v = values[i];
+            values[i] = v > 0f ? (v < 1f ? v : 1f) : 0f;
+        }
+    }
+
     /// <summary><c>dst[j] = sum_t weights[t] * src[offsets[t] + j]</c>, taps in ascending order.</summary>
     public static void SumTaps(ReadOnlySpan<float> src, ReadOnlySpan<int> offsets, ReadOnlySpan<float> weights, Span<float> dst)
     {
