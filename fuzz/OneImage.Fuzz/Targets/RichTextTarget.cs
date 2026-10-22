@@ -89,7 +89,14 @@ internal static class RichTextTarget
                 throw new InvalidOperationException("negative width");
             }
 
-            _ = TextBuilder.GeneratePath(text, o);
+            try
+            {
+                _ = TextBuilder.GeneratePath(text, o);
+            }
+            catch (ArgumentException) when (o.Path is not null)
+            {
+                // Documented: a path without length (all points equal) cannot carry text.
+            }
         });
     }
 
