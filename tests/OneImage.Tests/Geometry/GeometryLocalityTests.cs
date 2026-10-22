@@ -134,7 +134,8 @@ public sealed class GeometryStreamingTests : IDisposable
 
         long growth = peak - baseline;
         TestContext.Current.SendDiagnosticMessage($"geometry streaming {W}x{H}: flip+pad+resize peak managed growth {growth / (1 << 20)} MiB ({100.0 * growth / frameBytes:F1}% of the frame), {sw.ElapsedMilliseconds} ms");
-        Assert.True(growth < frameBytes / 10, $"peak growth {growth} exceeds 10% of the frame");
+        // The bound is for the pooled store; a store that allocates a fresh array per tile leaves garbage the pool avoids.
+        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 10, $"peak growth {growth} exceeds 10% of the frame");
     }
 
     [Theory]
