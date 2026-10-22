@@ -63,11 +63,6 @@ internal sealed class Upsampler : IDisposable
 {
     private const int Batch = 16;
 
-    // Fixed-point BT.601 video-range conversion; 14-bit precision with 6 bits of fraction left in the clip.
-    private static int MultHi(int v, int coeff) => (v * coeff) >> 8;
-
-    private static byte Clip8(int v) => (byte)((v & ~((256 << 6) - 1)) == 0 ? v >> 6 : v < 0 ? 0 : 255);
-
     private readonly IRowSink _sink;
     private readonly int _width;
     private readonly int _height;
@@ -120,8 +115,7 @@ internal sealed class Upsampler : IDisposable
         if (!_rowZero && (finalChroma >= 1 || last))
         {
             // Row 0 uses its own chroma row on both sides.
-            Pair(yp, (0 - lumaBase) * ys, -1, up, vp, (0 - chromaBase) * uvs, (0 - chromaBase) * uvs, _batch.AsSpan(0, _rowBytes), default, width, _bpp, _chroma);
-            FillAlpha(_batch.AsSpan(0, _rowBytes), alpha, 0, width, _bpp);
+            Pair(yp, (0 - lumaBase) * ys, -1, up, vp, (0 - chromaBase) * uvs, (0 - chromaBase) * uvs, _batch.AsSpan(0, _rowBytes), default, width, _bpp, _chroma, alpha, 0);
             _count = 1;
             _rowZero = true;
         }
@@ -149,12 +143,7 @@ internal sealed class Upsampler : IDisposable
             int curUv = hasBottom ? (r - chromaBase) * uvs : topUv;
             Span<byte> dstTop = _batch.AsSpan(_count * _rowBytes, _rowBytes);
             Span<byte> dstBot = hasBottom ? _batch.AsSpan((_count + 1) * _rowBytes, _rowBytes) : default;
-            Pair(yp, (top - lumaBase) * ys, hasBottom ? (top + 1 - lumaBase) * ys : -1, up, vp, topUv, curUv, dstTop, dstBot, width, _bpp, _chroma);
-            FillAlpha(dstTop, alpha, top, width, _bpp);
-            if (hasBottom)
-            {
-                FillAlpha(dstBot, alpha, top + 1, width, _bpp);
-            }
+            Pair(yp, (top - lumaBase) * ys, hasBottom ? (top + 1 - lumaBase) * ys : -1, up, vp, topUv, curUv, dstTop, dstBot, width, _bpp, _chroma, alpha, top);
 
             _count += hasBottom ? 2 : 1;
             _next = r + 1;
@@ -170,32 +159,8 @@ internal sealed class Upsampler : IDisposable
         }
     }
 
-    private static void FillAlpha(Span<byte> row, byte[]? alpha, int y, int width, int bpp)
-    {
-        if (bpp != 4)
-        {
-            return;
-        }
-
-        if (alpha == null)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                row[(x * 4) + 3] = 255;
-            }
-        }
-        else
-        {
-            int o = y * width;
-            for (int x = 0; x < width; x++)
-            {
-                row[(x * 4) + 3] = alpha[o + x];
-            }
-        }
-    }
-
     // Converts one or two luma rows sharing the chroma rows topUv (nearer the top output row) and curUv.
-    private static void Pair(byte[] yp, int yTop, int yBot, byte[] up, byte[] vp, int topUv, int curUv, Span<byte> dstTop, Span<byte> dstBot, int width, int bpp, byte[] chroma)
+    private static void Pair(byte[] yp, int yTop, int yBot, byte[] up, byte[] vp, int topUv, int curUv, Span<byte> dstTop, Span<byte> dstBot, int width, int bpp, byte[] chroma, byte[]? alpha, int rowTop)
     {
         bool bottom = yBot >= 0;
         int cw = ((width - 1) >> 1) + 1;
@@ -204,75 +169,14 @@ internal sealed class Upsampler : IDisposable
         Span<byte> vT = c.Slice(width, width);
         Span<byte> uB = c.Slice(2 * width, width);
         Span<byte> vB = c.Slice(3 * width, width);
-        Chroma(up.AsSpan(topUv, cw), up.AsSpan(curUv, cw), width, uT, uB, bottom);
-        Chroma(vp.AsSpan(topUv, cw), vp.AsSpan(curUv, cw), width, vT, vB, bottom);
-        YuvRow(yp.AsSpan(yTop, width), uT, vT, dstTop, width, bpp);
+        Kernels.WebPYuvKernel.Chroma(up.AsSpan(topUv, cw), up.AsSpan(curUv, cw), width, uT, uB, bottom);
+        Kernels.WebPYuvKernel.Chroma(vp.AsSpan(topUv, cw), vp.AsSpan(curUv, cw), width, vT, vB, bottom);
+        ReadOnlySpan<byte> aTop = alpha == null ? default : alpha.AsSpan(rowTop * width, width);
+        Kernels.WebPYuvKernel.YuvRow(yp.AsSpan(yTop, width), uT, vT, aTop, dstTop, width, bpp);
         if (bottom)
         {
-            YuvRow(yp.AsSpan(yBot, width), uB, vB, dstBot, width, bpp);
-        }
-    }
-
-    // Fancy upsampling of one chroma plane (libwebp's 9-3-3-1 kernel): t is the chroma row nearer the top output row, c the other.
-    private static void Chroma(ReadOnlySpan<byte> t, ReadOnlySpan<byte> c, int width, Span<byte> top, Span<byte> bot, bool bottom)
-    {
-        int lastPair = (width - 1) >> 1;
-        t = t[..(lastPair + 1)];
-        c = c[..(lastPair + 1)];
-        top = top[..width];
-        int tl = t[0];
-        int l = c[0];
-        top[0] = (byte)(((3 * tl) + l + 2) >> 2);
-        if (bottom)
-        {
-            bot = bot[..width];
-            bot[0] = (byte)(((3 * l) + tl + 2) >> 2);
-        }
-
-        for (int x = 1; x <= lastPair; x++)
-        {
-            int tc = t[x];
-            int uc = c[x];
-            int avg = tl + tc + l + uc + 8;
-            int d12 = (avg + (2 * (tc + l))) >> 3;
-            int d03 = (avg + (2 * (tl + uc))) >> 3;
-            top[(2 * x) - 1] = (byte)((d12 + tl) >> 1);
-            top[2 * x] = (byte)((d03 + tc) >> 1);
-            if (bottom)
-            {
-                bot[(2 * x) - 1] = (byte)((d03 + l) >> 1);
-                bot[2 * x] = (byte)((d12 + uc) >> 1);
-            }
-
-            tl = tc;
-            l = uc;
-        }
-
-        if ((width & 1) == 0)
-        {
-            top[width - 1] = (byte)(((3 * tl) + l + 2) >> 2);
-            if (bottom)
-            {
-                bot[width - 1] = (byte)(((3 * l) + tl + 2) >> 2);
-            }
-        }
-    }
-
-    private static void YuvRow(ReadOnlySpan<byte> y, ReadOnlySpan<byte> u, ReadOnlySpan<byte> v, Span<byte> dst, int width, int bpp)
-    {
-        y = y[..width];
-        u = u[..width];
-        v = v[..width];
-        dst = dst[..(width * bpp)];
-        int o = 0;
-        for (int x = 0; x < width; x++, o += bpp)
-        {
-            int yy = MultHi(y[x], 19077);
-            int uu = u[x];
-            int vv = v[x];
-            dst[o] = Clip8(yy + MultHi(vv, 26149) - 14234);
-            dst[o + 1] = Clip8(yy - MultHi(uu, 6419) - MultHi(vv, 13320) + 8708);
-            dst[o + 2] = Clip8(yy + MultHi(uu, 33050) - 17685);
+            ReadOnlySpan<byte> aBot = alpha == null ? default : alpha.AsSpan((rowTop + 1) * width, width);
+            Kernels.WebPYuvKernel.YuvRow(yp.AsSpan(yBot, width), uB, vB, aBot, dstBot, width, bpp);
         }
     }
 }

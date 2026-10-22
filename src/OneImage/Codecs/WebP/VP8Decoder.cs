@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 
 namespace OneImage.Codecs.WebP;
 
@@ -708,80 +709,85 @@ internal sealed class VP8Decoder
     }
 
     // Reads the coefficient tokens of one block (RFC 6386 section 13) and returns the position after the last token.
+    // The bit reader state lives in locals for the whole block: this is the hottest loop of the decoder.
     private int GetCoeffs(ref VP8BoolReader brRef, int type, int ctx, int dcq, int acq, int n, Span<short> output)
     {
-        // Work on a local copy so the reader state lives in registers, then write it back.
-        VP8BoolReader br = brRef;
+        brRef.Export(out byte[] buf, out int pos, out int end, out ulong value, out uint range, out int bits, out bool eof);
         byte[] p = _coeffProbs;
         int pb = (((type * 8) + Bands[n]) * 3 + ctx) * 11;
+        int result = 16;
         for (; n < 16; n++)
         {
-            if (br.GetBit(p[pb]) == 0)
+            if (VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb]) == 0)
             {
-                brRef = br;
-                return n; // end of block
+                result = n; // end of block
+                goto done;
             }
 
-            while (br.GetBit(p[pb + 1]) == 0)
+            while (VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 1]) == 0)
             {
                 // a zero coefficient; the next token's context is 0
                 pb = (((type * 8) + Bands[++n]) * 3) * 11;
                 if (n == 16)
                 {
-                    brRef = br;
-                    return 16;
+                    goto done;
                 }
             }
 
             int nextBand = ((type * 8) + Bands[n + 1]) * 33;
             int v;
-            if (br.GetBit(p[pb + 2]) == 0)
+            if (VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 2]) == 0)
             {
                 v = 1;
                 pb = nextBand + 11;
             }
             else
             {
-                v = GetLargeValue(ref br, p, pb);
+                v = GetLargeValue(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p, pb);
                 pb = nextBand + 22;
             }
 
-            output[Zigzag[n]] = (short)(br.GetSigned(v) * (n > 0 ? acq : dcq));
+            int neg = VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, 0x80);
+            output[Zigzag[n]] = (short)((neg != 0 ? -v : v) * (n > 0 ? acq : dcq));
         }
 
-        brRef = br;
-        return 16;
+    done:
+        brRef.Import(pos, value, range, bits, eof);
+        return result;
     }
 
-    private static int GetLargeValue(ref VP8BoolReader br, byte[] p, int pb)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int GetLargeValue(byte[] buf, ref int pos, int end, ref ulong value, ref uint range, ref int bits, ref bool eof, byte[] p, int pb)
     {
         int v;
-        if (br.GetBit(p[pb + 3]) == 0)
+        if (VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 3]) == 0)
         {
-            v = br.GetBit(p[pb + 4]) == 0 ? 2 : 3 + br.GetBit(p[pb + 5]);
+            v = VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 4]) == 0
+                ? 2
+                : 3 + VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 5]);
         }
-        else if (br.GetBit(p[pb + 6]) == 0)
+        else if (VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 6]) == 0)
         {
-            if (br.GetBit(p[pb + 7]) == 0)
+            if (VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 7]) == 0)
             {
-                v = 5 + br.GetBit(159);
+                v = 5 + VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, 159);
             }
             else
             {
-                v = 7 + (2 * br.GetBit(165));
-                v += br.GetBit(145);
+                v = 7 + (2 * VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, 165));
+                v += VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, 145);
             }
         }
         else
         {
-            int bit1 = br.GetBit(p[pb + 8]);
-            int bit0 = br.GetBit(p[pb + 9 + bit1]);
+            int bit1 = VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 8]);
+            int bit0 = VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, p[pb + 9 + bit1]);
             int cat = (2 * bit1) + bit0;
             byte[] tab = cat switch { 0 => Cat3, 1 => Cat4, 2 => Cat5, _ => Cat6 };
             v = 0;
             foreach (byte t in tab)
             {
-                v += v + br.GetBit(t);
+                v += v + VP8BoolReader.BitLocal(buf, ref pos, end, ref value, ref range, ref bits, ref eof, t);
             }
 
             v += 3 + (8 << cat);

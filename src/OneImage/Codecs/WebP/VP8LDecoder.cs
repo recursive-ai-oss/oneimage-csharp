@@ -136,11 +136,14 @@ internal sealed class VP8LDecoder : IDisposable
         }
         else
         {
-            FillSlow(data, ref pos, end, ref val, ref nbits, ref overrun);
+            (val, nbits, pos, overrun) = FillSlow(data, pos, end, val, nbits, overrun);
         }
     }
 
-    private static void FillSlow(byte[] data, ref int pos, int end, ref ulong val, ref int nbits, ref int overrun)
+    // Near the end of the data: byte by byte, zero-filling past the end. Works on copies and returns the new state, so the
+    // callers' locals are never address-exposed and the hot loop keeps them in registers.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (ulong Val, int NBits, int Pos, int Overrun) FillSlow(byte[] data, int pos, int end, ulong val, int nbits, int overrun)
     {
         while (nbits <= 56)
         {
@@ -162,6 +165,8 @@ internal sealed class VP8LDecoder : IDisposable
             val |= b << nbits;
             nbits += 8;
         }
+
+        return (val, nbits, pos, overrun);
     }
 
     private uint ReadBits(int n)
@@ -257,6 +262,7 @@ internal sealed class VP8LDecoder : IDisposable
         }
 
         _sink = sink;
+        _height0 = height;
         _outRows = new uint[_transformCount + 1][];
         _prevRows = new uint[_transformCount][];
         for (int i = 0; i < _transformCount; i++)
@@ -268,7 +274,17 @@ internal sealed class VP8LDecoder : IDisposable
             }
         }
 
-        DecodeImageStream(xsize, height, isLevel0: true, out _);
+        try
+        {
+            DecodeImageStream(xsize, height, isLevel0: true, out _);
+            _pipe?.Finish();
+        }
+        finally
+        {
+            _pipe?.Dispose();
+            _pipe = null;
+        }
+
         CheckEos();
     }
 
@@ -498,8 +514,23 @@ internal sealed class VP8LDecoder : IDisposable
         int bBase = 0;
         int aBase = 0;
         int dBase = 0;
+        // A group whose red, blue and alpha codes each have a single symbol (typical for opaque photos: alpha is always 255)
+        // needs only the green code per literal; the other three channels are constants. Bit 32 flags such groups.
+        int groups = bases.Length / 5;
+        long[] trivialArgb = new long[groups];
+        for (int gi = 0; gi < groups; gi++)
+        {
+            uint re = arena[bases[(gi * 5) + 1]];
+            uint be = arena[bases[(gi * 5) + 2]];
+            uint ae = arena[bases[(gi * 5) + 3]];
+            long flags = (ae >> 16) == 0 ? (1L << 33) | ((long)(ae & 0xff) << 40) : 0;
+            trivialArgb[gi] = ((re | be | ae) >> 16) == 0 ? flags | (1L << 32) | ((ae & 0xff) << 24) | ((re & 0xff) << 16) | (be & 0xff) : flags;
+        }
+
+        long trivial = 0;
         if (entropy == null)
         {
+            trivial = trivialArgb[0];
             gBase = bases[0];
             rBase = bases[1];
             bBase = bases[2];
@@ -531,7 +562,9 @@ internal sealed class VP8LDecoder : IDisposable
 
             if ((x & mask) == 0 && entropy != null)
             {
-                int g = groupMap[entropy[((y >> prefixBits) * prefixWidth) + (x >> prefixBits)]] * 5;
+                int gi = groupMap[entropy[((y >> prefixBits) * prefixWidth) + (x >> prefixBits)]];
+                int g = gi * 5;
+                trivial = trivialArgb[gi];
                 gBase = bases[g];
                 rBase = bases[g + 1];
                 bBase = bases[g + 2];
@@ -547,6 +580,26 @@ internal sealed class VP8LDecoder : IDisposable
             int code = ReadSymbol(arena, gBase, ref val, ref nbits);
             if (code < NumLiteralCodes)
             {
+                if ((trivial & (1L << 32)) != 0)
+                {
+                    data[p++] = (uint)trivial | ((uint)code << 8);
+                    if (++x >= width)
+                    {
+                        x = 0;
+                        if ((++y & 15) == 0)
+                        {
+                            if (overrun > 0 && nbits < overrun * 8)
+                            {
+                                throw new ImageFormatException("Truncated VP8L data.");
+                            }
+
+                            _token.ThrowIfCancellationRequested();
+                        }
+                    }
+
+                    continue;
+                }
+
                 int r = ReadSymbol(arena, rBase, ref val, ref nbits);
                 if (nbits < 32)
                 {
@@ -554,7 +607,7 @@ internal sealed class VP8LDecoder : IDisposable
                 }
 
                 int b = ReadSymbol(arena, bBase, ref val, ref nbits);
-                int a = ReadSymbol(arena, aBase, ref val, ref nbits);
+                int a = (trivial & (1L << 33)) != 0 ? (int)(trivial >> 40) : ReadSymbol(arena, aBase, ref val, ref nbits);
                 data[p++] = ((uint)a << 24) | ((uint)r << 16) | ((uint)code << 8) | (uint)b;
                 if (++x >= width)
                 {
@@ -619,7 +672,9 @@ internal sealed class VP8LDecoder : IDisposable
                 if (p < lim && entropy != null && (x & mask) != 0)
                 {
                     // Landed in the middle of a block: the group of that block applies.
-                    int g = groupMap[entropy[((y >> prefixBits) * prefixWidth) + (x >> prefixBits)]] * 5;
+                    int gi = groupMap[entropy[((y >> prefixBits) * prefixWidth) + (x >> prefixBits)]];
+                    int g = gi * 5;
+                    trivial = trivialArgb[gi];
                     gBase = bases[g];
                     rBase = bases[g + 1];
                     bBase = bases[g + 2];
@@ -725,6 +780,13 @@ internal sealed class VP8LDecoder : IDisposable
     private void EmitCompleted()
     {
         int width = _pWidth;
+        // Large images run the inverse transforms and the sink on a second thread while this one keeps decoding entropy-coded
+        // pixels; the output is the same rows in the same order.
+        if (_pipe == null && _pEmitted < _pY && (long)width * _height0 >= PipelineMinPixels && Environment.ProcessorCount > 1)
+        {
+            _pipe = new RowPipe(this, width);
+        }
+
         for (; _pEmitted < _pY; _pEmitted++)
         {
             if ((_pEmitted & 15) == 0)
@@ -732,7 +794,144 @@ internal sealed class VP8LDecoder : IDisposable
                 _token.ThrowIfCancellationRequested();
             }
 
-            ProcessRow(_pEmitted, _pData.AsSpan((int)((long)_pEmitted * width - _pBase), width));
+            ReadOnlySpan<uint> row = _pData.AsSpan((int)((long)_pEmitted * width - _pBase), width);
+            if (_pipe != null)
+            {
+                _pipe.Add(_pEmitted, row);
+            }
+            else
+            {
+                ProcessRow(_pEmitted, row);
+            }
+        }
+    }
+
+    private const int PipelineMinPixels = 1 << 17;
+    private RowPipe? _pipe;
+    private int _height0;
+
+    // Hands finished rows, 16 at a time, to a worker thread that runs them through the inverse transforms into the sink.
+    private sealed class RowPipe : IDisposable
+    {
+        private const int BatchRows = 16;
+        private const int Slots = 3;
+
+        private readonly VP8LDecoder _d;
+        private readonly int _w;
+        private readonly uint[][] _buf = new uint[Slots][];
+        private readonly int[] _start = new int[Slots];
+        private readonly int[] _count = new int[Slots];
+        private readonly SemaphoreSlim _free = new(Slots, Slots);
+        private readonly SemaphoreSlim _filled = new(0);
+        private readonly CancellationTokenSource _stop;
+        private readonly Task _task;
+        private Exception? _error;
+        private int _finalBatches = int.MaxValue;
+        private int _seq;
+        private int _cur;
+        private int _rows;
+
+        public RowPipe(VP8LDecoder d, int width)
+        {
+            _d = d;
+            _w = width;
+            _stop = CancellationTokenSource.CreateLinkedTokenSource(d._token);
+            for (int i = 0; i < Slots; i++)
+            {
+                _buf[i] = ArrayPool<uint>.Shared.Rent(checked(width * BatchRows));
+            }
+
+            _task = Task.Factory.StartNew(Work, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        }
+
+        public void Add(int y, ReadOnlySpan<uint> row)
+        {
+            if (_rows == 0)
+            {
+                _free.Wait(_d._token);
+                ThrowIfFailed();
+                _cur = _seq % Slots;
+                _start[_cur] = y;
+            }
+
+            row.CopyTo(_buf[_cur].AsSpan(_rows * _w, _w));
+            if (++_rows == BatchRows)
+            {
+                Publish();
+            }
+        }
+
+        public void Finish()
+        {
+            if (_rows > 0)
+            {
+                Publish();
+            }
+
+            Volatile.Write(ref _finalBatches, _seq);
+            _filled.Release();
+            _task.Wait();
+            ThrowIfFailed();
+        }
+
+        public void Dispose()
+        {
+            _stop.Cancel();
+            _task.Wait();
+            _filled.Dispose();
+            _free.Dispose();
+            _stop.Dispose();
+            foreach (uint[] b in _buf)
+            {
+                ArrayPool<uint>.Shared.Return(b);
+            }
+        }
+
+        private void Publish()
+        {
+            _count[_cur] = _rows;
+            _rows = 0;
+            _seq++;
+            _filled.Release();
+        }
+
+        private void ThrowIfFailed()
+        {
+            if (Volatile.Read(ref _error) is Exception e)
+            {
+                // The worker's exception is rethrown unchanged on the decoding thread.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e).Throw();
+            }
+        }
+
+        private void Work()
+        {
+            try
+            {
+                for (int k = 0; ; k++)
+                {
+                    _filled.Wait(_stop.Token);
+                    if (k >= Volatile.Read(ref _finalBatches))
+                    {
+                        return;
+                    }
+
+                    int slot = k % Slots;
+                    _d._token.ThrowIfCancellationRequested();
+                    for (int r = 0; r < _count[slot]; r++)
+                    {
+                        _d.ProcessRow(_start[slot] + r, _buf[slot].AsSpan(r * _w, _w));
+                    }
+
+                    _free.Release();
+                }
+            }
+            catch (Exception e)
+            {
+                // Handed to the decoding thread, which rethrows it (or is already unwinding).
+                Volatile.Write(ref _error, e);
+                _free.Release(Slots);
+            }
         }
     }
 
@@ -1036,46 +1235,56 @@ internal sealed class VP8LDecoder : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static uint Average2(uint a, uint b) => (((a ^ b) & 0xfefefefe) >> 1) + (a & b);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int AbsDiff(uint a, uint b, int shift)
+    {
+        int d = (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
+        int m = d >> 31;
+        return (d ^ m) - m;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint ClampByte(int v)
+    {
+        // Branch-free clamp to 0..255 for v in -255..510: negative values become 0, values above 255 saturate.
+        v &= ~(v >> 31);
+        v |= (255 - v) >> 31;
+        return (uint)v & 0xff;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static uint Select(uint l, uint t, uint tl)
     {
         // pL is the distance of the estimate (l + t - tl) to l, which is |t - tl| per channel; pT likewise.
-        int pL = 0;
-        int pT = 0;
-        for (int s = 0; s < 32; s += 8)
-        {
-            int cl = (int)((l >> s) & 0xff);
-            int ct = (int)((t >> s) & 0xff);
-            int ctl = (int)((tl >> s) & 0xff);
-            pL += Math.Abs(ct - ctl);
-            pT += Math.Abs(cl - ctl);
-        }
-
+        int pL = AbsDiff(t, tl, 0) + AbsDiff(t, tl, 8) + AbsDiff(t, tl, 16) + AbsDiff(t, tl, 24);
+        int pT = AbsDiff(l, tl, 0) + AbsDiff(l, tl, 8) + AbsDiff(l, tl, 16) + AbsDiff(l, tl, 24);
         return pL < pT ? l : t;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static uint ClampAddSubtractFull(uint a, uint b, uint c)
     {
-        uint r = 0;
-        for (int s = 0; s < 32; s += 8)
-        {
-            int v = (int)((a >> s) & 0xff) + (int)((b >> s) & 0xff) - (int)((c >> s) & 0xff);
-            r |= (uint)Math.Clamp(v, 0, 255) << s;
-        }
-
-        return r;
+        return ClampByte((int)(a & 0xff) + (int)(b & 0xff) - (int)(c & 0xff))
+            | (ClampByte((int)((a >> 8) & 0xff) + (int)((b >> 8) & 0xff) - (int)((c >> 8) & 0xff)) << 8)
+            | (ClampByte((int)((a >> 16) & 0xff) + (int)((b >> 16) & 0xff) - (int)((c >> 16) & 0xff)) << 16)
+            | (ClampByte((int)(a >> 24) + (int)(b >> 24) - (int)(c >> 24)) << 24);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static uint ClampAddSubtractHalf(uint a, uint b)
     {
-        uint r = 0;
-        for (int s = 0; s < 32; s += 8)
-        {
-            int ca = (int)((a >> s) & 0xff);
-            int cb = (int)((b >> s) & 0xff);
-            r |= (uint)Math.Clamp(ca + ((ca - cb) / 2), 0, 255) << s;
-        }
+        return HalfChannel(a, b, 0) | (HalfChannel(a, b, 8) << 8) | (HalfChannel(a, b, 16) << 16) | (HalfChannel(a, b, 24) << 24);
+    }
 
-        return r;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint HalfChannel(uint a, uint b, int shift)
+    {
+        int ca = (int)((a >> shift) & 0xff);
+        int cb = (int)((b >> shift) & 0xff);
+        // The spec divides by two truncating toward zero.
+        int d = ca - cb;
+        d = (d + (int)((uint)d >> 31)) >> 1;
+        return ClampByte(ca + d);
     }
 
     internal static int DivRoundUp(int num, int den) => (num + den - 1) / den;
