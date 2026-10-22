@@ -66,6 +66,8 @@ internal static class TestStoreSelection
     }
 }
 
+// These tests swap the process-wide tile store, so tests running in parallel would rent from it and skew the counts.
+[Collection(MemoryMeasurement.Name)]
 public class TileStoreTests
 {
     [Fact]

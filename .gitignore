@@ -1,6 +1,7 @@
 # Allowlist: everything is ignored unless listed here.
 /*
 !/.gitignore
+!/.gitattributes
 !/.editorconfig
 !/.github/
 !/global.json
