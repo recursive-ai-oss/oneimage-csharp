@@ -20,10 +20,20 @@ internal static class Program
         ["icc"] = MetadataTargets.Icc,
         ["exif"] = MetadataTargets.Exif,
         ["tiff"] = TiffTarget.Run,
+        ["png"] = CodecTargets.Png,
+        ["bmp"] = CodecTargets.Bmp,
+        ["ico"] = CodecTargets.Ico,
+        ["webp"] = CodecTargets.WebP,
     };
 
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "seeds-webp")
+        {
+            WebPSeeds.Write(args[1]);
+            return 0;
+        }
+
         string? name = Environment.GetEnvironmentVariable("ONEIMAGE_FUZZ_TARGET") ?? (args.Length > 0 ? args[0] : null);
         if (name is null || !Targets.TryGetValue(name, out Target? target))
         {

@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico webp   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -40,6 +40,10 @@ case "$target" in
   lzw)     seeds='';          prefix='';     patterns='';      maxlen=65536 ;;
   icc)     seeds=icc;         prefix='';     patterns='*.icc'; maxlen=262144 ;;
   exif)    seeds='';          prefix='';     patterns='';      maxlen=65536 ;;
+  png)     seeds=png/pngsuite; prefix='\x00'; patterns='*.png'; maxlen=65536 ;;
+  bmp)     seeds=bmp;         prefix='\x00'; patterns='*.bmp'; maxlen=65536 ;;
+  ico)     seeds=ico;         prefix='\x00'; patterns='*.ico'; maxlen=65536 ;;
+  webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac
@@ -61,6 +65,10 @@ shift
 [[ -x "$instrument" ]] || { echo "sharpfuzz not found at '$instrument' (set ONEIMAGE_FUZZ_TOOLS)" >&2; exit 2; }
 
 export DOTNET_ROOT="${DOTNET_ROOT:-$(dirname "$(readlink -f "$(command -v "$dotnet_bin")")")}"
+# WebP seeds come from the library's own encoder, so make them before instrumenting (instrumented code needs libFuzzer's shared memory).
+if [[ "$target" == webp && -z "$(ls -A "$work/webp-seeds" 2>/dev/null)" ]]; then
+  ONEIMAGE_FUZZ_TARGET=webp "$dotnet_bin" "$bin/OneImage.Fuzz.dll" seeds-webp "$work/webp-seeds" >/dev/null
+fi
 "$instrument" "$bin/OneImage.dll" >/dev/null
 
 corpus="$work/corpus/$target"
@@ -80,6 +88,10 @@ if [[ -n "$seeds" ]]; then
 fi
 # Hand-written seeds for surfaces with no data files: a tiny LZW stream (GIF clear, 'A', end) and a minimal EXIF block.
 case "$target" in
+  webp)
+    if [[ -z "$(ls -A "$corpus")" ]]; then
+      for f in "$work/webp-seeds"/*.webp; do { printf '\x00'; cat "$f"; } >"$corpus/$(basename "$f")"; done
+    fi ;;
   lzw)
     [[ -e "$corpus/seed-gif" ]] || printf '\x08\x84\x8f\x09\x01' >"$corpus/seed-gif"
     [[ -e "$corpus/seed-tiff" ]] || printf '\x01\x80\x10\x60\x40\x40' >"$corpus/seed-tiff" ;;
