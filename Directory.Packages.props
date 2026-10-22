@@ -11,7 +11,7 @@
     <PackageVersion Include="SkiaSharp" Version="4.153.1" />
     <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
     <PackageVersion Include="NetVips" Version="3.2.0" />
-    <PackageVersion Include="NetVips.Native.linux-x64" Version="8.18.7" />
+    <PackageVersion Include="NetVips.Native" Version="8.18.7" />
     <PackageVersion Include="SharpFuzz" Version="2.2.0" />
     <!-- 3.1.12 is the last ImageSharp release that builds without a license key; comparisons are made against it. -->
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />

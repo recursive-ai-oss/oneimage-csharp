@@ -15,10 +15,12 @@ jobs:
           - { os: ubuntu-24.04-arm, rid: linux-arm64 }
           - { os: macos-latest, rid: osx-arm64 }
     runs-on: ${{ matrix.os }}
-    env:
-      ONEIMAGE_ARTIFACTS: ${{ runner.temp }}/artifacts
     steps:
       - uses: actions/checkout@v4
+      # Build output goes outside the checkout, as it does locally; the runner context is only available inside steps.
+      - name: Artifacts directory
+        shell: bash
+        run: echo "ONEIMAGE_ARTIFACTS=$RUNNER_TEMP/artifacts" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
