@@ -3,6 +3,7 @@ using System.Diagnostics;
 
 namespace OneImage.Tests.Png;
 
+[Collection(MemoryMeasurement.Name)]
 public class PngMalformedTests
 {
     private static readonly ImageLimits Small = new() { MaxPixelsPerFrame = 1 << 22, MaxMetadataBytes = 1 << 20 };

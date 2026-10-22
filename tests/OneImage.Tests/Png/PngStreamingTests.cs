@@ -1,5 +1,6 @@
 namespace OneImage.Tests.Png;
 
+[Collection(MemoryMeasurement.Name)]
 public sealed class PngStreamingTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "oneimage-pngstream-" + Guid.NewGuid().ToString("N"));

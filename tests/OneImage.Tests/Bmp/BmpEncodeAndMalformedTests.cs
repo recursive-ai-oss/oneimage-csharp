@@ -5,6 +5,7 @@ using OneImage.Tests.Png;
 
 namespace OneImage.Tests.Bmp;
 
+[Collection(MemoryMeasurement.Name)]
 public class BmpEncodeAndMalformedTests
 {
     private static byte[] Save(byte[] px, int w, int h, PixelFormat f, ImageMetadata? meta = null)
