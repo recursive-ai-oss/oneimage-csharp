@@ -140,6 +140,8 @@ internal sealed class JpegScanDecoder
     /// non-interleaved scans); returning false stops decoding.
     /// </summary>
     /// <returns><see langword="false"/> if stopped early by the callback.</returns>
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     public bool Decode(JpegScan scan, Func<int, bool>? mcuRowDone, CancellationToken ct)
     {
         Mode mode = SelectMode(scan);

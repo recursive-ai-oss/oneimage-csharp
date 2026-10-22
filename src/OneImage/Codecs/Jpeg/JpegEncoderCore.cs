@@ -510,7 +510,9 @@ internal sealed class JpegEncodeSession : IDisposable
         short[][] streamBlocks = new short[_comps.Length][];
         try
         {
-            input = ArrayPool<byte>.Shared.Rent(checked(inputBytes * chunkMcus));
+            // A tile row of pixels is a few MB, over the shared array pool's 1 MiB limit, so the tile store (which pools up to 4 MiB) supplies it:
+            // from the shared pool every encode would allocate it afresh on the large object heap.
+            input = PooledTileStore.Instance.Rent(checked(inputBytes * chunkMcus), clear: false);
 
             for (int w = 0; w < workers; w++)
             {
@@ -610,7 +612,7 @@ internal sealed class JpegEncodeSession : IDisposable
         {
             if (input is not null)
             {
-                ArrayPool<byte>.Shared.Return(input);
+                PooledTileStore.Instance.Return(input);
             }
 
             foreach (RowScratch? sc in scratch)

@@ -24,6 +24,8 @@ internal static class SrgbTables
     /// <summary>sRGB encode of one linear value; see <see cref="SrgbTransfer.EncodeOne"/>.</summary>
     public static float Encode(float v) => SrgbTransfer.EncodeOne(v);
 
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private static float[] BuildToLinear(int max)
     {
         var t = new float[max + 1];
@@ -46,6 +48,8 @@ internal static class SrgbTables
         return t;
     }
 
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private static byte[] BuildFromLinear8()
     {
         var t = new byte[65536];

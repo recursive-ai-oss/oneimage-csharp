@@ -456,6 +456,8 @@ internal static class ResampleKernel
     /// Horizontal pass: output pixel i is the weighted sum of <c>count[i]</c> source pixels starting at source index
     /// <c>start[i]</c>. <paramref name="src"/> holds source pixels from index <paramref name="srcFirst"/> on.
     /// </summary>
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     public static void HorizontalFilter(
         ReadOnlySpan<float> src,
         int srcFirst,

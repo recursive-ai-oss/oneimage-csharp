@@ -121,7 +121,7 @@ internal static class GatePeak
                 b.Setup();
                 var g = new JpegGateBenchmarks();
                 g.Setup();
-                return new() { ["oneimage"] = () => b.OneImageFull(), ["skia"] = () => b.SkiaFull(), ["imagesharp"] = () => b.ImageSharpFull(), ["netvips"] = () => b.NetVipsFull(), ["magick"] = () => g.MagickDecode() };
+                return new() { ["oneimage"] = () => b.OneImageFull(), ["oneimage-alloc"] = () => b.OneImageFullToArray(), ["skia"] = () => b.SkiaFull(), ["imagesharp"] = () => b.ImageSharpFull(), ["netvips"] = () => b.NetVipsFull(), ["magick"] = () => g.MagickDecode() };
             }
 
             case "jpeg-encode":
@@ -194,7 +194,7 @@ internal static class GatePeak
             {
                 var b = new TiffMultiPageDecode();
                 b.Setup();
-                return new() { ["oneimage"] = () => b.OneImage(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => b.Magick() };
+                return new() { ["oneimage"] = () => b.OneImage(), ["oneimage-alloc"] = () => b.OneImageToArray(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => b.Magick() };
             }
 
             case "tiff-encode":
@@ -240,7 +240,7 @@ internal static class GatePeak
             {
                 var b = new CmykJpegGateBenchmarks();
                 b.Setup();
-                return new() { ["oneimage"] = () => b.OneImageCmyk(), ["skia"] = () => b.SkiaCmyk(), ["imagesharp"] = () => b.ImageSharpCmyk(), ["netvips"] = () => b.NetVipsCmyk(), ["magick"] = () => b.MagickCmyk() };
+                return new() { ["oneimage"] = () => b.OneImageCmyk(), ["oneimage-alloc"] = () => b.OneImageCmykToArray(), ["skia"] = () => b.SkiaCmyk(), ["imagesharp"] = () => b.ImageSharpCmyk(), ["netvips"] = () => b.NetVipsCmyk(), ["magick"] = () => b.MagickCmyk() };
             }
 
             default:

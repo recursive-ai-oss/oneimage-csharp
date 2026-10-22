@@ -30,6 +30,9 @@ internal sealed class GifEncoder : IImageEncoder
     /// <summary>Frames up to this size are read one ahead; bigger ones are read in line so three frame buffers stay modest.</summary>
     private const int PrefetchMaxBytes = 16 << 20;
 
+    /// <summary>Frames smaller than this are read inline: the overlap gains nothing measurable at that size (200x200 resized frames take the same time either way) and the extra reader costs about 3 MiB of resident memory.</summary>
+    private const int PrefetchMinBytes = 1 << 20;
+
     public static GifEncoder Instance { get; } = new();
 
     public IReadOnlyList<PixelFormat> SupportedFormats { get; } = [PixelFormat.Rgba8];
@@ -140,7 +143,7 @@ internal sealed class GifEncoder : IImageEncoder
         // While one frame is indexed, the next is read on another thread into a third buffer. This is for frames that cost real work
         // to produce (resized, converted, ...); a plain decode is a copy, and a spare frame buffer plus a thread would only add memory. Frames are still
         // requested one at a time and in order, so what is read and what is written do not depend on timing.
-        bool prefetch = multi && uniform && frames[0].Degree > 1 && !frames[0].IsPlainDecode && (long)frames[0].Width * frames[0].Height * 4 <= PrefetchMaxBytes;
+        bool prefetch = multi && uniform && frames[0].Degree > 1 && !frames[0].IsPlainDecode && (long)frames[0].Width * frames[0].Height * 4 is >= PrefetchMinBytes and <= PrefetchMaxBytes;
         byte[]? ahead = null;
         Task? pending = null;
         try

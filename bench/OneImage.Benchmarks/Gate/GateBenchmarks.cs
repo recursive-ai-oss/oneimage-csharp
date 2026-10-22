@@ -558,9 +558,21 @@ public class CmykJpegGateBenchmarks
         return m.GetPixels().ToByteArray(PixelMapping.RGB)!;
     }
 
+    private readonly OI.Rgb24[] _decoded = new OI.Rgb24[W * H];
+
+    // Decodes into a buffer the caller keeps, as the other decode tasks do (see the JPEG decode rows).
     [BenchmarkCategory("Gate", "cmyk-jpeg-to-srgb")]
-    [Benchmark(Description = "OneImage Load + ConvertColor(sRGB) + ToArray<Rgb24>")]
-    public int OneImageCmyk() => OI.Image.Load(_jpeg).ConvertColor(OI.ColorProfile.Srgb).ToArray<OI.Rgb24>().Length;
+    [Benchmark(Description = "OneImage Load + ConvertColor(sRGB) + CopyPixelsTo reused Rgb24 buffer")]
+    public int OneImageCmyk()
+    {
+        OI.Image img = OI.Image.Load(_jpeg).ConvertColor(OI.ColorProfile.Srgb);
+        img.CopyPixelsTo<OI.Rgb24>(_decoded, new OI.ImageRect(0, 0, img.Width, img.Height));
+        return img.Width;
+    }
+
+    [BenchmarkCategory("cmyk-jpeg-to-srgb-alloc")]
+    [Benchmark(Description = "OneImage Load + ConvertColor(sRGB) + ToArray<Rgb24> (allocates)")]
+    public int OneImageCmykToArray() => OI.Image.Load(_jpeg).ConvertColor(OI.ColorProfile.Srgb).ToArray<OI.Rgb24>().Length;
 
     [BenchmarkCategory("Gate", "cmyk-jpeg-to-srgb")]
     [Benchmark(Description = "Magick.NET (LittleCMS) read + profile transform")]

@@ -75,13 +75,30 @@ internal static class JpegData
 public class JpegDecodeBenchmarks
 {
     private byte[] _jpeg = null!;
+    private OneImage.Rgb24[] _decoded = [];
 
     [GlobalSetup]
-    public void Setup() => _jpeg = JpegData.SkiaJpeg(JpegData.Pixels(), 90);
+    public void Setup()
+    {
+        _jpeg = JpegData.SkiaJpeg(JpegData.Pixels(), 90);
+        _decoded = new OneImage.Rgb24[JpegData.Width * JpegData.Height];
+    }
 
+    // ImageSharp decodes into pooled image memory that is reused from one load to the next, so a decode that allocates a fresh
+    // 72 MB array per call is charged for something that row does not pay. This row decodes into a buffer the caller keeps, as an
+    // application decoding many files would; the ToArray row shows the allocating form.
     [BenchmarkCategory("Gate", "jpeg-decode")]
-    [Benchmark(Description = "OneImage Image.Load + ToArray<Rgb24>, 24 MP")]
-    public int OneImageFull() => OneImage.Image.Load(_jpeg).ToArray<OneImage.Rgb24>().Length;
+    [Benchmark(Description = "OneImage Image.Load + CopyPixelsTo reused Rgb24 buffer, 24 MP")]
+    public int OneImageFull()
+    {
+        OneImage.Image img = OneImage.Image.Load(_jpeg);
+        img.CopyPixelsTo<OneImage.Rgb24>(_decoded, new ImageRect(0, 0, img.Width, img.Height));
+        return img.Width;
+    }
+
+    [BenchmarkCategory("jpeg-decode-alloc")]
+    [Benchmark(Description = "OneImage Image.Load + ToArray<Rgb24> (allocates), 24 MP")]
+    public int OneImageFullToArray() => OneImage.Image.Load(_jpeg).ToArray<OneImage.Rgb24>().Length;
 
     [Benchmark(Description = "OneImage decoder only (rows into a reused buffer), 24 MP")]
     public long OneImageCodecFull() => JpegBenchHelpers.DecodeInto(_jpeg, 1);

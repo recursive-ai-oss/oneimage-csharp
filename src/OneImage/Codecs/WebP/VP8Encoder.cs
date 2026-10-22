@@ -134,6 +134,8 @@ internal sealed class VP8Encoder
 
     private static int RgbToV(int r, int g, int b, int rounding) => ClipUv((28800 * r) - (24116 * g) - (4684 * b), rounding);
 
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private void ConvertToYuv(byte[] rgba)
     {
         int w = _w;
@@ -331,6 +333,8 @@ internal sealed class VP8Encoder
     }
 
     // Waits until row y-1 has completed macroblock column x+1 (or its last column), which is all the prediction of (x, y) reads.
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private void WaitForRowAbove(int y, int x)
     {
         if (y == 0)
@@ -1082,6 +1086,8 @@ internal sealed class VP8Encoder
 
     // ---- bitstream ----
 
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private byte[] WriteStream()
     {
         int n = _mbw * _mbh;

@@ -201,6 +201,8 @@ internal sealed class WebPEncoderImpl : IImageEncoder
     }
 
     // Reads the frame as straight RGBA.
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private static byte[] ReadRgba(ImageFrameReader fr)
     {
         int w = fr.Width;
@@ -245,6 +247,8 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         return EncodeSub(rgba, w, h, options, fr.Degree, token);
     }
 
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private static EncodedFrame EncodeSub(byte[] rgba, int w, int h, WebPEncoderOptions options, int degree, CancellationToken token)
     {
         if (options.Lossless)

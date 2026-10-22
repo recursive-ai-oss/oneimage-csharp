@@ -185,9 +185,14 @@ public abstract class TiffBenchBase
 public class TiffMultiPageDecode : TiffBenchBase
 {
     private string _path = null!;
+    private Rgb24[] _page = [];
 
     [GlobalSetup]
-    public void Setup() => _path = TiffBenchData.MultiPage();
+    public void Setup()
+    {
+        _path = TiffBenchData.MultiPage();
+        _page = new Rgb24[2000 * 1500];
+    }
 
     [BenchmarkCategory("Gate", "tiff-multipage-decode")]
     [Benchmark(Baseline = true, Description = "ImageSharp")]
@@ -203,9 +208,15 @@ public class TiffMultiPageDecode : TiffBenchBase
         return s + img.Frames.Count;
     }
 
+    // Each page is decoded into one buffer the caller keeps (ImageSharp reuses pooled memory across loads; allocating a fresh
+    // 9 MB array per page would charge us for something that row does not pay). The ToArray row shows the allocating form.
     [BenchmarkCategory("Gate", "tiff-multipage-decode")]
-    [Benchmark(Description = "oneimage")]
-    public long OneImage()
+    [Benchmark(Description = "oneimage, pages into a reused buffer")]
+    public long OneImage() => OneImageWithDegree(0);
+
+    [BenchmarkCategory("tiff-multipage-decode-alloc")]
+    [Benchmark(Description = "oneimage, ToArray per page (allocates)")]
+    public long OneImageToArray()
     {
         Image img = Image.Load(_path);
         long s = 0;
@@ -224,8 +235,9 @@ public class TiffMultiPageDecode : TiffBenchBase
         long s = 0;
         for (int i = 0; i < img.FrameCount; i++)
         {
-            Rgb24[] px = img.Frames[i].ToArray<Rgb24>(maxDegree: degree);
-            s += px[^1].R;
+            ImageFrame f = img.Frames[i];
+            f.CopyPixelsTo<Rgb24>(_page, new ImageRect(0, 0, f.Width, f.Height), degree);
+            s += _page[^1].R;
         }
 
         return s + img.FrameCount;

@@ -194,7 +194,7 @@ internal sealed class ResampleNode : Node
         var tiles = new Tile?[tx1 - tx0];
         try
         {
-            hbuf = ArrayPool<float>.Shared.Rent(redRows * hstride);
+            hbuf = FloatScratch.Rent(redRows * hstride);
             if (have > 0)
             {
                 _carry.AsSpan((rs - _carryStart) * hstride, have * hstride).CopyTo(hbuf);
@@ -203,10 +203,10 @@ internal sealed class ResampleNode : Node
             int j = have;
             if (srcY0 < srcY1)
             {
-                bytes = ArrayPool<byte>.Shared.Rent(bandRows * srcPix * ibpp);
-                rowF = ArrayPool<float>.Shared.Rent(srcPix * p);
-                red = _fx > 1 ? ArrayPool<float>.Shared.Rent(redCols * p) : null;
-                acc = _fy > 1 ? ArrayPool<float>.Shared.Rent(redCols * p) : null;
+                bytes = PooledTileStore.Instance.Rent(bandRows * srcPix * ibpp, clear: false);
+                rowF = FloatScratch.Rent(srcPix * p);
+                red = _fx > 1 ? FloatScratch.Rent(redCols * p) : null;
+                acc = _fy > 1 ? FloatScratch.Rent(redCols * p) : null;
                 int count = 0;
                 for (int y = srcY0, n; y < srcY1; y += n)
                 {
@@ -255,7 +255,7 @@ internal sealed class ResampleNode : Node
                 }
             }
 
-            outF = ArrayPool<float>.Shared.Rent(hstride);
+            outF = FloatScratch.Rent(hstride);
             int obpp = Format.BytesPerPixel;
             for (int i = 0; i < tiles.Length; i++)
             {
@@ -329,11 +329,13 @@ internal sealed class ResampleNode : Node
         _carryWidth = width;
     }
 
-    private static void Return<T>(T[]? array)
+    private static void Return(float[]? array) => FloatScratch.Return(array);
+
+    private static void Return(byte[]? array)
     {
         if (array != null)
         {
-            ArrayPool<T>.Shared.Return(array);
+            PooledTileStore.Instance.Return(array);
         }
     }
 

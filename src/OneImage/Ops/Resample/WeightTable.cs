@@ -129,6 +129,8 @@ internal sealed class WeightTable
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int, long, ResamplingFilter), WeightTable> s_cache = new();
 
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private static WeightTable BuildCore(int sourceSize, int outputSize, double scale, ResamplingFilter filter)
     {
         var start = new int[outputSize];
