@@ -23,19 +23,6 @@ public class GraphTests
     }
 
     [Fact]
-    public void CropNeverComputesTilesOutsideTheCrop()
-    {
-        var src = new PatternNode(10000, 10000);
-        Image cropped = Image.FromNode(src).Crop(1000, 1000, 300, 300);
-        Rgba32[] px = cropped.ToArray<Rgba32>();
-
-        // 1000..1299 spans tiles 7..10: 16 tiles at most.
-        Assert.True(src.Computed <= 16, $"computed {src.Computed}");
-        Assert.Equal(PatternNode.Expected(1000, 1000), px[0]);
-        Assert.Equal(PatternNode.Expected(1299, 1299), px[^1]);
-    }
-
-    [Fact]
     public void TileAlignedCropReusesInputTiles()
     {
         var src = new PatternNode(2000, 2000);
@@ -188,5 +175,26 @@ public class GraphTests
     {
         Assert.NotNull(KernelRegistry.Get<RowKernel>("invert"));
         Assert.Throws<ImageOperationException>(() => KernelRegistry.Get<RowKernel>("nope"));
+    }
+}
+
+/// <summary>
+/// Pipeline-level tile counting. These renders go through the process-wide tile cache; tests running in parallel can
+/// evict a source tile that two output tiles share, which is correct but recomputes it, so they run on their own.
+/// </summary>
+[Collection(MemoryMeasurement.Name)]
+public class GraphCountTests
+{
+    [Fact]
+    public void CropNeverComputesTilesOutsideTheCrop()
+    {
+        var src = new PatternNode(10000, 10000);
+        Image cropped = Image.FromNode(src).Crop(1000, 1000, 300, 300);
+        Rgba32[] px = cropped.ToArray<Rgba32>();
+
+        // 1000..1299 spans tiles 7..10: 16 tiles at most.
+        Assert.True(src.Computed <= 16, $"computed {src.Computed}");
+        Assert.Equal(PatternNode.Expected(1000, 1000), px[0]);
+        Assert.Equal(PatternNode.Expected(1299, 1299), px[^1]);
     }
 }
