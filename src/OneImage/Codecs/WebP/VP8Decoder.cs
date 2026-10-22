@@ -91,10 +91,6 @@ internal sealed class VP8Decoder
     private int _nzDcLeft;
 
     // Per macroblock data of the current row.
-    private byte[] _isI4 = [];
-    private byte[] _bModes = [];
-    private byte[] _uvModes = [];
-    private byte[] _yModes = [];
     private byte[] _segments = [];
     private byte[] _skips = [];
 
@@ -107,7 +103,6 @@ internal sealed class VP8Decoder
     private byte[] _topV = [];
 
     private readonly byte[] _work = new byte[Bps * 27];
-    private readonly short[] _coeffs = new short[384];
 
     private VP8Decoder(byte[] data, int len, ImageLimits limits, CancellationToken token)
     {
@@ -405,10 +400,6 @@ internal sealed class VP8Decoder
         _intraTop = new byte[mbw * 4];
         _nzTop = new byte[mbw * 8];
         _nzDcTop = new byte[mbw];
-        _isI4 = new byte[mbw];
-        _bModes = new byte[mbw * 16];
-        _uvModes = new byte[mbw];
-        _yModes = new byte[mbw];
         _segments = new byte[mbw];
         _skips = new byte[mbw];
         _fInner = new byte[mbw * _mbh];
@@ -419,50 +410,149 @@ internal sealed class VP8Decoder
         _topV = new byte[mbw * 8];
         LoopFilter? filter = _filterType > 0 ? new LoopFilter(this) : null;
 
-        for (int mby = 0; mby < _mbh; mby++)
+        // Parsing the bitstream (modes and coefficients) does not depend on pixels, so large frames run it on a second thread,
+        // a few macroblock rows ahead of the reconstruction, loop filter and color conversion. The output is identical.
+        bool pipelined = (long)_width * _height >= PipelineMinPixels && _mbh >= 4 && Environment.ProcessorCount > 1;
+        int bufCount = pipelined ? 3 : 1;
+        var rows = new RowData[bufCount];
+        for (int i = 0; i < bufCount; i++)
         {
-            _token.ThrowIfCancellationRequested();
-            ParseIntraModeRow();
-            if (_br.Eof)
+            rows[i] = new RowData(mbw);
+        }
+
+        if (!pipelined)
+        {
+            for (int mby = 0; mby < _mbh; mby++)
             {
-                throw new ImageFormatException("The VP8 frame is truncated.");
+                ParseRow(mby, rows[0]);
+                ConsumeRow(mby, rows[0], filter);
             }
 
-            ref VP8BoolReader tokens = ref _parts[mby & (_numParts - 1)];
-            Array.Clear(_nzLeft);
-            _nzDcLeft = 0;
-            for (int mbx = 0; mbx < mbw; mbx++)
+            return;
+        }
+
+        using var free = new SemaphoreSlim(bufCount, bufCount);
+        using var filled = new SemaphoreSlim(0);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(_token);
+        Exception? parseError = null;
+        Task producer = Task.Factory.StartNew(() =>
+        {
+            try
             {
-                DecodeMacroblock(ref tokens, mbx, mby);
-                if (tokens.Eof)
+                for (int mby = 0; mby < _mbh; mby++)
                 {
-                    throw new ImageFormatException("The VP8 frame is truncated.");
+                    free.Wait(stop.Token);
+                    ParseRow(mby, rows[mby % bufCount]);
+                    filled.Release();
                 }
             }
-
-            // Prediction of the next row needs this row's unfiltered bottom pixels, so keep them before filtering.
-            int rowSlot = mby == 0 ? 0 : 1;
-            _y.AsSpan((((rowSlot * 16) + 15) * _yStride), mbw * 16).CopyTo(_topY);
-            _u.AsSpan((((rowSlot * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topU);
-            _v.AsSpan((((rowSlot * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topV);
-            int slot = mby == 0 ? 0 : 1;
-            filter?.FilterRow(mby, slot);
-
-            // Rows that no later macroblock row can change are converted and sent on: luma and chroma lines the next row's top
-            // edge filter cannot reach (it rewrites the last three lines of this row).
-            bool last = mby == _mbh - 1;
-            _upsampler!.Advance(_y, _u, _v, _yStride, _uvStride, 16 * (mby - slot), 8 * (mby - slot), (8 * mby) + 5, _alphaPlane, last);
-            if (mby > 0 && !last)
+            catch (Exception e)
             {
-                // The current row becomes the "row above" for the next one.
-                Buffer.BlockCopy(_y, 16 * _yStride, _y, 0, 16 * _yStride);
-                Buffer.BlockCopy(_u, 8 * _uvStride, _u, 0, 8 * _uvStride);
-                Buffer.BlockCopy(_v, 8 * _uvStride, _v, 0, 8 * _uvStride);
+                // Handed to the consuming thread, which rethrows it unchanged (or is already unwinding).
+                parseError = e;
+                filled.Release();
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            for (int mby = 0; mby < _mbh; mby++)
+            {
+                filled.Wait(_token);
+                if (Volatile.Read(ref parseError) is Exception error)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+                }
+
+                ConsumeRow(mby, rows[mby % bufCount], filter);
+                free.Release();
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            producer.Wait();
+        }
+    }
+
+    private const int PipelineMinPixels = 1 << 17;
+
+    // Modes and coefficients of one macroblock row, handed from the parsing thread to the reconstruction thread.
+    private sealed class RowData
+    {
+        public RowData(int mbw)
+        {
+            IsI4 = new byte[mbw];
+            YModes = new byte[mbw];
+            UvModes = new byte[mbw];
+            BModes = new byte[mbw * 16];
+            Coeffs = new short[mbw * 384];
+            Bits = new uint[mbw * 24];
+        }
+
+        public byte[] IsI4 { get; }
+
+        public byte[] YModes { get; }
+
+        public byte[] UvModes { get; }
+
+        public byte[] BModes { get; }
+
+        public short[] Coeffs { get; }
+
+        public uint[] Bits { get; }
+    }
+
+    private void ParseRow(int mby, RowData rd)
+    {
+        _token.ThrowIfCancellationRequested();
+        ParseIntraModeRow(rd);
+        if (_br.Eof)
+        {
+            throw new ImageFormatException("The VP8 frame is truncated.");
+        }
+
+        ref VP8BoolReader tokens = ref _parts[mby & (_numParts - 1)];
+        Array.Clear(_nzLeft);
+        _nzDcLeft = 0;
+        for (int mbx = 0; mbx < _mbw; mbx++)
+        {
+            DecodeMacroblock(ref tokens, mbx, mby, rd);
+            if (tokens.Eof)
+            {
+                throw new ImageFormatException("The VP8 frame is truncated.");
             }
         }
     }
 
-    private void ParseIntraModeRow()
+    private void ConsumeRow(int mby, RowData rd, LoopFilter? filter)
+    {
+        int mbw = _mbw;
+        for (int mbx = 0; mbx < mbw; mbx++)
+        {
+            Reconstruct(mbx, mby, rd);
+        }
+
+        // Prediction of the next row needs this row's unfiltered bottom pixels, so keep them before filtering.
+        int slot = mby == 0 ? 0 : 1;
+        _y.AsSpan((((slot * 16) + 15) * _yStride), mbw * 16).CopyTo(_topY);
+        _u.AsSpan((((slot * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topU);
+        _v.AsSpan((((slot * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topV);
+        filter?.FilterRow(mby, slot);
+
+        // Rows that no later macroblock row can change are converted and sent on: luma and chroma lines the next row's top
+        // edge filter cannot reach (it rewrites the last three lines of this row).
+        bool last = mby == _mbh - 1;
+        _upsampler!.Advance(_y, _u, _v, _yStride, _uvStride, 16 * (mby - slot), 8 * (mby - slot), (8 * mby) + 5, _alphaPlane, last);
+        if (mby > 0 && !last)
+        {
+            // The current row becomes the "row above" for the next one.
+            Buffer.BlockCopy(_y, 16 * _yStride, _y, 0, 16 * _yStride);
+            Buffer.BlockCopy(_u, 8 * _uvStride, _u, 0, 8 * _uvStride);
+            Buffer.BlockCopy(_v, 8 * _uvStride, _v, 0, 8 * _uvStride);
+        }
+    }
+
+    private void ParseIntraModeRow(RowData rd)
     {
         Array.Clear(_intraLeft);
         for (int mbx = 0; mbx < _mbw; mbx++)
@@ -477,11 +567,11 @@ internal sealed class VP8Decoder
             _skips[mbx] = (byte)(_useSkipProba ? _br.GetBit(_skipProba) : 0);
 
             bool i4 = _br.GetBit(145) == 0;
-            _isI4[mbx] = (byte)(i4 ? 1 : 0);
+            rd.IsI4[mbx] = (byte)(i4 ? 1 : 0);
             if (!i4)
             {
                 int ymode = _br.GetBit(156) != 0 ? (_br.GetBit(128) != 0 ? TmPred : HPred) : (_br.GetBit(163) != 0 ? VPred : DcPred);
-                _yModes[mbx] = (byte)ymode;
+                rd.YModes[mbx] = (byte)ymode;
                 byte b = ymode switch { DcPred => BDc, TmPred => BTm, VPred => BVe, _ => BHe };
                 _intraTop.AsSpan(mbx * 4, 4).Fill(b);
                 _intraLeft.AsSpan().Fill(b);
@@ -489,7 +579,7 @@ internal sealed class VP8Decoder
             else
             {
                 ReadOnlySpan<byte> probs = VP8Tables.KeyFrameBModeProbs;
-                Span<byte> modes = _bModes.AsSpan(mbx * 16, 16);
+                Span<byte> modes = rd.BModes.AsSpan(mbx * 16, 16);
                 for (int y = 0; y < 4; y++)
                 {
                     int ymode = _intraLeft[y];
@@ -511,21 +601,21 @@ internal sealed class VP8Decoder
                 }
             }
 
-            _uvModes[mbx] = (byte)(_br.GetBit(142) == 0 ? DcPred : _br.GetBit(114) == 0 ? VPred : _br.GetBit(183) != 0 ? TmPred : HPred);
+            rd.UvModes[mbx] = (byte)(_br.GetBit(142) == 0 ? DcPred : _br.GetBit(114) == 0 ? VPred : _br.GetBit(183) != 0 ? TmPred : HPred);
         }
     }
 
-    private void DecodeMacroblock(ref VP8BoolReader tokens, int mbx, int mby)
+    private void DecodeMacroblock(ref VP8BoolReader tokens, int mbx, int mby, RowData rd)
     {
         int segment = _segments[mbx];
-        bool i4 = _isI4[mbx] != 0;
+        bool i4 = rd.IsI4[mbx] != 0;
         int mbIndex = (mby * _mbw) + mbx;
-        Span<short> coeffs = _coeffs;
+        Span<short> coeffs = rd.Coeffs.AsSpan(mbx * 384, 384);
         coeffs.Clear();
         uint nonZeroY = 0;
         uint nonZeroUv = 0;
         bool skip = _skips[mbx] != 0;
-        Span<uint> blockBits = stackalloc uint[24];
+        Span<uint> blockBits = rd.Bits.AsSpan(mbx * 24, 24);
         blockBits.Clear();
         Span<byte> top = _nzTop.AsSpan(mbx * 8, 8);
         if (!skip)
@@ -615,8 +705,6 @@ internal sealed class VP8Decoder
         _fSegment[mbIndex] = (byte)segment;
         _fI4[mbIndex] = (byte)(i4 ? 1 : 0);
         _fInner[mbIndex] = (byte)((i4 || !skip) ? 1 : 0);
-
-        Reconstruct(mbx, mby, i4, coeffs, blockBits);
     }
 
     // Reads the coefficient tokens of one block (RFC 6386 section 13) and returns the position after the last token.
@@ -736,14 +824,17 @@ internal sealed class VP8Decoder
 
     // ---- reconstruction ----
 
-    private void Reconstruct(int mbx, int mby, bool i4, Span<short> coeffs, ReadOnlySpan<uint> blockBits)
+    private void Reconstruct(int mbx, int mby, RowData rd)
     {
+        bool i4 = rd.IsI4[mbx] != 0;
+        Span<short> coeffs = rd.Coeffs.AsSpan(mbx * 384, 384);
+        ReadOnlySpan<uint> blockBits = rd.Bits.AsSpan(mbx * 24, 24);
         byte[] w = _work;
         int slot = mby == 0 ? 0 : 1;
         PrepareBorders(mbx, mby);
         if (!i4)
         {
-            Predict.Block(w, YOff, 16, _yModes[mbx], mbx > 0, mby > 0);
+            Predict.Block(w, YOff, 16, rd.YModes[mbx], mbx > 0, mby > 0);
             for (int blk = 0; blk < 16; blk++)
             {
                 AddBlock(w, YOff + ((blk >> 2) * 4 * Bps) + ((blk & 3) * 4), coeffs.Slice(blk * 16, 16), blockBits[blk]);
@@ -763,13 +854,13 @@ internal sealed class VP8Decoder
             for (int blk = 0; blk < 16; blk++)
             {
                 int off = YOff + ((blk >> 2) * 4 * Bps) + ((blk & 3) * 4);
-                Predict.SubBlock(w, off, _bModes[(mbx * 16) + blk]);
+                Predict.SubBlock(w, off, rd.BModes[(mbx * 16) + blk]);
                 AddBlock(w, off, coeffs.Slice(blk * 16, 16), blockBits[blk]);
             }
         }
 
-        Predict.Block(w, UOff, 8, _uvModes[mbx], mbx > 0, mby > 0);
-        Predict.Block(w, VOff, 8, _uvModes[mbx], mbx > 0, mby > 0);
+        Predict.Block(w, UOff, 8, rd.UvModes[mbx], mbx > 0, mby > 0);
+        Predict.Block(w, VOff, 8, rd.UvModes[mbx], mbx > 0, mby > 0);
         for (int blk = 0; blk < 4; blk++)
         {
             int o = ((blk >> 1) * 4 * Bps) + ((blk & 1) * 4);

@@ -191,3 +191,48 @@ public sealed class WebPRobustnessTests
         Assert.True(ex is ImageLimitException or ImageFormatException, ex.GetType().Name);
     }
 }
+
+/// <summary>Frames large enough to use the two-thread lossy decode path (parsing ahead of reconstruction).</summary>
+public sealed class WebPPipelinedDecodeTests
+{
+    private static byte[] LargeLossy(bool alpha, int quality)
+    {
+        byte[] rgba = WebPOracle.MakeImage(700, 500, 21, alpha);
+        return WebPOracle.SkiaEncode(rgba, 700, 500, lossless: false, quality);
+    }
+
+    [Theory]
+    [InlineData(false, 30)]
+    [InlineData(false, 90)]
+    [InlineData(true, 60)]
+    public void MatchesLibwebpAndIsRepeatable(bool alpha, int quality)
+    {
+        byte[] file = LargeLossy(alpha, quality);
+        byte[] theirs = WebPOracle.SkiaDecode(file, out int w, out int h);
+        byte[] ours = WebPOracle.OurDecode(file, out _, out _);
+        Assert.True(WebPOracle.MaxDiff(ours, theirs) <= 1);
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.Equal(ours, WebPOracle.OurDecode(file, out _, out _));
+        }
+
+        Assert.Equal((700, 500), (w, h));
+    }
+
+    [Fact]
+    public void TruncatedAndCancelledDecodesStopCleanly()
+    {
+        byte[] file = LargeLossy(false, 75);
+        foreach (int len in new[] { 40, 300, file.Length / 4, file.Length / 2, file.Length - 50 })
+        {
+            byte[] cut = file.AsSpan(0, len).ToArray();
+            Assert.ThrowsAny<Exception>(() => Image.Load(cut).ToArray<Rgb24>()).GetType();
+            Exception ex = Assert.ThrowsAny<Exception>(() => Image.Load(cut).ToArray<Rgb24>());
+            Assert.True(ex is ImageFormatException or ImageLimitException, ex.GetType().Name);
+        }
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => Image.Load(file).ToArray<Rgb24>(cancellationToken: cts.Token));
+    }
+}
