@@ -57,6 +57,8 @@ internal sealed class DecodeSourceNode : Node
     private readonly DecodeSession _session;
     private readonly int _frame;
     private readonly int _scale;
+    private readonly int _targetWidth;
+    private readonly int _targetHeight;
     private readonly ImageRect _region;
     private readonly bool _randomAccess;
     private readonly bool _streaming;
@@ -67,11 +69,11 @@ internal sealed class DecodeSourceNode : Node
     private int _directPulled;
 
     public DecodeSourceNode(DecodeSession session, int frame, int scale = 1, ImageRect? region = null)
-        : this(session, frame, scale, region ?? FullRegion(session, frame, scale), 0)
+        : this(session, frame, scale, region ?? FullRegion(session, frame, scale, 0, 0), 0, 0, 0)
     {
     }
 
-    private DecodeSourceNode(DecodeSession session, int frame, int scale, ImageRect region, int unused)
+    private DecodeSourceNode(DecodeSession session, int frame, int scale, ImageRect region, int unused, int targetWidth, int targetHeight)
         : base(
             region.Width,
             region.Height,
@@ -81,6 +83,8 @@ internal sealed class DecodeSourceNode : Node
                 new OpParameter("format", session.Info.Format.Name),
                 new OpParameter("frame", (long)frame),
                 new OpParameter("scale", (long)scale),
+                new OpParameter("target_width", (long)targetWidth),
+                new OpParameter("target_height", (long)targetHeight),
                 new OpParameter("x", (long)region.X),
                 new OpParameter("y", (long)region.Y),
                 new OpParameter("width", (long)region.Width),
@@ -90,6 +94,8 @@ internal sealed class DecodeSourceNode : Node
         _session = session;
         _frame = frame;
         _scale = scale;
+        _targetWidth = targetWidth;
+        _targetHeight = targetHeight;
         _region = region;
         DecoderCapabilities caps = session.Decoder.Capabilities;
         _randomAccess = (caps & DecoderCapabilities.RandomAccess) == DecoderCapabilities.RandomAccess;
@@ -106,7 +112,11 @@ internal sealed class DecodeSourceNode : Node
 
     private bool SupportsScale => (_session.Decoder.Capabilities & DecoderCapabilities.Scale) != 0;
 
-    private bool IsFull => _region == FullRegion(_session, _frame, _scale);
+    private bool SupportsRenderAtSize => _randomAccess && (_session.Decoder.Capabilities & DecoderCapabilities.RenderAtSize) != 0;
+
+    private bool IsFull => _region == FullRegion(_session, _frame, _scale, _targetWidth, _targetHeight);
+
+    private DecodeRequest Request(ImageRect region) => new(region, _scale, _targetWidth, _targetHeight);
 
     /// <summary>Crop push-down: a node producing just <paramref name="rect"/> (this node's coordinates), or null if the decoder cannot or the frame is already decoded.</summary>
     public DecodeSourceNode? TryPushRegion(ImageRect rect)
@@ -116,7 +126,7 @@ internal sealed class DecodeSourceNode : Node
             return null;
         }
 
-        return new DecodeSourceNode(_session, _frame, _scale, rect.Offset(_region.X, _region.Y), 0);
+        return new DecodeSourceNode(_session, _frame, _scale, rect.Offset(_region.X, _region.Y), 0, _targetWidth, _targetHeight);
     }
 
     /// <summary>Shrink-on-load: a node producing the frame at 1/<paramref name="denominator"/> size, or null if unsupported.</summary>
@@ -131,6 +141,20 @@ internal sealed class DecodeSourceNode : Node
         return new DecodeSourceNode(_session, _frame, combined);
     }
 
+    /// <summary>
+    /// Render-at-size: a node producing the whole frame at exactly <paramref name="width"/> x <paramref name="height"/> pixels, drawn at that size
+    /// by a vector decoder, or null if the decoder cannot, or this node is already scaled, cropped or decoded.
+    /// </summary>
+    public DecodeSourceNode? TryPushRenderSize(int width, int height)
+    {
+        if (!SupportsRenderAtSize || !IsFull || _scale != 1 || _targetWidth != 0 || Volatile.Read(ref _grid) != null || width < 1 || height < 1)
+        {
+            return null;
+        }
+
+        return new DecodeSourceNode(_session, _frame, 1, FullRegion(_session, _frame, 1, width, height), 0, width, height);
+    }
+
     /// <summary>Decodes everything now so errors surface (the fail-up-front mode of load). Small sequential frames keep the result; others decode once and discard it.</summary>
     public void Validate(CancellationToken cancellationToken)
     {
@@ -142,7 +166,7 @@ internal sealed class DecodeSourceNode : Node
 
         using Stream s = _session.Source.Open();
         var sink = new NullRowSink(Width, Height, Format);
-        _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+        _session.Decoder.DecodeFrame(s, _session.Info, _frame, Request(RequestRegion()), sink, _session.Limits, cancellationToken);
         CheckComplete(sink.RowsWritten, Height);
     }
 
@@ -181,7 +205,7 @@ internal sealed class DecodeSourceNode : Node
             var sink = new DirectRowSink(pinned, Width, Height, Format, destinationFormat, converter, stage, degree);
             try
             {
-                _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+                _session.Decoder.DecodeFrame(s, _session.Info, _frame, Request(RequestRegion()), sink, _session.Limits, cancellationToken);
                 sink.Finish();
             }
             catch
@@ -211,7 +235,7 @@ internal sealed class DecodeSourceNode : Node
     }
 
     /// <summary>A shrunk or cropped decode exists for one pipeline; a full-size decode may be shared by several.</summary>
-    protected override bool PipelinePrivate => _scale > 1 || !IsFull;
+    protected override bool PipelinePrivate => _scale > 1 || _targetWidth > 0 || !IsFull;
 
     protected override void ReleaseShared()
     {
@@ -255,8 +279,13 @@ internal sealed class DecodeSourceNode : Node
         }
     }
 
-    private static ImageRect FullRegion(DecodeSession session, int frame, int scale)
+    private static ImageRect FullRegion(DecodeSession session, int frame, int scale, int targetWidth, int targetHeight)
     {
+        if (targetWidth > 0)
+        {
+            return new ImageRect(0, 0, targetWidth, targetHeight);
+        }
+
         FrameInfo f = session.Info.Frames[frame];
         return new ImageRect(0, 0, (f.Width + scale - 1) / scale, (f.Height + scale - 1) / scale);
     }
@@ -280,7 +309,7 @@ internal sealed class DecodeSourceNode : Node
         {
             using Stream s = _session.Source.Open();
             var sink = new TileRowSink(tile, tr.Width, tr.Height, Format);
-            _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(tr.Offset(_region.X, _region.Y), _scale), sink, _session.Limits, context.CancellationToken);
+            _session.Decoder.DecodeFrame(s, _session.Info, _frame, Request(tr.Offset(_region.X, _region.Y)), sink, _session.Limits, context.CancellationToken);
             CheckComplete(sink.RowsWritten, tr.Height);
             return tile;
         }
@@ -379,7 +408,7 @@ internal sealed class DecodeSourceNode : Node
         using Stream s = _session.Source.Open();
         var grid = new TileGrid(Width, Height, Format, null);
         using var sink = new StripToTileBuffer(grid);
-        _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+        _session.Decoder.DecodeFrame(s, _session.Info, _frame, Request(RequestRegion()), sink, _session.Limits, cancellationToken);
         CheckComplete(sink.RowsWritten, Height);
         _stream?.Dispose();
         _stream = null;

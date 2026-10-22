@@ -28,6 +28,7 @@ internal static class Program
         ["webp"] = CodecTargets.WebP,
         ["svg"] = DrawingTargets.Svg,
         ["svg-xml"] = SvgXmlTarget.Run,
+        ["svg-render"] = SvgRenderTarget.Run,
         ["font"] = FontTarget.Run,
         ["breaking"] = BreakingTarget.Run,
         ["bidi"] = BidiTarget.Run,

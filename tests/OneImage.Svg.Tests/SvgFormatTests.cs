@@ -181,12 +181,4 @@ public class SvgFormatTests
         // A broken body is reported when pixels are pulled, not at identify.
         Assert.Equal(7, Identify($"<svg {Ns} width='7' height='7'><g><oops></g></svg>").Width);
     }
-
-    [Fact]
-    public void RenderingIsNotAvailableYet()
-    {
-        Image img = Image.Load(Utf8($"<svg {Ns} width='7' height='7'/>"), Options);
-        Assert.Equal((7, 7), (img.Width, img.Height));
-        Assert.Throws<ImageOperationException>(() => img.ToArray<Rgba32>());
-    }
 }

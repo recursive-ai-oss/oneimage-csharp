@@ -1,0 +1,741 @@
+using System.Numerics;
+using OneImage.Drawing;
+using OneImage.Svg.Dom;
+using Path = OneImage.Drawing.Path;
+
+namespace OneImage.Svg.Render;
+
+/// <summary>
+/// Turns a document into a render tree: resolves styles, units, transforms, <c>viewBox</c>es, <c>use</c>/<c>symbol</c> instances and
+/// shapes into paths with final geometry and paint, in scene space. It walks the document with an explicit stack (document nesting
+/// and <c>use</c> chains never grow the call stack) and counts every instantiated element against <see cref="SvgLimits.MaxInstances"/>.
+/// </summary>
+internal sealed class SceneBuilder
+{
+    private enum Axis
+    {
+        X,
+        Y,
+        Other,
+    }
+
+    private readonly record struct Viewport(double Width, double Height);
+
+    private sealed class Frame
+    {
+        public required IReadOnlyList<SvgElement> Kids { get; init; }
+
+        public int Next { get; set; }
+
+        public SvgStyle Style;
+
+        public Affine Ctm { get; init; }
+
+        public Viewport Vp { get; init; }
+
+        public Path? Clip { get; init; }
+
+        public required List<RNode> Out { get; init; }
+
+        /// <summary>The layer these kids paint into (closed on pop), and the list the layer joins.</summary>
+        public RLayer? Layer { get; init; }
+
+        public List<RNode>? LayerParent { get; init; }
+
+        public int LayerDepth { get; init; }
+
+        public int UseDepth { get; init; }
+
+        /// <summary>For a <c>use</c> frame: the target to forget when the frame closes, and the size the use element gave.</summary>
+        public SvgElement? UseTarget { get; init; }
+
+        public Length? UseWidth { get; init; }
+
+        public Length? UseHeight { get; init; }
+    }
+
+    private const double AntialiasPad = 0.5;
+
+    private readonly SvgDocument _doc;
+    private readonly SvgLimits _limits;
+    private readonly CancellationToken _cancel;
+    private readonly HashSet<SvgElement> _active = [];
+    private readonly Dictionary<SvgElement, (Path? Path, Path? Dotted)> _pathCache = [];
+    private double _rootFontSize = SvgStyle.DefaultFontSize;
+    private int _instances;
+    private bool _hasContent;
+
+    private SceneBuilder(SvgDocument doc, SvgLimits limits, CancellationToken cancel)
+    {
+        _doc = doc;
+        _limits = limits;
+        _cancel = cancel;
+    }
+
+    /// <summary>Builds the scene of a document.</summary>
+    /// <exception cref="ImageFormatException">The root size is malformed.</exception>
+    /// <exception cref="ImageLimitException">An instantiation, depth or size limit is exceeded.</exception>
+    public static SvgScene Build(SvgDocument doc, SvgLimits limits, CancellationToken cancel) =>
+        new SceneBuilder(doc, limits, cancel).BuildRoot();
+
+    private SvgScene BuildRoot()
+    {
+        SvgElement root = _doc.Root;
+        SvgStyle st = SvgStyle.Compute(root, SvgStyle.Initial, SvgStyle.DefaultFontSize);
+        _rootFontSize = st.FontSize;
+        st = SvgStyle.Compute(root, SvgStyle.Initial, _rootFontSize);
+        (double? w, double? h) = SvgSize.Partial(root.Attr("width"), root.Attr("height"), root.Attr("viewBox"));
+        bool hasViewBox = SvgValues.TryViewBox(root.Attr("viewBox"), out double vx, out double vy, out double vw, out double vh);
+
+        Affine ctm = Affine.Identity;
+        Viewport vp;
+        if (hasViewBox)
+        {
+            vp = new Viewport(vw, vh);
+            if (w is { } ww && h is { } hh)
+            {
+                ctm = AspectRatio.Parse(root.Attr("preserveAspectRatio")).Fit(vx, vy, vw, vh, ww, hh);
+            }
+        }
+        else
+        {
+            vp = new Viewport(w ?? 100, h ?? 100);
+        }
+
+        if (!st.Displayed)
+        {
+            return new SvgScene(w ?? 1, h ?? 1, [], false);
+        }
+
+        if ((root.Prop("transform") ?? root.Attr("transform")) is { } ts && SvgValues.TryTransform(ts, out Affine t))
+        {
+            if (!t.IsInvertible)
+            {
+                return new SvgScene(w ?? 1, h ?? 1, [], false);
+            }
+
+            // CSS gives the root element's transform an origin at the center of its box.
+            double ox = (w ?? vp.Width) / 2;
+            double oy = (h ?? vp.Height) / 2;
+            ctm = Affine.Translate(ox, oy).Multiply(t).Multiply(Affine.Translate(-ox, -oy)).Multiply(ctm);
+        }
+
+        var top = new List<RNode>();
+        List<RNode> output = top;
+        RLayer? layer = null;
+        if (st.Opacity < 1)
+        {
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity };
+            output = layer.Children;
+        }
+
+        var stack = new Stack<Frame>();
+        stack.Push(new Frame { Kids = root.Children, Style = st, Ctm = ctm, Vp = vp, Out = output, Layer = layer, LayerParent = top, LayerDepth = layer is null ? 0 : 1 });
+        Run(stack);
+
+        RNode[] nodes = [.. top];
+        double x1 = 0, y1 = 0;
+        foreach (RNode n in nodes)
+        {
+            x1 = Math.Max(x1, n.X1);
+            y1 = Math.Max(y1, n.Y1);
+        }
+
+        // Node boxes carry a little slack for anti-aliasing that is not content: take it off for the content size.
+        double width = w ?? Math.Max(Math.Ceiling(x1 - AntialiasPad - 1e-6), 1);
+        double height = h ?? Math.Max(Math.Ceiling(y1 - AntialiasPad - 1e-6), 1);
+        if (root.Prop("background-color") is { } bg && CssColor.TryParse(bg, out Rgba32 bgColor) && bgColor.A > 0)
+        {
+            // The root's background paints the whole output, under everything.
+            var fillRect = new RPath { Geometry = Path.Rectangle(0, 0, (float)width, (float)height), Ctm = Affine.Identity, HasFill = true, FillColor = bgColor, X0 = 0, Y0 = 0, X1 = width, Y1 = height };
+            nodes = [fillRect, .. nodes];
+        }
+
+        return new SvgScene(width, height, nodes, _hasContent);
+    }
+
+    private void Run(Stack<Frame> stack)
+    {
+        while (stack.Count > 0)
+        {
+            Frame f = stack.Peek();
+            if (f.Next >= f.Kids.Count)
+            {
+                stack.Pop();
+                Close(f);
+                continue;
+            }
+
+            SvgElement child = f.Kids[f.Next++];
+            if ((_instances & 0x3FF) == 0)
+            {
+                _cancel.ThrowIfCancellationRequested();
+            }
+
+            Process(stack, f, child);
+        }
+    }
+
+    private void Close(Frame f)
+    {
+        if (f.UseTarget is not null)
+        {
+            _active.Remove(f.UseTarget);
+        }
+
+        if (f.Layer is { } layer && layer.Children.Count > 0)
+        {
+            Union(layer, layer.Children);
+            f.LayerParent!.Add(layer);
+        }
+    }
+
+    private static void Union(RNode into, List<RNode> children)
+    {
+        double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+        foreach (RNode c in children)
+        {
+            x0 = Math.Min(x0, c.X0);
+            y0 = Math.Min(y0, c.Y0);
+            x1 = Math.Max(x1, c.X1);
+            y1 = Math.Max(y1, c.Y1);
+        }
+
+        into.X0 = x0;
+        into.Y0 = y0;
+        into.X1 = x1;
+        into.Y1 = y1;
+    }
+
+    private void Count()
+    {
+        if (++_instances > _limits.MaxInstances)
+        {
+            throw new ImageLimitException($"The SVG instantiates more than {_limits.MaxInstances} elements (check use references that multiply).");
+        }
+    }
+
+    private void Process(Stack<Frame> stack, Frame f, SvgElement e)
+    {
+        switch (e.Name)
+        {
+            case "g" or "a":
+                Count();
+                PushGroup(stack, f, e);
+                break;
+            case "svg":
+                Count();
+                PushViewport(stack, f, e, symbol: false, ReferenceEquals(f.UseTarget, e) ? f.UseWidth : null, ReferenceEquals(f.UseTarget, e) ? f.UseHeight : null);
+                break;
+            case "symbol" when ReferenceEquals(f.UseTarget, e):
+                Count();
+                PushViewport(stack, f, e, symbol: true, f.UseWidth, f.UseHeight);
+                break;
+            case "use":
+                Count();
+                PushUse(stack, f, e);
+                break;
+            case "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon" or "path":
+                Count();
+                EmitShape(f, e);
+                break;
+        }
+    }
+
+    // Style, display and transform of an element about to open or draw: false when it renders nothing.
+    private bool Begin(Frame f, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false)
+    {
+        st = SvgStyle.Compute(e, f.Style, _rootFontSize);
+        ctm = f.Ctm;
+        if (!st.Displayed)
+        {
+            return false;
+        }
+
+        // The transform property (a style declaration) wins over the attribute; CSS spells lengths and angles with units.
+        string? ts = ignoreTransform ? null : e.Prop("transform")?.Replace("px", string.Empty, StringComparison.Ordinal).Replace("deg", string.Empty, StringComparison.Ordinal) ?? e.Attr("transform");
+        if (ts is not null && SvgValues.TryTransform(ts, out Affine t))
+        {
+            if (!t.IsInvertible)
+            {
+                return false;
+            }
+
+            ctm = ctm.Multiply(t);
+        }
+
+        return true;
+    }
+
+    private static void Open(Stack<Frame> stack, Frame parent, IReadOnlyList<SvgElement> kids, in SvgStyle st, Affine ctm, Viewport vp, Path? clip, bool layered, SvgElement? useTarget = null, Length? useW = null, Length? useH = null, int useDepth = -1, int maxLayers = 0)
+    {
+        List<RNode> output = parent.Out;
+        RLayer? layer = null;
+        int depth = parent.LayerDepth;
+        if (layered)
+        {
+            if (depth + 1 > maxLayers)
+            {
+                throw new ImageLimitException($"Groups with opacity are nested more than {maxLayers} deep.");
+            }
+
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity };
+            output = layer.Children;
+            depth++;
+        }
+
+        stack.Push(new Frame
+        {
+            Kids = kids,
+            Style = st,
+            Ctm = ctm,
+            Vp = vp,
+            Clip = clip,
+            Out = output,
+            Layer = layer,
+            LayerParent = parent.Out,
+            LayerDepth = depth,
+            UseDepth = useDepth >= 0 ? useDepth : parent.UseDepth,
+            UseTarget = useTarget,
+            UseWidth = useW,
+            UseHeight = useH,
+        });
+    }
+
+    private void PushGroup(Stack<Frame> stack, Frame f, SvgElement e)
+    {
+        if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
+        {
+            return;
+        }
+
+        Open(stack, f, e.Children, st, ctm, f.Vp, f.Clip, st.Opacity < 1, maxLayers: _limits.MaxLayerDepth);
+    }
+
+    private void PushUse(Stack<Frame> stack, Frame f, SvgElement e)
+    {
+        string? href = e.Attr("href");
+        if (href is null || href.Length < 2 || href[0] != '#' || !_doc.Ids.TryGetValue(href[1..], out SvgElement? target))
+        {
+            return;
+        }
+
+        // A reference to itself or to something it is inside of, or around again within a chain, draws nothing.
+        if (_active.Contains(target) || IsAncestorOrSelf(target, e) || f.UseDepth + 1 > _limits.MaxReferenceDepth)
+        {
+            if (f.UseDepth + 1 > _limits.MaxReferenceDepth && !_active.Contains(target) && !IsAncestorOrSelf(target, e))
+            {
+                throw new ImageLimitException($"use references are chained more than {_limits.MaxReferenceDepth} deep.");
+            }
+
+            return;
+        }
+
+        if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
+        {
+            return;
+        }
+
+        double x = Resolve(ParseLength(e.Attr("x")), Axis.X, st, f.Vp);
+        double y = Resolve(ParseLength(e.Attr("y")), Axis.Y, st, f.Vp);
+        if (x != 0 || y != 0)
+        {
+            ctm = ctm.Multiply(Affine.Translate(x, y));
+        }
+
+        Length? uw = Length.TryParse(e.Attr("width") ?? string.Empty, out Length lw) ? lw : null;
+        Length? uh = Length.TryParse(e.Attr("height") ?? string.Empty, out Length lh) ? lh : null;
+        _active.Add(target);
+        Open(stack, f, [target], st, ctm, f.Vp, f.Clip, st.Opacity < 1, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth);
+    }
+
+    private static bool IsAncestorOrSelf(SvgElement candidate, SvgElement of)
+    {
+        for (SvgElement? p = of; p is not null; p = p.Parent)
+        {
+            if (ReferenceEquals(p, candidate))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A nested svg, or a symbol instantiated by use: a new viewport with its own coordinate system and (by default) a clip.
+    private void PushViewport(Stack<Frame> stack, Frame f, SvgElement e, bool symbol, Length? useW, Length? useH)
+    {
+        if (symbol)
+        {
+            // A symbol only renders through use; its style comes from the use element. SVG 1.1 gives it no transform, and neither do we.
+            if (!Begin(f, e, out SvgStyle sst, out Affine sctm, ignoreTransform: true) || sst.Opacity <= 0)
+            {
+                return;
+            }
+
+            OpenViewport(stack, f, e, sst, sctm, 0, 0, useW ?? new Length(100, LengthUnit.Percent), useH ?? new Length(100, LengthUnit.Percent));
+            return;
+        }
+
+        if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
+        {
+            return;
+        }
+
+        double x = Resolve(ParseLength(e.Attr("x")), Axis.X, st, f.Vp);
+        double y = Resolve(ParseLength(e.Attr("y")), Axis.Y, st, f.Vp);
+        Length lw = useW ?? (Length.TryParse(e.Attr("width") ?? string.Empty, out Length a) ? a : new Length(100, LengthUnit.Percent));
+        Length lh = useH ?? (Length.TryParse(e.Attr("height") ?? string.Empty, out Length b) ? b : new Length(100, LengthUnit.Percent));
+        OpenViewport(stack, f, e, st, ctm, x, y, lw, lh);
+    }
+
+    private void OpenViewport(Stack<Frame> stack, Frame f, SvgElement e, in SvgStyle st, Affine ctm, double x, double y, Length lw, Length lh)
+    {
+        double w = Resolve(lw, Axis.X, st, f.Vp);
+        double h = Resolve(lh, Axis.Y, st, f.Vp);
+        if (!(w > 0) || !(h > 0))
+        {
+            return;
+        }
+
+        Affine inner = ctm.Multiply(Affine.Translate(x, y));
+        Viewport vp = new(w, h);
+        if (SvgValues.TryViewBox(e.Attr("viewBox"), out double vx, out double vy, out double vw, out double vh))
+        {
+            inner = inner.Multiply(AspectRatio.Parse(e.Attr("preserveAspectRatio")).Fit(vx, vy, vw, vh, w, h));
+            vp = new Viewport(vw, vh);
+        }
+
+        Path? clip = f.Clip;
+        string? overflow = e.Prop("overflow");
+        if (overflow is not ("visible" or "auto"))
+        {
+            Path rect = Path.Rectangle((float)x, (float)y, (float)w, (float)h).Transform(ctm.ToMatrix3x2());
+            clip = clip is null ? rect : clip.Intersect(rect);
+        }
+
+        Open(stack, f, e.Children, st, inner, vp, clip, st.Opacity < 1, maxLayers: _limits.MaxLayerDepth);
+    }
+
+    private static Length ParseLength(string? v) => v is not null && Length.TryParse(v, out Length l) ? l : Length.Zero;
+
+    private double Resolve(Length l, Axis axis, in SvgStyle st, Viewport vp) => l.Unit switch
+    {
+        LengthUnit.Px => l.Value,
+        LengthUnit.Em => l.Value * st.FontSize,
+        LengthUnit.Ex => l.Value * st.FontSize / 2,
+        LengthUnit.Rem => l.Value * _rootFontSize,
+        _ => l.Value / 100 * (axis == Axis.X ? vp.Width : axis == Axis.Y ? vp.Height : Math.Sqrt(((vp.Width * vp.Width) + (vp.Height * vp.Height)) / 2)),
+    };
+
+    private double Num(SvgElement e, string name, Axis axis, in SvgStyle st, Viewport vp) => Resolve(ParseLength(e.Attr(name)), axis, st, vp);
+
+    // ---- shapes ----
+
+    private void EmitShape(Frame f, SvgElement e)
+    {
+        if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
+        {
+            return;
+        }
+
+        Path? geometry = Geometry(e, st, f.Vp, out Path? dotted);
+        if (geometry is null || geometry.IsEmpty)
+        {
+            return;
+        }
+
+        _hasContent = true;
+        bool isLine = e.Name is "line";
+
+        bool fill = st.Visible && ResolvePaint(st.Fill);
+        Rgba32 fillColor = fill ? ResolveColor(st.Fill, st) : default;
+        bool stroke = false;
+        float width = 0;
+        Rgba32 strokeColor = default;
+        if (st.Visible && ResolvePaint(st.Stroke))
+        {
+            width = (float)Resolve(st.StrokeWidth, Axis.Other, st, f.Vp);
+            stroke = width > 0 && float.IsFinite(width);
+            strokeColor = ResolveColor(st.Stroke, st);
+        }
+
+        if (isLine)
+        {
+            fill = false;
+        }
+
+        if (!fill && !stroke)
+        {
+            return;
+        }
+
+        float[]? dash = stroke ? ResolveDash(st, f.Vp) : null;
+        float dashOffset = dash is null ? 0 : (float)Resolve(st.DashOffset, Axis.Other, st, f.Vp);
+        float miter = (float)Math.Max(1, st.MiterLimit);
+        StrokeJoin join = st.LineJoin switch { 1 => StrokeJoin.Round, 2 => StrokeJoin.Bevel, _ => StrokeJoin.Miter };
+        StrokeCap cap = st.LineCap switch { 1 => StrokeCap.Round, 2 => StrokeCap.Square, _ => StrokeCap.Butt };
+
+        bool layered = st.Opacity < 1 && fill && stroke;
+        float groupOpacity = layered ? 1f : (float)st.Opacity;
+        var node = new RPath
+        {
+            Geometry = geometry,
+            StrokeGeometry = stroke && cap != StrokeCap.Butt ? dotted : null,
+            Ctm = ctm,
+            HasFill = fill,
+            FillColor = fillColor,
+            FillOpacity = (float)st.FillOpacity * groupOpacity,
+            EvenOdd = st.FillEvenOdd,
+            HasStroke = stroke,
+            StrokeColor = strokeColor,
+            StrokeOpacity = (float)st.StrokeOpacity * groupOpacity,
+            StrokeWidth = width,
+            Cap = cap,
+            Join = join,
+            MiterLimit = miter,
+            Dash = dash,
+            DashOffset = dashOffset,
+            Antialias = st.Antialias,
+            Clip = f.Clip,
+        };
+
+        System.Drawing.RectangleF b = geometry.Bounds;
+        (double bx0, double by0, double bx1, double by1) = ctm.TransformRect(b.Left, b.Top, b.Right, b.Bottom);
+        double pad = AntialiasPad;
+        if (stroke)
+        {
+            double reach = width / 2 * (join == StrokeJoin.Miter ? Math.Max(miter, 1.5) : 1) * (cap == StrokeCap.Square ? 1.5 : 1);
+            pad += reach * ctm.MaxScale;
+        }
+
+        node.X0 = bx0 - pad;
+        node.Y0 = by0 - pad;
+        node.X1 = bx1 + pad;
+        node.Y1 = by1 + pad;
+        if (f.Clip is not null)
+        {
+            System.Drawing.RectangleF cb = f.Clip.Bounds;
+            node.X0 = Math.Max(node.X0, cb.Left - 1);
+            node.Y0 = Math.Max(node.Y0, cb.Top - 1);
+            node.X1 = Math.Min(node.X1, cb.Right + 1);
+            node.Y1 = Math.Min(node.Y1, cb.Bottom + 1);
+            if (node.X0 > node.X1 || node.Y0 > node.Y1)
+            {
+                return;
+            }
+        }
+
+        if (layered)
+        {
+            var layer = new RLayer { Children = [node], Opacity = (float)st.Opacity, X0 = node.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1 };
+            f.Out.Add(layer);
+        }
+        else
+        {
+            f.Out.Add(node);
+        }
+    }
+
+    // The paint is something this renderer can draw as a flat color (paint servers arrive with their own unit; a reference to one falls back).
+    private static bool ResolvePaint(Paint p) => p.Kind switch
+    {
+        PaintKind.Color or PaintKind.CurrentColor => true,
+        PaintKind.Server => p.Fallback is PaintKind.Color or PaintKind.CurrentColor,
+        _ => false,
+    };
+
+    private static Rgba32 ResolveColor(Paint p, in SvgStyle st)
+    {
+        PaintKind kind = p.Kind == PaintKind.Server ? p.Fallback : p.Kind;
+        return kind switch
+        {
+            PaintKind.Color => p.Kind == PaintKind.Server ? p.FallbackColor : p.Color,
+            PaintKind.CurrentColor => st.Color,
+            _ => default,
+        };
+    }
+
+    private float[]? ResolveDash(in SvgStyle st, Viewport vp)
+    {
+        Length[]? src = st.DashArray;
+        if (src is null || src.Length == 0 || src.Length > Pen.MaxDashEntries / 2)
+        {
+            return null;
+        }
+
+        var list = new float[src.Length % 2 == 0 ? src.Length : src.Length * 2];
+        double sum = 0;
+        for (int i = 0; i < src.Length; i++)
+        {
+            double v = Resolve(src[i], Axis.Other, st, vp);
+            if (!(v >= 0) || !double.IsFinite(v))
+            {
+                return null;
+            }
+
+            list[i] = (float)v;
+            sum += v;
+        }
+
+        if (!(sum > 0))
+        {
+            return null;
+        }
+
+        if (src.Length % 2 == 1)
+        {
+            Array.Copy(list, 0, list, src.Length, src.Length);
+        }
+
+        return list;
+    }
+
+    private Path? Geometry(SvgElement e, in SvgStyle st, Viewport vp, out Path? dotted)
+    {
+        dotted = null;
+        switch (e.Name)
+        {
+            case "path":
+                if (_pathCache.TryGetValue(e, out (Path? Path, Path? Dotted) cached))
+                {
+                    dotted = cached.Dotted;
+                    return cached.Path;
+                }
+
+                string? d = e.Attr("d");
+                Path? parsed = null;
+                if (d is not null)
+                {
+                    PathData.Parse(d, out Path p, out dotted);
+                    parsed = p;
+                }
+
+                _pathCache[e] = (parsed, dotted);
+                return parsed;
+            case "rect":
+                return Rect(e, st, vp);
+            case "circle":
+            {
+                double r = Num(e, "r", Axis.Other, st, vp);
+                return r > 0 ? Path.Circle((float)Num(e, "cx", Axis.X, st, vp), (float)Num(e, "cy", Axis.Y, st, vp), (float)r) : null;
+            }
+
+            case "ellipse":
+            {
+                (double rx, double ry) = Radii(e, st, vp, "rx", "ry", false);
+                return rx > 0 && ry > 0 ? Path.Ellipse((float)Num(e, "cx", Axis.X, st, vp), (float)Num(e, "cy", Axis.Y, st, vp), (float)rx, (float)ry) : null;
+            }
+
+            case "line":
+            {
+                var pb = new PathBuilder();
+                pb.MoveTo((float)Num(e, "x1", Axis.X, st, vp), (float)Num(e, "y1", Axis.Y, st, vp));
+                float lx2 = (float)Num(e, "x2", Axis.X, st, vp);
+                float ly2 = (float)Num(e, "y2", Axis.Y, st, vp);
+                pb.LineTo(lx2, ly2);
+                Path line = pb.Build();
+                if (line.Bounds.Width == 0 && line.Bounds.Height == 0)
+                {
+                    dotted = new PathBuilder().MoveTo(lx2, ly2).LineTo(lx2, ly2).Close().Build();
+                }
+
+                return line;
+            }
+
+            case "polyline" or "polygon":
+            {
+                if (e.Attr("points") is not { } pts)
+                {
+                    return null;
+                }
+
+                List<double> n = SvgValues.NumberList(pts, out _);
+                int count = n.Count / 2;
+                if (count < 2)
+                {
+                    return null;
+                }
+
+                var pb = new PathBuilder();
+                pb.MoveTo((float)n[0], (float)n[1]);
+                for (int i = 1; i < count; i++)
+                {
+                    pb.LineTo((float)n[2 * i], (float)n[(2 * i) + 1]);
+                }
+
+                if (e.Name == "polygon")
+                {
+                    pb.Close();
+                }
+
+                return pb.Build();
+            }
+
+            default:
+                return null;
+        }
+    }
+
+    // rx/ry with the SVG 2 "auto" rule: a missing or invalid radius takes the other's value.
+    private (double Rx, double Ry) Radii(SvgElement e, in SvgStyle st, Viewport vp, string nx, string ny, bool zeroIsAuto)
+    {
+        double? rx = RadiusOrNull(e, nx, Axis.X, st, vp);
+        double? ry = RadiusOrNull(e, ny, Axis.Y, st, vp);
+        _ = zeroIsAuto;
+        if (rx is null && ry is null)
+        {
+            return (0, 0);
+        }
+
+        return (rx ?? ry!.Value, ry ?? rx!.Value);
+    }
+
+    private double? RadiusOrNull(SvgElement e, string name, Axis axis, in SvgStyle st, Viewport vp)
+    {
+        string? v = e.Attr(name);
+        if (v is null || !Length.TryParse(v, out Length l) || v.Trim() == "auto")
+        {
+            return null;
+        }
+
+        double r = Resolve(l, axis, st, vp);
+        return r >= 0 ? r : null;
+    }
+
+    private Path? Rect(SvgElement e, in SvgStyle st, Viewport vp)
+    {
+        double x = Num(e, "x", Axis.X, st, vp);
+        double y = Num(e, "y", Axis.Y, st, vp);
+        double w = Num(e, "width", Axis.X, st, vp);
+        double h = Num(e, "height", Axis.Y, st, vp);
+        if (!(w > 0) || !(h > 0))
+        {
+            return null;
+        }
+
+        double? rxo = RadiusOrNull(e, "rx", Axis.X, st, vp);
+        double? ryo = RadiusOrNull(e, "ry", Axis.Y, st, vp);
+        double rx = rxo ?? ryo ?? 0;
+        double ry = ryo ?? rxo ?? 0;
+        rx = Math.Min(rx, w / 2);
+        ry = Math.Min(ry, h / 2);
+        if (!(rx > 0) || !(ry > 0))
+        {
+            return Path.Rectangle((float)x, (float)y, (float)w, (float)h);
+        }
+
+        var b = new PathBuilder();
+        b.MoveTo((float)(x + rx), (float)y);
+        b.LineTo((float)(x + w - rx), (float)y);
+        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)(x + w), (float)(y + ry));
+        b.LineTo((float)(x + w), (float)(y + h - ry));
+        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)(x + w - rx), (float)(y + h));
+        b.LineTo((float)(x + rx), (float)(y + h));
+        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)x, (float)(y + h - ry));
+        b.LineTo((float)x, (float)(y + ry));
+        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)(x + rx), (float)y);
+        b.Close();
+        return b.Build();
+    }
+}

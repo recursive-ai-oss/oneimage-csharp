@@ -120,6 +120,12 @@ public sealed partial class ResvgConformance
             Image sized = svg.Resize(w, h, Fit.Stretch);
             Rgba32[] actual = sized.ToArray<Rgba32>();
             double bad = DifferingFraction(actual, expected);
+            if (bad > MaxDifferingFraction && Environment.GetEnvironmentVariable("ONEIMAGE_SVG_DUMP") is { Length: > 0 } dump)
+            {
+                Directory.CreateDirectory(dump);
+                sized.Save(Path.Combine(dump, name.Replace('/', '_') + ".png"));
+            }
+
             return bad <= MaxDifferingFraction
                 ? new Result(category, name, "pass", string.Empty)
                 : new Result(category, name, "fail", $"{bad:P2} of pixels differ");

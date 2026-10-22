@@ -50,12 +50,30 @@ public enum DecoderCapabilities
     /// instead of decoding the whole frame once. Implies <see cref="Region"/>.
     /// </summary>
     RandomAccess = 4 | Region,
+
+    /// <summary>
+    /// The decoder can produce the frame at any pixel size (vector formats), not just at the natural size or 1/2, 1/4, 1/8 of it. The core then
+    /// passes <see cref="DecodeRequest.TargetWidth"/> and <see cref="DecodeRequest.TargetHeight"/> when a resize sits directly on the decode, so the
+    /// image is drawn at its final size instead of being scaled as a raster. Meant to be combined with <see cref="RandomAccess"/>.
+    /// </summary>
+    RenderAtSize = 8,
 }
 
 /// <summary>What the core asks a decoder to produce for one frame.</summary>
 /// <param name="Region">The wanted rectangle in output coordinates (after scaling). Honored only with <see cref="DecoderCapabilities.Region"/>; the core passes the full frame otherwise.</param>
 /// <param name="ScaleDenominator">1, 2, 4 or 8. Anything but 1 is only passed with <see cref="DecoderCapabilities.Scale"/>.</param>
-public readonly record struct DecodeRequest(ImageRect Region, int ScaleDenominator = 1);
+/// <param name="TargetWidth">With <see cref="DecoderCapabilities.RenderAtSize"/>: the width in pixels of the whole frame to render, or 0 for the natural width. <see cref="Region"/> is then in pixels of that frame.</param>
+/// <param name="TargetHeight">With <see cref="DecoderCapabilities.RenderAtSize"/>: the height in pixels of the whole frame to render, or 0 for the natural height.</param>
+public readonly record struct DecodeRequest(ImageRect Region, int ScaleDenominator = 1, int TargetWidth = 0, int TargetHeight = 0)
+{
+    /// <summary>Creates a request without a target size (the natural size, scaled by <paramref name="scaleDenominator"/>).</summary>
+    /// <param name="region">The wanted rectangle in output coordinates.</param>
+    /// <param name="scaleDenominator">1, 2, 4 or 8.</param>
+    public DecodeRequest(ImageRect region, int scaleDenominator)
+        : this(region, scaleDenominator, 0, 0)
+    {
+    }
+}
 
 /// <summary>Receives decoded rows. The core builds one over a line buffer that feeds 128x128 tiles.</summary>
 public interface IRowSink

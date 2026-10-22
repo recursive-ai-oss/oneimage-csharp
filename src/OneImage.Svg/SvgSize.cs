@@ -21,25 +21,46 @@ internal static class SvgSize
             throw new ImageFormatException("The root element is not an SVG element.");
         }
 
-        double? w = Dimension(root.GetAttribute(null, "width"));
-        double? h = Dimension(root.GetAttribute(null, "height"));
-        (double Width, double Height)? vb = ViewBox(root.GetAttribute(null, "viewBox"));
+        (double? w, double? h) = Partial(root.GetAttribute(null, "width"), root.GetAttribute(null, "height"), root.GetAttribute(null, "viewBox"));
         if (w is null && h is null)
         {
-            return vb ?? throw new ImageFormatException("The SVG has neither a usable width and height nor a viewBox.");
+            throw new ImageFormatException("The SVG has neither a usable width and height nor a viewBox.");
         }
 
-        if (w is not null && h is not null)
-        {
-            return (w.Value, h.Value);
-        }
-
-        if (vb is null)
+        if (w is null || h is null)
         {
             throw new ImageFormatException("The SVG gives only one of width and height and has no viewBox.");
         }
 
-        return w is not null ? (w.Value, w.Value * vb.Value.Height / vb.Value.Width) : (h!.Value * vb.Value.Width / vb.Value.Height, h.Value);
+        return (w.Value, h.Value);
+    }
+
+    /// <summary>
+    /// The size the root attributes give, with a missing side derived through the <c>viewBox</c> aspect ratio when there is one.
+    /// A side that nothing determines is <see langword="null"/> (the caller then measures the content).
+    /// </summary>
+    /// <exception cref="ImageFormatException">A size is malformed, zero or negative.</exception>
+    public static (double? Width, double? Height) Partial(string? width, string? height, string? viewBox)
+    {
+        double? w = Dimension(width);
+        double? h = Dimension(height);
+        (double Width, double Height)? vb = ViewBox(viewBox);
+        if (w is null && h is null)
+        {
+            return vb is { } v ? (v.Width, v.Height) : (null, null);
+        }
+
+        if (w is not null && h is not null)
+        {
+            return (w, h);
+        }
+
+        if (vb is null)
+        {
+            return (w, h);
+        }
+
+        return w is not null ? (w, w.Value * vb.Value.Height / vb.Value.Width) : (h!.Value * vb.Value.Width / vb.Value.Height, h);
     }
 
     /// <summary>Converts a size to whole pixels, rounding up and never below 1.</summary>
@@ -76,7 +97,13 @@ internal static class SvgSize
             return null;
         }
 
-        return v > 0 && double.IsFinite(v) ? v : throw new ImageFormatException("The SVG size must be positive.");
+        if (!double.IsFinite(v))
+        {
+            throw new ImageFormatException("The SVG size is not a finite number.");
+        }
+
+        // A zero or negative size cannot be drawn; like a missing one it leaves the size to the view box or the content.
+        return v > 0 ? v : null;
     }
 
     private static (double, double)? ViewBox(string? value)
@@ -140,8 +167,40 @@ internal static class SvgSize
         return true;
     }
 
+    /// <summary>Parses a length; absolute units become pixels, <c>em</c>, <c>ex</c> and <c>%</c> keep their unit.</summary>
+    internal static bool TryParseLengthUnits(ReadOnlySpan<char> text, out double value, out Dom.LengthUnit unit)
+    {
+        value = 0;
+        unit = Dom.LengthUnit.Px;
+        ReadOnlySpan<char> s = text.Trim(" \t\n\r");
+        int len = NumberLength(s);
+        if (len == 0 || !double.TryParse(s[..len], NumberStyles.Float, CultureInfo.InvariantCulture, out double v))
+        {
+            return false;
+        }
+
+        double scale = 1;
+        switch (s[len..])
+        {
+            case "" or "px": break;
+            case "pt": scale = 4.0 / 3.0; break;
+            case "pc": scale = 16; break;
+            case "mm": scale = 96 / 25.4; break;
+            case "cm": scale = 96 / 2.54; break;
+            case "in": scale = 96; break;
+            case "em": unit = Dom.LengthUnit.Em; break;
+            case "rem": unit = Dom.LengthUnit.Rem; break;
+            case "ex": unit = Dom.LengthUnit.Ex; break;
+            case "%": unit = Dom.LengthUnit.Percent; break;
+            default: return false;
+        }
+
+        value = v * scale;
+        return true;
+    }
+
     // Length of the leading SVG number: [+-] digits [. digits] [e [+-] digits], or [+-] . digits ...
-    private static int NumberLength(ReadOnlySpan<char> s)
+    internal static int NumberLength(ReadOnlySpan<char> s)
     {
         int i = 0;
         if (i < s.Length && s[i] is '+' or '-')

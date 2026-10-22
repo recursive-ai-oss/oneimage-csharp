@@ -1,0 +1,411 @@
+using System.Globalization;
+
+namespace OneImage.Svg.Dom;
+
+internal enum PaintKind
+{
+    None,
+    Color,
+    CurrentColor,
+
+    /// <summary>A reference to a paint server (<c>url(#id)</c>), with its fallback.</summary>
+    Server,
+
+    ContextFill,
+    ContextStroke,
+}
+
+/// <summary>A <c>fill</c> or <c>stroke</c> value.</summary>
+/// <param name="Kind">What kind of paint.</param>
+/// <param name="Color">The color for <see cref="PaintKind.Color"/> (straight alpha).</param>
+/// <param name="ServerId">The referenced id for <see cref="PaintKind.Server"/>.</param>
+/// <param name="Fallback">What to use when the server cannot be used: <see cref="PaintKind.None"/>, <see cref="PaintKind.Color"/> or <see cref="PaintKind.CurrentColor"/>.</param>
+/// <param name="FallbackColor">The fallback color for <see cref="PaintKind.Color"/>.</param>
+internal readonly record struct Paint(PaintKind Kind, Rgba32 Color = default, string? ServerId = null, PaintKind Fallback = PaintKind.None, Rgba32 FallbackColor = default)
+{
+    public static Paint None { get; } = new(PaintKind.None);
+
+    public static Paint Black { get; } = new(PaintKind.Color, new Rgba32(0, 0, 0, 255));
+}
+
+/// <summary>
+/// The computed values of the properties the renderer uses, for one element. Lengths stay unresolved (they need the viewport at the
+/// place where they are used); everything else is final.
+/// </summary>
+internal struct SvgStyle
+{
+    public const double DefaultFontSize = 16;
+
+    // Inherited.
+    public Paint Fill;
+    public Paint Stroke;
+    public double FillOpacity;
+    public double StrokeOpacity;
+    public bool FillEvenOdd;
+    public bool ClipEvenOdd;
+    public Length StrokeWidth;
+    public int LineCap;
+    public int LineJoin;
+    public double MiterLimit;
+    public Length[]? DashArray;
+    public Length DashOffset;
+    public Rgba32 Color;
+    public double FontSize;
+    public bool Visible;
+    public bool Antialias;
+
+    // Not inherited.
+    public double Opacity;
+    public bool Displayed;
+
+    public static SvgStyle Initial => new()
+    {
+        Fill = Paint.Black,
+        Stroke = Paint.None,
+        FillOpacity = 1,
+        StrokeOpacity = 1,
+        StrokeWidth = new Length(1, LengthUnit.Px),
+        LineCap = 0,
+        LineJoin = 0,
+        MiterLimit = 4,
+        DashOffset = Length.Zero,
+        Color = new Rgba32(0, 0, 0, 255),
+        FontSize = DefaultFontSize,
+        Visible = true,
+        Antialias = true,
+        Opacity = 1,
+        Displayed = true,
+    };
+
+    /// <summary>
+    /// Computes an element's style from its declared properties and its parent's computed style.
+    /// An invalid declaration is ignored, as if it had not been written.
+    /// </summary>
+    /// <param name="e">The element.</param>
+    /// <param name="parent">The parent's computed style (for <c>use</c>d content, the <c>use</c> element's).</param>
+    /// <param name="rootFontSize">The root element's font size, for <c>rem</c>.</param>
+    public static SvgStyle Compute(SvgElement e, in SvgStyle parent, double rootFontSize)
+    {
+        SvgStyle s = parent;
+        s.Opacity = 1;
+        s.Displayed = true;
+        if (e.Props.Count == 0)
+        {
+            return s;
+        }
+
+        // font-size and color first: other values (em lengths, currentColor) are evaluated against the element's own.
+        if (e.Props.TryGetValue("font-size", out string? fs))
+        {
+            s.FontSize = ParseFontSize(fs, parent.FontSize, rootFontSize) ?? parent.FontSize;
+        }
+
+        if (e.Props.TryGetValue("color", out string? col))
+        {
+            if (col == "inherit")
+            {
+                s.Color = parent.Color;
+            }
+            else if (CssColor.TryParse(col, out Rgba32 c))
+            {
+                s.Color = c;
+            }
+        }
+
+        foreach ((string name, string value) in e.Props)
+        {
+            if (value == "inherit")
+            {
+                InheritOne(ref s, name, parent, e);
+                continue;
+            }
+
+            switch (name)
+            {
+                case "fill":
+                    if (TryPaint(value, out Paint pf))
+                    {
+                        s.Fill = pf;
+                    }
+
+                    break;
+                case "stroke":
+                    if (TryPaint(value, out Paint ps))
+                    {
+                        s.Stroke = ps;
+                    }
+
+                    break;
+                case "fill-opacity":
+                    if (TryOpacity(value, out double fo))
+                    {
+                        s.FillOpacity = fo;
+                    }
+
+                    break;
+                case "stroke-opacity":
+                    if (TryOpacity(value, out double so))
+                    {
+                        s.StrokeOpacity = so;
+                    }
+
+                    break;
+                case "opacity":
+                    if (TryOpacity(value, out double o))
+                    {
+                        s.Opacity = o;
+                    }
+
+                    break;
+                case "fill-rule":
+                    if (value is "evenodd" or "nonzero")
+                    {
+                        s.FillEvenOdd = value == "evenodd";
+                    }
+
+                    break;
+                case "clip-rule":
+                    if (value is "evenodd" or "nonzero")
+                    {
+                        s.ClipEvenOdd = value == "evenodd";
+                    }
+
+                    break;
+                case "stroke-width":
+                    // A negative width is an error that SVG leaves undefined; the stroke is dropped rather than drawn at the default.
+                    if (Length.TryParse(value, out Length w))
+                    {
+                        s.StrokeWidth = w;
+                    }
+
+                    break;
+                case "stroke-linecap":
+                    if (value is "butt" or "round" or "square")
+                    {
+                        s.LineCap = value == "butt" ? 0 : value == "round" ? 1 : 2;
+                    }
+
+                    break;
+                case "stroke-linejoin":
+                    // SVG 2 adds miter-clip and arcs; both fall back as the specification allows (to miter and miter).
+                    if (value is "miter" or "round" or "bevel" or "miter-clip" or "arcs")
+                    {
+                        s.LineJoin = value == "round" ? 1 : value == "bevel" ? 2 : 0;
+                    }
+
+                    break;
+                case "stroke-miterlimit":
+                    if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double ml) && double.IsFinite(ml))
+                    {
+                        s.MiterLimit = ml;
+                    }
+
+                    break;
+                case "stroke-dasharray":
+                    s.DashArray = ParseDashArray(value, s.DashArray);
+                    break;
+                case "stroke-dashoffset":
+                    if (Length.TryParse(value, out Length d))
+                    {
+                        s.DashOffset = d;
+                    }
+
+                    break;
+                case "visibility":
+                    if (value is "visible" or "hidden" or "collapse")
+                    {
+                        s.Visible = value == "visible";
+                    }
+
+                    break;
+                case "display":
+                    s.Displayed = value != "none";
+                    break;
+                case "shape-rendering":
+                    if (value is "optimizeSpeed" or "crispEdges" or "geometricPrecision" or "auto")
+                    {
+                        s.Antialias = value is "geometricPrecision" or "auto";
+                    }
+
+                    break;
+            }
+        }
+
+        return s;
+    }
+
+    private static void InheritOne(ref SvgStyle s, string name, in SvgStyle p, SvgElement e)
+    {
+        switch (name)
+        {
+            case "fill": s.Fill = p.Fill; break;
+            case "stroke": s.Stroke = p.Stroke; break;
+            case "fill-opacity": s.FillOpacity = p.FillOpacity; break;
+            case "stroke-opacity": s.StrokeOpacity = p.StrokeOpacity; break;
+            case "opacity": s.Opacity = p.Opacity; break;
+            case "fill-rule": s.FillEvenOdd = p.FillEvenOdd; break;
+            case "clip-rule": s.ClipEvenOdd = p.ClipEvenOdd; break;
+            case "stroke-width": s.StrokeWidth = p.StrokeWidth; break;
+            case "stroke-linecap": s.LineCap = p.LineCap; break;
+            case "stroke-linejoin": s.LineJoin = p.LineJoin; break;
+            case "stroke-miterlimit": s.MiterLimit = p.MiterLimit; break;
+            case "stroke-dasharray": s.DashArray = p.DashArray; break;
+            case "stroke-dashoffset": s.DashOffset = p.DashOffset; break;
+            case "visibility": s.Visible = p.Visible; break;
+            case "shape-rendering": s.Antialias = p.Antialias; break;
+            case "display": s.Displayed = true; break;
+            case "font-size": s.FontSize = p.FontSize; break;
+        }
+
+        _ = e;
+    }
+
+    private static bool TryOpacity(string v, out double result)
+    {
+        result = 1;
+        ReadOnlySpan<char> t = v.AsSpan().Trim();
+        bool percent = t.EndsWith("%");
+        if (percent)
+        {
+            t = t[..^1];
+        }
+
+        if (!double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) || !double.IsFinite(d))
+        {
+            return false;
+        }
+
+        result = Math.Clamp(percent ? d / 100 : d, 0, 1);
+        return true;
+    }
+
+    /// <summary>Parses a <c>fill</c>/<c>stroke</c> value: <c>none</c>, a color, <c>currentColor</c>, <c>context-*</c> or <c>url(#id) [fallback]</c>.</summary>
+    private static bool TryPaint(string value, out Paint paint)
+    {
+        paint = default;
+        ReadOnlySpan<char> v = value.AsSpan().Trim();
+        if (v.StartsWith("url(", StringComparison.OrdinalIgnoreCase))
+        {
+            int close = v.IndexOf(')');
+            if (close < 0)
+            {
+                return false;
+            }
+
+            ReadOnlySpan<char> iri = v[4..close].Trim().Trim('\'').Trim('"').Trim();
+            string? id = iri.Length > 1 && iri[0] == '#' ? iri[1..].ToString() : null;
+            ReadOnlySpan<char> rest = v[(close + 1)..].Trim();
+            PaintKind fb = PaintKind.None;
+            Rgba32 fc = default;
+            if (!rest.IsEmpty)
+            {
+                if (rest.Equals("none", StringComparison.Ordinal))
+                {
+                    fb = PaintKind.None;
+                }
+                else if (rest.Equals("currentColor", StringComparison.OrdinalIgnoreCase))
+                {
+                    fb = PaintKind.CurrentColor;
+                }
+                else if (CssColor.TryParse(rest, out fc))
+                {
+                    fb = PaintKind.Color;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            // A reference to something that is not in this document (a file or a URL) is never fetched; it is a dangling reference.
+            paint = id is null ? (fb == PaintKind.None ? Paint.None : new Paint(fb, fc)) : new Paint(PaintKind.Server, default, id, fb, fc);
+            return true;
+        }
+
+        if (v.Equals("none", StringComparison.Ordinal))
+        {
+            paint = Paint.None;
+            return true;
+        }
+
+        if (v.Equals("currentColor", StringComparison.OrdinalIgnoreCase))
+        {
+            paint = new Paint(PaintKind.CurrentColor);
+            return true;
+        }
+
+        if (v.Equals("context-fill", StringComparison.Ordinal))
+        {
+            paint = new Paint(PaintKind.ContextFill);
+            return true;
+        }
+
+        if (v.Equals("context-stroke", StringComparison.Ordinal))
+        {
+            paint = new Paint(PaintKind.ContextStroke);
+            return true;
+        }
+
+        if (CssColor.TryParse(v, out Rgba32 c))
+        {
+            paint = new Paint(PaintKind.Color, c);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Length[]? ParseDashArray(string value, Length[]? current)
+    {
+        string v = value.Trim();
+        if (v == "none")
+        {
+            return null;
+        }
+
+        var list = new List<Length>();
+        foreach (string part in v.Split([' ', ',', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!Length.TryParse(part, out Length l) || l.Value < 0)
+            {
+                return current;
+            }
+
+            list.Add(l);
+        }
+
+        return list.Count == 0 ? current : [.. list];
+    }
+
+    private static double? ParseFontSize(string value, double parentSize, double rootSize)
+    {
+        string v = value.Trim();
+        switch (v)
+        {
+            case "xx-small": return 9;
+            case "x-small": return 10;
+            case "small": return 13;
+            case "medium": return 16;
+            case "large": return 18;
+            case "x-large": return 24;
+            case "xx-large": return 32;
+            case "larger": return parentSize * 1.2;
+            case "smaller": return parentSize / 1.2;
+        }
+
+        if (!Length.TryParse(v, out Length l) || l.Value < 0)
+        {
+            return null;
+        }
+
+        return l.Unit switch
+        {
+            LengthUnit.Px => l.Value,
+            LengthUnit.Em => l.Value * parentSize,
+            LengthUnit.Ex => l.Value * parentSize / 2,
+            LengthUnit.Percent => l.Value * parentSize / 100,
+            LengthUnit.Rem => l.Value * rootSize,
+            _ => null,
+        };
+    }
+}

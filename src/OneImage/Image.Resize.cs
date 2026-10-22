@@ -160,6 +160,12 @@ public sealed partial class Image
             return cur;
         }
 
+        // A vector decoder draws the frame at the final size: nothing is scaled as a raster.
+        if (cur is DecodeSourceNode vector && vector.TryPushRenderSize(width, height) is { } rendered)
+        {
+            return rendered;
+        }
+
         DecodeSourceNode? decoder = cur as DecodeSourceNode ?? (cur as OrientNode)?.Inputs[0] as DecodeSourceNode;
         if (decoder != null && filter != ResamplingFilter.Nearest)
         {
@@ -192,7 +198,7 @@ public sealed partial class Image
             else
             {
                 (int x, int y) = ResizePlan.Place(a.Anchor, cur.Width, cur.Height, plan.CropWidth, plan.CropHeight);
-                cur = new CropNode(cur, new ImageRect(x, y, plan.CropWidth, plan.CropHeight));
+                cur = CropNodeFor(cur, new ImageRect(x, y, plan.CropWidth, plan.CropHeight));
             }
         }
 

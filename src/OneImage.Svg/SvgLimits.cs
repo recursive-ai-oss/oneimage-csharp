@@ -33,4 +33,16 @@ public sealed class SvgLimits
 
     /// <summary>Gets how many bytes of a file are examined to find the root element's start tag when only the size is wanted. Default 1 MiB.</summary>
     public int MaxRootTagScanBytes { get; init; } = 1024 * 1024;
+
+    /// <summary>
+    /// Gets how many elements one render tree may instantiate in total, counting every copy made by <c>use</c>. A document whose
+    /// references multiply past this (nested <c>use</c> fan-out) fails with <see cref="ImageLimitException"/> before the copies are drawn. Default 500,000.
+    /// </summary>
+    public int MaxInstances { get; init; } = 500_000;
+
+    /// <summary>Gets how deep <c>use</c> references may chain (a <c>use</c> of a group containing a <c>use</c> ...). Default 32.</summary>
+    public int MaxReferenceDepth { get; init; } = 32;
+
+    /// <summary>Gets how deep isolated layers (groups with <c>opacity</c>) may nest. Default 32.</summary>
+    public int MaxLayerDepth { get; init; } = 32;
 }
