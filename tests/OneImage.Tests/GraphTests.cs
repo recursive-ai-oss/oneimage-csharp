@@ -84,12 +84,22 @@ public class GraphTests
         var cache = new TileCache(1L << 30);
         var src = new PatternNode(500, 500);
         byte[] buf = new byte[500 * 500 * 4];
-        Render.ReadRegion(src, new ImageRect(0, 0, 500, 500), buf, 0, PixelFormat.Rgba8, Ctx(cache: cache));
-        Render.ReadRegion(src, new ImageRect(0, 0, 500, 500), buf, 0, PixelFormat.Rgba8, Ctx(cache: cache));
+        Render.ReadRegion(src, new ImageRect(0, 0, 500, 499), buf, 0, PixelFormat.Rgba8, Ctx(cache: cache));
+        Render.ReadRegion(src, new ImageRect(0, 0, 500, 499), buf, 0, PixelFormat.Rgba8, Ctx(cache: cache));
         Assert.Equal(16, src.Computed);
         Assert.Equal(16, cache.Count);
         cache.Clear();
         Assert.Equal(outstanding, Tile.RentedCount - Tile.ReturnedCount);
+    }
+
+    [Fact]
+    public void WholeImageRenderDoesNotFillTheCache()
+    {
+        var cache = new TileCache(1L << 30);
+        var src = new PatternNode(500, 500);
+        Render.ReadRegion(src, new ImageRect(0, 0, 500, 500), new byte[500 * 500 * 4], 0, PixelFormat.Rgba8, Ctx(cache: cache));
+        Assert.Equal(16, src.Computed);
+        Assert.Equal(0, cache.Count);
     }
 
     [Fact]

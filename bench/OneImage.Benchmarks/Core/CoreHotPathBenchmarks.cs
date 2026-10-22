@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using BenchmarkDotNet.Attributes;
 using OneImage.Kernels;
 using Sources = OneImage.Benchmarks.Resample.ResizeSources;
@@ -15,6 +18,7 @@ public class CoreHotPathBenchmarks : IDisposable
     private byte[] _rowSrc = [];
     private byte[] _rowDst = [];
     private Image _asRgb = null!;
+    private Image _small = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -22,6 +26,7 @@ public class CoreHotPathBenchmarks : IDisposable
         _src = new Sources(6000, 4000);
         _rgba = new OneImage.Rgba32[6000 * 4000];
         _rgb = new OneImage.Rgb24[6000 * 4000];
+        _small = Image.FromPixels<OneImage.Rgba32>(new OneImage.Rgba32[2000 * 1500], 2000, 1500);
         _asRgb = _src.Ours.ConvertTo(PixelFormat.Rgb8);
         _rowSrc = new byte[6000 * 4];
         new Random(1).NextBytes(_rowSrc);
@@ -49,6 +54,14 @@ public class CoreHotPathBenchmarks : IDisposable
         return _rgba.Length;
     }
 
+    [Benchmark(Description = "encoder-style ReadRows, 2000x1500 Rgba32 in 16-row strips")]
+    public int ReadRowsStrips()
+    {
+        var enc = new CountingEncoder();
+        _small.Save(Stream.Null, new CountingFormat(enc));
+        return enc.Rows;
+    }
+
     [Benchmark(Description = "Rgba32 -> Rgb24 24 MP through the graph")]
     public int ConvertGraph()
     {
@@ -66,4 +79,42 @@ public class CoreHotPathBenchmarks : IDisposable
 
         return _rowDst[0];
     }
+}
+
+internal sealed class CountingEncoder : IImageEncoder
+{
+    public int Rows { get; private set; }
+
+    public IReadOnlyList<PixelFormat> SupportedFormats { get; } = [PixelFormat.Rgba8];
+
+    public bool SupportsMultipleFrames => false;
+
+    public void Encode(ImageEncodeRequest request, Stream destination, CancellationToken cancellationToken)
+    {
+        ImageFrameReader f = request.Frames[0];
+        byte[] strip = new byte[f.Width * 4 * 16];
+        for (int y = 0; y < f.Height; y += 16)
+        {
+            int n = Math.Min(16, f.Height - y);
+            f.ReadRows(y, n, strip);
+            Rows += n;
+        }
+    }
+}
+
+internal sealed class CountingFormat(IImageEncoder encoder) : IImageFormat
+{
+    public string Name => "counting";
+
+    public IReadOnlyList<string> Extensions { get; } = [".cnt"];
+
+    public string MimeType => "application/octet-stream";
+
+    public int HeaderLength => 1;
+
+    public IImageDecoder? Decoder => null;
+
+    public IImageEncoder? Encoder => encoder;
+
+    public bool Matches(ReadOnlySpan<byte> header) => false;
 }

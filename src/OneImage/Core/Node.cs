@@ -72,8 +72,17 @@ internal abstract class Node
         return new ImageRect(x, y, Math.Min(Tile.Size, Width - x), Math.Min(Tile.Size, Height - y));
     }
 
+    /// <summary>Gets a value indicating whether getting a tile is just a lookup of stored pixels (no computation), so small copies are not worth parallelizing.</summary>
+    public virtual bool DirectStorage => false;
+
     /// <summary>Returns a tile with one reference for the caller, who must release it.</summary>
-    public Tile GetTile(int tx, int ty, RenderContext context)
+    public Tile GetTile(int tx, int ty, RenderContext context) => GetTile(tx, ty, context, useCache: true);
+
+    /// <summary>
+    /// Returns a tile with one reference for the caller. With <paramref name="useCache"/> false a computed tile is not stored in
+    /// the shared cache (used for tiles that are consumed exactly once, such as every tile of a whole-image render).
+    /// </summary>
+    public Tile GetTile(int tx, int ty, RenderContext context, bool useCache)
     {
         if ((uint)tx >= (uint)TilesX || (uint)ty >= (uint)TilesY)
         {
@@ -84,6 +93,13 @@ internal abstract class Node
         if (!Cacheable)
         {
             return ComputeTile(tx, ty, context);
+        }
+
+        if (!useCache)
+        {
+            // Reuse a tile that is already cached, but do not add new ones.
+            Tile? hit = context.CacheFor(this).TryGet(Id, tx, ty);
+            return hit ?? ComputeTile(tx, ty, context);
         }
 
         return context.CacheFor(this).GetOrCompute(Id, tx, ty, (Node: this, tx, ty, context), static s => s.Node.ComputeTile(s.tx, s.ty, s.context), context.CancellationToken);
@@ -129,20 +145,25 @@ internal static class Render
             throw new ArgumentException("Destination is too small for the region.", nameof(destination));
         }
 
-        var job = new CopyJob(node, region, destinationStride, destinationFormat, node.Format != destinationFormat ? KernelRegistry.Get<ConvertRowKernel>("convert") : null);
+        // A render of the whole node reads every tile once, so caching them only costs: they would be evicted unread.
+        // Streaming nodes keep their own window and do not go through this cache anyway.
+        bool wholeNode = region.X == 0 && region.Y == 0 && region.Width == node.Width && region.Height == node.Height && !node.Streaming;
+        var job = new CopyJob(node, region, destinationStride, destinationFormat, node.Format != destinationFormat ? KernelRegistry.Get<ConvertRowKernel>("convert") : null, useCache: !wholeNode);
         int tx0 = region.X >> Tile.Shift;
         int tx1 = (region.Right - 1) >> Tile.Shift;
         int ty0 = region.Y >> Tile.Shift;
         int ty1 = (region.Bottom - 1) >> Tile.Shift;
         int perRow = tx1 - tx0 + 1;
         int totalTiles = perRow * (ty1 - ty0 + 1);
-        if (context.Degree <= 1 || totalTiles == 1)
+        // Stored pixels copy at memory speed on one thread; the fork/join (and its allocations) only pays off for big copies or computed tiles.
+        bool cheapCopy = node.DirectStorage && (long)region.Width * region.Height * dbpp < (4L << 20);
+        if (context.Degree <= 1 || totalTiles == 1 || cheapCopy)
         {
             for (int ty = ty0; ty <= ty1; ty++)
             {
                 for (int tx = tx0; tx <= tx1; tx++)
                 {
-                    job.CopyTile(tx, ty, destination, node.GetTile(tx, ty, context));
+                    job.CopyTile(tx, ty, destination, node.GetTile(tx, ty, context, job.UseCache));
                 }
             }
 
@@ -167,7 +188,7 @@ internal static class Render
                     {
                         int tx = tx0 + (i % perRow);
                         int ty = first + (i / perRow);
-                        job.CopyTile(tx, ty, pinned, node.GetTile(tx, ty, nested));
+                        job.CopyTile(tx, ty, pinned, node.GetTile(tx, ty, nested, job.UseCache));
                     });
                 }
             });
@@ -181,10 +202,12 @@ internal static class Render
     }
 
     /// <summary>What copying one tile into the destination needs; shared by all workers (read-only).</summary>
-    private sealed class CopyJob(Node node, ImageRect region, int stride, PixelFormat destinationFormat, ConvertRowKernel? converter)
+    private sealed class CopyJob(Node node, ImageRect region, int stride, PixelFormat destinationFormat, ConvertRowKernel? converter, bool useCache)
     {
         private readonly int _sbpp = node.Format.BytesPerPixel;
         private readonly int _dbpp = destinationFormat.BytesPerPixel;
+
+        public bool UseCache { get; } = useCache;
 
         /// <summary>Copies (and converts) the part of <paramref name="tile"/> inside the region, then releases the tile.</summary>
         public void CopyTile(int tx, int ty, Span<byte> destination, Tile tile)

@@ -153,14 +153,15 @@ public sealed class ImageFrameReader
     /// <exception cref="ArgumentException"><paramref name="destination"/> is too small.</exception>
     public void ReadRows(int y, int count, Span<byte> destination)
     {
-        if (!_node.Streaming || count <= 0)
+        if (count <= 0 || count >= Tile.Size)
         {
             ReadRegion(new ImageRect(0, y, Width, count), destination, 0);
             return;
         }
 
-        // Streaming frames are rendered one whole tile row at a time into a band, so asking for a few rows at a time
-        // does not re-render the tiles of the same tile row again for every call.
+        // Small requests (encoders usually ask for a strip of a few rows) are served from a pooled band holding one whole tile
+        // row, rendered once per tile row instead of once per call: no per-call allocation or tile bookkeeping, and for streaming
+        // frames the source is read a tile row at a time. Requests of a tile row or more render straight into the destination.
         int rowBytes = checked(Width * Format.BytesPerPixel);
         if (y < 0 || count > Height - y)
         {

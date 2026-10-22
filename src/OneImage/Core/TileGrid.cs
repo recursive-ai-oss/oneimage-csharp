@@ -63,6 +63,8 @@ internal sealed class GridSourceNode : Node
 
     public override bool Cacheable => false;
 
+    public override bool DirectStorage => _grid.Backing == null;
+
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)
     {
         Tile? t = _grid.Tiles[(ty * _grid.TilesX) + tx];
