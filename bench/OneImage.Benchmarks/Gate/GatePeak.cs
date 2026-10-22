@@ -47,10 +47,18 @@ internal static class GatePeak
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         File.WriteAllText("/proc/self/clear_refs", "5");
         long before = Status("VmRSS:");
-        var sw = Stopwatch.StartNew();
+        var sw = new Stopwatch();
         for (int i = 0; i < count; i++)
         {
+            sw.Start();
             op();
+            sw.Stop();
+
+            // The result of one run is dead once the call returns. Without a collection here, managed results (a 24 MP array
+            // is on the large object heap) pile up until the collector decides to run, and the peak would measure that
+            // timing instead of one operation's working memory. Native and pooled libraries are unaffected. The collection
+            // is outside the timed section.
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
         }
 
         double ms = sw.Elapsed.TotalMilliseconds / count;

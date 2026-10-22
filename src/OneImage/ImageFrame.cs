@@ -61,13 +61,14 @@ public sealed partial class ImageFrame
 
         try
         {
+            RenderContext context = RenderContext.Create(maxDegree, cancellationToken);
             if (rect.X == 0 && rect.Y == 0 && rect.Width == Node.Width && rect.Height == Node.Height
-                && Node is DecodeSourceNode decode && decode.TryDecodeInto(SpanCast.AsBytes(destination), T.Format, cancellationToken))
+                && Node.TryReadDirect(SpanCast.AsBytes(destination), T.Format, context.Degree, cancellationToken))
             {
                 return;
             }
 
-            Render.ReadRegion(Node, rect, SpanCast.AsBytes(destination), 0, T.Format, RenderContext.Create(maxDegree, cancellationToken));
+            Render.ReadRegion(Node, rect, SpanCast.AsBytes(destination), 0, T.Format, context);
         }
         finally
         {

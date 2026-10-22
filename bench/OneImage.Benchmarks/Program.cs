@@ -135,6 +135,11 @@ public static class Program
             return Gate.GatePeak.Run(args);
         }
 
+        if (args.Length > 0 && args[0] == "gate-deltae")
+        {
+            return Gate.GateDeltaE.Run();
+        }
+
         if (args.Length > 0 && args[0] == "gate-report")
         {
             return Gate.GateReport.Run(args);

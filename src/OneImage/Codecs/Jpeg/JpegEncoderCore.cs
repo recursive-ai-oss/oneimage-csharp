@@ -85,8 +85,8 @@ internal sealed class JpegEncodeSession : IDisposable
     private bool _storesAll;
     private readonly bool[] _sentDc = new bool[2];
     private readonly bool[] _sentAc = new bool[2];
-    /// <summary>Baseline images with more pixels than this (64 MP) are transformed twice for optimized tables instead of holding every block.</summary>
-    internal const long MaxStoredPixels = 1L << 26;
+    /// <summary>Baseline images with more pixels than this (about 4 MP) are transformed twice for optimized tables instead of holding every block.</summary>
+    internal const long MaxStoredPixels = 1L << 22;
 
     /// <summary>Lowers the stored-pixel limit for the calling thread so tests can reach the two-pass path with small images; 0 means the default.</summary>
     [ThreadStatic]

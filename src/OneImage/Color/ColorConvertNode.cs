@@ -1,7 +1,7 @@
 namespace OneImage;
 
 /// <summary>Converts every tile through a <see cref="ColorTransform"/> (profile to profile conversion, alpha preserved).</summary>
-internal sealed class ColorConvertNode : Node
+internal sealed class ColorConvertNode : Node, IRowStage
 {
     private readonly ColorTransform _transform;
 
@@ -10,6 +10,15 @@ internal sealed class ColorConvertNode : Node
     {
         _transform = transform;
     }
+
+    PixelFormat IRowStage.OutputFormat => Format;
+
+    void IRowStage.ConvertRow(ReadOnlySpan<byte> source, Span<byte> destination, int width) =>
+        _transform.ConvertRow(source, Inputs[0].Format, destination, Format, width);
+
+    /// <summary>A one-shot whole-frame read of a decode converts rows as the decoder delivers them, so neither the decoded frame nor a streaming window is buffered.</summary>
+    public override bool TryReadDirect(Span<byte> destination, PixelFormat destinationFormat, int degree, CancellationToken cancellationToken) =>
+        Inputs[0] is DecodeSourceNode decode && decode.TryDecodeInto(destination, destinationFormat, this, degree, cancellationToken);
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)
     {

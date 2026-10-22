@@ -28,6 +28,11 @@ internal static class GateReport
         "thumb-jpeg", "thumb-webp", "png-to-webp", "gif-resize", "cmyk-jpeg-to-srgb",
     };
 
+    // Tasks where the comparison is against the libraries that apply the embedded ICC profile (Magick.NET, NetVips). ImageSharp
+    // skips the conversion, so its row is information, not the bar: ours must beat Magick.NET in time and peak memory and
+    // stay within 1.5x of NetVips in time.
+    private static readonly HashSet<string> IccTasks = new(StringComparer.Ordinal) { "cmyk-jpeg-to-srgb" };
+
     // Ratios within 5% of 1 count as a tie: that is below the noise of a shared host.
     private const double Tie = 1.05;
 
@@ -96,18 +101,41 @@ internal static class GateReport
                 continue;
             }
 
+            bool icc = IccTasks.Contains(task);
+            Row? magick = g.Where(r => r.Lib == "magick").MinBy(r => r.Ms);
+            Row? vips = g.Where(r => r.Lib == "netvips").MinBy(r => r.Ms);
+            peaks.TryGetValue((task, "magick"), out Peak? pm);
             double? rs = sharp == null ? null : ours.Ms / sharp.Ms;
             double? rf = fast == null ? null : ours.Ms / fast.Ms;
             double? ms = po != null && ps != null ? po.Delta / Math.Max(ps.Delta, 1) : null;
             double? mn = po != null && pn != null ? po.Delta / Math.Max(pn.Delta, 1) : null;
-            summary.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {label} | {ours.Ms:F1} | {Fmt(sharp?.Ms)} | {Fmt(rs, 2)}{(rs > Tie ? " ✗" : "")} | {(fast == null ? "-" : fast.Lib + " " + fast.Ms.ToString("F1", CultureInfo.InvariantCulture))} | {Fmt(rf, 2)}{(rf > 1.5 && ThumbnailOrCodec.Contains(task) ? " ✗" : "")} | {Fmt(po?.Delta)} | {Fmt(ps?.Delta)} | {Fmt(pn?.Delta)} | {Fmt(ms, 2)}{(ms > Tie ? " ✗" : "")} | {Fmt(mn, 2)}{(mn > 2 && Streaming.Contains(task) ? " ✗" : "")} |"));
+            string skip = icc ? " (skips ICC)" : "";
+            summary.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {label} | {ours.Ms:F1} | {Fmt(sharp?.Ms)}{skip} | {Fmt(rs, 2)}{(rs > Tie && !icc ? " ✗" : "")} | {(fast == null ? "-" : fast.Lib + " " + fast.Ms.ToString("F1", CultureInfo.InvariantCulture))} | {Fmt(rf, 2)}{(rf > 1.5 && ThumbnailOrCodec.Contains(task) ? " ✗" : "")} | {Fmt(po?.Delta)} | {Fmt(ps?.Delta)} | {Fmt(pn?.Delta)} | {Fmt(ms, 2)}{(ms > Tie && !icc ? " ✗" : "")} | {Fmt(mn, 2)}{(mn > 2 && Streaming.Contains(task) ? " ✗" : "")} |"));
 
-            if (rs > Tie)
+            if (icc)
+            {
+                if (magick != null && ours.Ms > magick.Ms)
+                {
+                    gaps.Add($"- **{task}**: slower than Magick.NET, {ours.Ms:F1} ms vs {magick.Ms:F1} ms.");
+                }
+
+                if (po != null && pm != null && po.Delta > pm.Delta)
+                {
+                    gaps.Add($"- **{task}**: more peak working memory than Magick.NET, {po.Delta:F0} MiB vs {pm.Delta:F0} MiB.");
+                }
+
+                if (vips != null && ours.Ms > 1.5 * vips.Ms)
+                {
+                    gaps.Add($"- **{task}**: {ours.Ms / vips.Ms:F2}× NetVips ({vips.Ms:F1} ms vs ours {ours.Ms:F1} ms), beyond 1.5×.");
+                }
+            }
+
+            if (rs > Tie && !icc)
             {
                 gaps.Add($"- **{label}**: slower than ImageSharp (beyond a 5% tie), {ours.Ms:F1} ms vs {sharp!.Ms:F1} ms ({rs:F2}×).");
             }
 
-            if (ms > Tie && memReported.Add(task + "/is"))
+            if (ms > Tie && !icc && memReported.Add(task + "/is"))
             {
                 gaps.Add($"- **{task}**: more peak working memory than ImageSharp, {po!.Delta:F0} MiB vs {ps!.Delta:F0} MiB ({ms:F2}×).");
             }
@@ -138,6 +166,25 @@ internal static class GateReport
         sb.AppendLine("## Gate summary").AppendLine();
         sb.AppendLine("Ours = our fastest row of the task. ✗ marks a miss: slower than ImageSharp, more peak working memory than ImageSharp, more than 1.5× the fastest native wrapper (thumbnail and codec tasks), more than 2× NetVips's peak working memory (streaming tasks: thumbnails, PNG→WebP, GIF resize, CMYK). Peak columns are the growth of the process's resident set during the operation, in MiB (see Method).").AppendLine();
         sb.Append(summary).AppendLine();
+        if (args.Length > 5 && File.Exists(args[5]) && File.ReadLines(args[5]).Any(l => l.StartsWith("DELTAE", StringComparison.Ordinal)))
+        {
+            sb.AppendLine("## CMYK JPEG to sRGB: colour accuracy").AppendLine();
+            sb.AppendLine("The bar for this task is Magick.NET and NetVips, which apply the embedded ICC profile, not ImageSharp, which skips the conversion (its row is information only). CIEDE2000 of each library's sRGB output against an ICC-correct reference: the CMYK samples from our decoder converted through the embedded profile with this library's exact-math (floating point, no lookup grid) conversion, relative colorimetric with black point compensation. Computed on a deterministic sample of the pixels (every 11th column of every 7th row).").AppendLine();
+            sb.AppendLine("Magick.NET (relative colorimetric) and NetVips do not apply black point compensation unless asked; this library does by default, so its default output sits about 0.9 ΔE00 from theirs. The `oneimage-nobpc` row is this library with `blackPointCompensation: false` and matches them.").AppendLine();
+            sb.AppendLine("The same output compared with the LittleCMS result (Magick.NET) as the reference is in the last two columns.").AppendLine();
+            sb.AppendLine("| Library | Mean ΔE00 | Max ΔE00 | Pixels | Mean ΔE00 vs LittleCMS | Max ΔE00 vs LittleCMS |").AppendLine("|---|--:|--:|--:|--:|--:|");
+            foreach (string line in File.ReadLines(args[5]))
+            {
+                string[] f = line.Split('\t');
+                if (f.Length == 8 && f[0] == "DELTAE")
+                {
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"| {f[2]}{(f[2] == "imagesharp" ? " (skips ICC conversion)" : "")} | {f[3]} | {f[4]} | {f[5]} | {f[6]} | {f[7]} |");
+                }
+            }
+
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Gaps").AppendLine();
         foreach (string gap in gaps)
         {

@@ -486,6 +486,63 @@ public class CmykJpegGateBenchmarks
         _jpeg = ms.ToArray();
     }
 
+    /// <summary>Gets the generated CMYK JPEG (deterministic: seeded generator, fixed Magick quality).</summary>
+    public byte[] Jpeg => _jpeg;
+
+    /// <summary>Gets the image width.</summary>
+    public static int Width => W;
+
+    /// <summary>Gets the image height.</summary>
+    public static int Height => H;
+
+    // The colour-accuracy check (gate-deltae) takes each library's sRGB bytes through these.
+    public byte[] OneImageRgb(bool blackPointCompensation = true) =>
+        System.Runtime.InteropServices.MemoryMarshal.AsBytes<OI.Rgb24>(OI.Image.Load(_jpeg).ConvertColor(OI.ColorProfile.Srgb, blackPointCompensation: blackPointCompensation).ToArray<OI.Rgb24>()).ToArray();
+
+    public byte[] ImageSharpRgb()
+    {
+        using SharpRgb img = SharpImage.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(_jpeg);
+        byte[] rgb = new byte[W * H * 3];
+        img.CopyPixelDataTo(rgb);
+        return rgb;
+    }
+
+    public byte[]? SkiaRgb()
+    {
+        using SKBitmap? bmp = SKBitmap.Decode(_jpeg);
+        if (bmp == null)
+        {
+            return null;
+        }
+
+        using SKBitmap rgba = bmp.Copy(SKColorType.Rgba8888);
+        ReadOnlySpan<byte> px = rgba.GetPixelSpan();
+        byte[] rgb = new byte[W * H * 3];
+        for (int i = 0; i < W * H; i++)
+        {
+            rgb[3 * i] = px[4 * i];
+            rgb[(3 * i) + 1] = px[(4 * i) + 1];
+            rgb[(3 * i) + 2] = px[(4 * i) + 2];
+        }
+
+        return rgb;
+    }
+
+    public byte[] NetVipsRgb()
+    {
+        using VipsImage img = VipsImage.NewFromBuffer(_jpeg);
+        using VipsImage rgb = img.IccTransform("srgb", embedded: true);
+        return rgb.WriteToMemory<byte>();
+    }
+
+    public byte[] MagickRgb()
+    {
+        using var m = new MagickImage(_jpeg);
+        m.RenderingIntent = ImageMagick.RenderingIntent.Relative;
+        m.TransformColorSpace(m.GetColorProfile()!, _srgb);
+        return m.GetPixels().ToByteArray(PixelMapping.RGB)!;
+    }
+
     [BenchmarkCategory("Gate", "cmyk-jpeg-to-srgb")]
     [Benchmark(Description = "OneImage Load + ConvertColor(sRGB) + ToArray<Rgb24>")]
     public int OneImageCmyk() => OI.Image.Load(_jpeg).ConvertColor(OI.ColorProfile.Srgb).ToArray<OI.Rgb24>().Length;
@@ -501,7 +558,7 @@ public class CmykJpegGateBenchmarks
     }
 
     [BenchmarkCategory("Gate", "cmyk-jpeg-to-srgb")]
-    [Benchmark(Description = "ImageSharp Load<Rgb24> (no ICC conversion)")]
+    [Benchmark(Description = "ImageSharp Load<Rgb24> (skips ICC conversion)")]
     public int ImageSharpCmyk()
     {
         using SharpRgb img = SharpImage.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(_jpeg);

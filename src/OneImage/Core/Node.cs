@@ -65,6 +65,13 @@ internal abstract class Node
     /// <summary>The input region needed to compute <paramref name="output"/> (in this node's coordinates) from input <paramref name="inputIndex"/>. Defaults to the same region; ops with margins or offsets override it.</summary>
     public virtual ImageRect RequiredInput(int inputIndex, ImageRect output) => output;
 
+    /// <summary>
+    /// Tries to produce the whole node straight into <paramref name="destination"/> (converted to <paramref name="destinationFormat"/>)
+    /// without building tiles, for a one-shot read of a decode that would otherwise be buffered. Returns false, touching nothing,
+    /// when this node cannot; the caller then renders tiles.
+    /// </summary>
+    public virtual bool TryReadDirect(Span<byte> destination, PixelFormat destinationFormat, int degree, CancellationToken cancellationToken) => false;
+
     /// <summary>Gets the valid (inside the image) rectangle of a tile.</summary>
     public ImageRect TileRect(int tx, int ty)
     {

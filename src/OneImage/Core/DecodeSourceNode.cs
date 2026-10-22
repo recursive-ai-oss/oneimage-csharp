@@ -141,23 +141,48 @@ internal sealed class DecodeSourceNode : Node
 
     /// <summary>
     /// The first whole-frame read of a small sequential decode: decodes straight into the caller's buffer (converting rows to
-    /// <paramref name="destinationFormat"/>) so no tile storage is allocated for a frame that is read once. Returns false, touching
-    /// nothing, when this is not the first such read or the node does not materialize (random access and streaming nodes already
-    /// keep memory bounded); the caller then reads through the tiles, which keeps a second read from decoding again.
+    /// <paramref name="destinationFormat"/>) so no tile storage is allocated for a frame that is read once. A frame big enough to
+    /// stream keeps no tiles either, so every whole-frame read of it decodes straight out. Returns false, touching nothing, when
+    /// this is not such a read (random access nodes already keep memory bounded; a small frame's second read goes through the
+    /// tiles, which keeps it from decoding again); the caller then reads through the tiles.
     /// </summary>
-    public bool TryDecodeInto(Span<byte> destination, PixelFormat destinationFormat, CancellationToken cancellationToken)
+    public override bool TryReadDirect(Span<byte> destination, PixelFormat destinationFormat, int degree, CancellationToken cancellationToken) =>
+        TryDecodeInto(destination, destinationFormat, null, degree, cancellationToken);
+
+    /// <summary>
+    /// Like <see cref="TryReadDirect"/>, with a row-wise <paramref name="stage"/> (a color conversion) applied between the decoder and the
+    /// destination, so a decode followed by that op streams rows from the decoder into the caller's buffer.
+    /// </summary>
+    public bool TryDecodeInto(Span<byte> destination, PixelFormat destinationFormat, IRowStage? stage, int degree, CancellationToken cancellationToken)
     {
-        if (_randomAccess || _streaming || Volatile.Read(ref _grid) != null || Interlocked.Exchange(ref _directPulled, 1) != 0)
+        if (_randomAccess || Volatile.Read(ref _grid) != null)
         {
             return false;
         }
 
-        ConvertRowKernel? converter = destinationFormat != Format ? KernelRegistry.Get<ConvertRowKernel>("convert") : null;
+        // A small frame decodes straight out once and then keeps tiles for later reads. A streaming frame never keeps tiles, so
+        // every whole-frame read can decode straight into the caller's buffer: no window, no decoder thread, no tile memory.
+        if (!_streaming && Interlocked.Exchange(ref _directPulled, 1) != 0)
+        {
+            return false;
+        }
+
+        ConvertRowKernel? converter = destinationFormat != (stage?.OutputFormat ?? Format) ? KernelRegistry.Get<ConvertRowKernel>("convert") : null;
         using Stream s = _session.Source.Open();
         PinnedDestination.Run(destination, 0, (pinned, _) =>
         {
-            var sink = new DirectRowSink(pinned, Width, Height, Format, destinationFormat, converter);
-            _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+            var sink = new DirectRowSink(pinned, Width, Height, Format, destinationFormat, converter, stage, degree);
+            try
+            {
+                _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+                sink.Finish();
+            }
+            catch
+            {
+                sink.Abandon();
+                throw;
+            }
+
             CheckComplete(sink.RowsWritten, Height);
         });
         return true;

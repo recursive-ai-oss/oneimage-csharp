@@ -68,6 +68,13 @@ if [ $PEAK = 1 ]; then
   done
 fi
 
+# Colour accuracy of the CMYK task (CIEDE2000 against an ICC-correct reference; one process, all libraries).
+DELTAE="$WORK/deltae.tsv"
+: > "$DELTAE"
+if [ $PEAK = 1 ]; then
+  timeout 1800 "${RUN[@]}" gate-deltae 2>>"$WORK/peak.err" | grep -E '^DELTAE' >> "$DELTAE" || echo "FAILED gate-deltae" | tee -a "$WORK/peak.err" >&2
+fi
+
 UP_AFTER="$(uptime)"
 END="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 kill $SAMPLER 2>/dev/null || true
@@ -94,11 +101,11 @@ HEADER="$WORK/header.md"
   echo "## Method"
   echo
   echo "- Time: BenchmarkDotNet, \`MemoryDiagnoser\`, Throughput strategy with 2-3 warmup and 8-12 measured iterations per row (the job each benchmark class declares); Mean shown. Inputs are generated deterministically (\`bench/OneImage.Benchmarks\`); every task runs from and to memory."
-  echo "- Peak memory: one process per task and library. After the inputs are built the process collects garbage, resets the kernel's resident-set high-water mark, runs the operation 4 times, and reports (peak − resident before) in MiB, i.e. the working memory of the operation, with the process total in brackets. Native allocations are included; they are what NetVips, SkiaSharp and Magick.NET use."
+  echo "- Peak memory: one process per task and library. After the inputs are built the process collects garbage, resets the kernel's resident-set high-water mark, runs the operation 4 times (collecting garbage after each run, outside the timed part, so a result left on the managed heap by one run does not add to the next), and reports (peak − resident before) in MiB, i.e. the working memory of the operation, with the process total in brackets. Native allocations are included; they are what NetVips, SkiaSharp and Magick.NET use."
   echo "- Rows within a task pick each library's idiomatic one-call path to the same output (stated per row). Where output types differ (Rgb24 vs Rgba32) both rows exist."
   echo "- A library that cannot do a task has no row: SkiaSharp has no BMP, TIFF or animated GIF encoder and no TIFF decoder here; NetVips's native build has no BMP loader or saver."
   echo
 } > "$HEADER"
 
-"${RUN[@]}" gate-report "$WORK/bdn/results" "$PEAKTSV" "$HEADER" "$OUT"
+"${RUN[@]}" gate-report "$WORK/bdn/results" "$PEAKTSV" "$HEADER" "$OUT" "$DELTAE"
 echo "report: $OUT"
