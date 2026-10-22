@@ -172,6 +172,19 @@ if (!rasterOk)
 {
     Console.Error.WriteLine("png/bmp/ico smoke failed");
     return 1;
+// WebP: lossless (exact), lossy (close), alpha, and a two-frame animation with metadata, through the default configuration.
+foreach (bool lossless in new[] { true, false })
+{
+    using var webp = new MemoryStream();
+    snapshot.Save(webp, new WebPFormat(), new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = lossless, Quality = 90 } });
+    Image wr = Image.Load(webp.ToArray());
+    Rgba32[] wpx = wr.ToArray<Rgba32>();
+    bool wexact = !lossless || wpx.AsSpan().SequenceEqual(original);
+    if (wr.SourceFormat?.Name != "webp" || wpx.Length != 300 * 200 || !wexact || wr.Crop(100, 100, 40, 40).ToArray<Rgba32>().Length != 1600)
+    {
+        Console.Error.WriteLine("webp smoke failed");
+        return 1;
+    }
 }
 
 Console.WriteLine("smoke ok: " + Library.Name);
