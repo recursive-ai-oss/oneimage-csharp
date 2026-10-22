@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Buffers;
 using System.IO;
 using OneImage;
@@ -171,6 +172,36 @@ rasterOk &= PngFormat.Instance.Matches(tuned.ToArray()) && Image.Load(tuned.ToAr
 if (!rasterOk)
 {
     Console.Error.WriteLine("png/bmp/ico smoke failed");
+// GIF: encode a photo-like image (quantized, dithered), decode it, and decode a hand-assembled two-frame animation.
+var photo = new Rgba32[64 * 48];
+for (int i = 0; i < photo.Length; i++)
+{
+    photo[i] = new Rgba32((byte)(i * 3), (byte)((i / 64) * 5), (byte)(i ^ (i >> 3)), 255);
+}
+
+using var gifStream = new MemoryStream();
+Image.FromPixels<Rgba32>(photo, 64, 48).Save(gifStream, GifFormat.Instance);
+Image decodedGif = Image.Load(gifStream.ToArray());
+Image quantized = Image.FromPixels<Rgba32>(photo, 64, 48).Quantize(16, Dither.FloydSteinberg);
+Rgba32[] qpx = quantized.ToArray<Rgba32>();
+var distinct = new System.Collections.Generic.HashSet<Rgba32>(qpx);
+
+byte[] frameData = LzwEncoder.Compress(new byte[] { 0, 1, 2, 3 }, LzwVariant.Gif, 2);
+var anim = new MemoryStream();
+anim.Write("GIF89a"u8);
+anim.Write(new byte[] { 2, 0, 2, 0, 0x81, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255 });
+for (int f = 0; f < 2; f++)
+{
+    anim.Write(new byte[] { 0x21, 0xF9, 4, 4, 5, 0, 0, 0, 0x2C, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, (byte)frameData.Length });
+    anim.Write(frameData);
+    anim.WriteByte(0);
+}
+
+anim.WriteByte(0x3B);
+Image animGif = Image.Load(anim.ToArray());
+if (decodedGif.Width != 64 || decodedGif.Height != 48 || distinct.Count > 16 || animGif.FrameCount != 2 || animGif.ToArray<Rgba32>()[3] != new Rgba32(255, 255, 255, 255))
+{
+    Console.Error.WriteLine("gif smoke failed");
     return 1;
 }
 

@@ -37,6 +37,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../../bench/OneImage.Benchmarks/Gif/GifBenchData.cs" Link="Gif/GifBenchData.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="../testdata/**" Link="testdata/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../data/FOGRA39.txt" Link="testdata/FOGRA39.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
