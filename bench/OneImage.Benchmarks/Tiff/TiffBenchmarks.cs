@@ -218,6 +218,28 @@ public class TiffMultiPageDecode : TiffBenchBase
         return s + img.FrameCount;
     }
 
+    private long OneImageWithDegree(int degree)
+    {
+        Image img = Image.Load(_path);
+        long s = 0;
+        for (int i = 0; i < img.FrameCount; i++)
+        {
+            Rgb24[] px = img.Frames[i].ToArray<Rgb24>(maxDegree: degree);
+            s += px[^1].R;
+        }
+
+        return s + img.FrameCount;
+    }
+
+    // Not the default configuration: a per-call degree above the default of min(4, cores). Shown beside the gate row, never used as it.
+    [BenchmarkCategory("Gate", "tiff-multipage-decode")]
+    [Benchmark(Description = "oneimage, NOT DEFAULT: per-call maxDegree = all cores")]
+    public long OneImageDegreeAllCores() => OneImageWithDegree(Environment.ProcessorCount);
+
+    [BenchmarkCategory("Gate", "tiff-multipage-decode")]
+    [Benchmark(Description = "oneimage, NOT DEFAULT: per-call maxDegree = 8")]
+    public long OneImageDegree8() => OneImageWithDegree(8);
+
     [BenchmarkCategory("Gate", "tiff-multipage-decode")]
     [Benchmark(Description = "Magick.NET")]
     public long Magick()

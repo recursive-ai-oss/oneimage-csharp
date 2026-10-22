@@ -40,19 +40,37 @@ internal static class GateReport
     // arenas and thread stacks, and ratios of a few MiB say nothing.
     private const double MemTieMiB = 2;
 
-    private sealed record Row(string Task, string Param, string Lib, string Title, string Method, double Ms, double AllocMiB);
+    private sealed record Row(string Task, string Param, string Lib, string Title, string Method, double Ms, double AllocMiB, double StdDevMs);
 
-    private sealed record Peak(double BeforeMiB, double PeakMiB, double Ms)
+    /// <summary>Median of the repeated peak runs of one task and library; Spread is max - min of the working-memory growth.</summary>
+    private sealed record Peak(double Delta, double PeakMiB, double Ms, double Spread, int Runs);
+
+    private static double Median(List<double> v)
     {
-        public double Delta => PeakMiB - BeforeMiB;
+        v.Sort();
+        return v.Count % 2 == 1 ? v[v.Count / 2] : (v[(v.Count / 2) - 1] + v[v.Count / 2]) / 2;
     }
+
+    /// <summary>
+    /// Peak comparison against another library: a tie only when the difference is within max(2 MiB, either spread) and within 5%;
+    /// anything else is a win (ours lower) or a miss (ours higher).
+    /// </summary>
+    private static string PeakVerdict(Peak ours, Peak other)
+    {
+        double diff = ours.Delta - other.Delta;
+        double bound = Math.Max(MemTieMiB, Math.Max(ours.Spread, other.Spread));
+        bool tie = Math.Abs(diff) <= bound && Math.Abs(diff) <= 0.05 * Math.Max(ours.Delta, other.Delta);
+        return tie ? "tie" : diff < 0 ? "win" : "miss";
+    }
+
+    private static string TimeVerdict(double ratio) => ratio > Tie ? "miss" : ratio < 1 / Tie ? "win" : "tie";
 
     public static int Run(string[] args)
     {
         string dir = args[1];
         Dictionary<string, string> tasks = TaskMap();
         var rows = new List<Row>();
-        foreach (string file in Directory.GetFiles(dir, "*-report-full-compressed.json").Order(StringComparer.Ordinal))
+        foreach (string file in (Directory.Exists(dir) ? Directory.GetFiles(dir, "*-report-full-compressed.json") : []).Order(StringComparer.Ordinal))
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
             foreach (JsonElement b in doc.RootElement.GetProperty("Benchmarks").EnumerateArray())
@@ -67,27 +85,43 @@ internal static class GateReport
                 string param = b.GetProperty("Parameters").GetString() ?? "";
                 double mean = b.GetProperty("Statistics").GetProperty("Mean").GetDouble() / 1e6;
                 double alloc = b.GetProperty("Memory").GetProperty("BytesAllocatedPerOperation").GetInt64() / 1048576.0;
-                rows.Add(new Row(task, param, Lib(method), b.GetProperty("MethodTitle").GetString()!.Trim('\''), method, mean, alloc));
+                double sd = b.GetProperty("Statistics").GetProperty("StandardDeviation").GetDouble() / 1e6;
+                rows.Add(new Row(task, param, Lib(method), b.GetProperty("MethodTitle").GetString()!.Trim('\''), method, mean, alloc, sd));
             }
         }
 
-        var peaks = new Dictionary<(string, string), Peak>();
+        // Each (task, library) pair has several PEAK lines, one per separate process.
+        var raw = new Dictionary<(string, string), List<(double Delta, double Peak, double Ms)>>();
         foreach (string line in File.ReadLines(args[2]))
         {
             string[] f = line.Split('\t');
             if (f.Length == 6 && f[0] == "PEAK")
             {
-                peaks[(f[1], f[2])] = new Peak(D(f[3]), D(f[4]), D(f[5]));
+                if (!raw.TryGetValue((f[1], f[2]), out var list))
+                {
+                    raw[(f[1], f[2])] = list = [];
+                }
+
+                list.Add((D(f[4]) - D(f[3]), D(f[4]), D(f[5])));
             }
+        }
+
+        var peaks = new Dictionary<(string, string), Peak>();
+        foreach (var kv in raw)
+        {
+            var deltas = kv.Value.Select(x => x.Delta).ToList();
+            double spread = deltas.Max() - deltas.Min();
+            peaks[kv.Key] = new Peak(Median(deltas), Median(kv.Value.Select(x => x.Peak).ToList()), Median(kv.Value.Select(x => x.Ms).ToList()), spread, deltas.Count);
         }
 
         var sb = new StringBuilder();
         sb.Append(File.ReadAllText(args[3])).AppendLine();
         var gaps = new List<string>();
+        var exceptions = new List<string>();
         var memReported = new HashSet<string>(StringComparer.Ordinal);
         var summary = new StringBuilder();
         var detail = new StringBuilder();
-        summary.AppendLine("| Task | Ours ms | ImageSharp ms | Ours / ImageSharp | Fastest native wrapper | Ours / fastest | Peak ours MiB | Peak ImageSharp MiB | Peak NetVips MiB | Peak ours / ImageSharp | Peak ours / NetVips |");
+        summary.AppendLine("| Task | Ours ms | ImageSharp ms | Ours / ImageSharp | Fastest native wrapper | Ours / fastest | Peak ours MiB (spread) | Peak ImageSharp MiB (spread) | Peak NetVips MiB | Peak ours / ImageSharp | Peak ours / NetVips |");
         summary.AppendLine("|---|--:|--:|--:|---|--:|--:|--:|--:|--:|--:|");
 
         foreach (var g in rows.GroupBy(r => (r.Task, r.Param)).OrderBy(g => Array.IndexOf(GatePeak.Tasks, g.Key.Task) < 0 ? 999 : Array.IndexOf(GatePeak.Tasks, g.Key.Task)).ThenBy(g => g.Key.Task, StringComparer.Ordinal).ThenBy(g => g.Key.Param, StringComparer.Ordinal))
@@ -113,9 +147,21 @@ internal static class GateReport
             double? rf = fast == null ? null : ours.Ms / fast.Ms;
             double? ms = po != null && ps != null ? po.Delta / Math.Max(ps.Delta, 1) : null;
             double? mn = po != null && pn != null ? po.Delta / Math.Max(pn.Delta, 1) : null;
-            bool memMiss = ms > Tie && po!.Delta - ps!.Delta > MemTieMiB;
+            string? timeV = rs == null ? null : TimeVerdict(rs.Value);
+            string? peakV = po != null && ps != null ? PeakVerdict(po, ps) : null;
             string skip = icc ? " (skips ICC)" : "";
-            summary.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {label} | {ours.Ms:F1} | {Fmt(sharp?.Ms)}{skip} | {Fmt(rs, 2)}{(rs > Tie && !icc ? " ✗" : "")} | {(fast == null ? "-" : fast.Lib + " " + fast.Ms.ToString("F1", CultureInfo.InvariantCulture))} | {Fmt(rf, 2)}{(rf > 1.5 && ThumbnailOrCodec.Contains(task) ? " ✗" : "")} | {Fmt(po?.Delta)} | {Fmt(ps?.Delta)} | {Fmt(pn?.Delta)} | {Fmt(ms, 2)}{(memMiss && !icc ? " ✗" : "")} | {Fmt(mn, 2)}{(mn > 2 && Streaming.Contains(task) ? " ✗" : "")} |"));
+            string V(string? v) => v == null ? "" : v == "miss" ? (icc ? "" : " ✗") : " " + v;
+            summary.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {label} | {ours.Ms:F1} | {Fmt(sharp?.Ms)}{skip} | {Fmt(rs, 2)}{V(timeV)} | {(fast == null ? "-" : fast.Lib + " " + fast.Ms.ToString("F1", CultureInfo.InvariantCulture))} | {Fmt(rf, 2)}{(rf > 1.5 && ThumbnailOrCodec.Contains(task) ? " ✗" : "")} | {Fmt(po?.Delta)} (±{Fmt(po?.Spread)}) | {Fmt(ps?.Delta)} (±{Fmt(ps?.Spread)}) | {Fmt(pn?.Delta)} | {Fmt(ms, 2)}{V(peakV)} | {Fmt(mn, 2)}{(mn > 2 && Streaming.Contains(task) ? " ✗" : "")} |"));
+
+            if (sharp != null && timeV != "win")
+            {
+                exceptions.Add(string.Create(CultureInfo.InvariantCulture, $"| {label} | time | {timeV} | {ours.Ms:F1} ms (σ {ours.StdDevMs:F1}) | {sharp.Ms:F1} ms (σ {sharp.StdDevMs:F1}) | {rs:F2}× |{(icc ? " information only: ImageSharp skips the ICC conversion" : "")} |"));
+            }
+
+            if (po != null && ps != null && peakV != "win")
+            {
+                exceptions.Add(string.Create(CultureInfo.InvariantCulture, $"| {label} | peak | {peakV} | {po.Delta:F1} MiB (spread {po.Spread:F1}) | {ps.Delta:F1} MiB (spread {ps.Spread:F1}) | {ms:F2}× |{(icc ? " information only: ImageSharp skips the ICC conversion" : "")} |"));
+            }
 
             if (icc)
             {
@@ -124,7 +170,7 @@ internal static class GateReport
                     gaps.Add($"- **{task}**: slower than Magick.NET, {ours.Ms:F1} ms vs {magick.Ms:F1} ms.");
                 }
 
-                if (po != null && pm != null && po.Delta - pm.Delta > MemTieMiB)
+                if (po != null && pm != null && PeakVerdict(po, pm) == "miss")
                 {
                     gaps.Add($"- **{task}**: more peak working memory than Magick.NET, {po.Delta:F0} MiB vs {pm.Delta:F0} MiB.");
                 }
@@ -135,12 +181,12 @@ internal static class GateReport
                 }
             }
 
-            if (rs > Tie && !icc)
+            if (timeV == "miss" && !icc)
             {
                 gaps.Add($"- **{label}**: slower than ImageSharp (beyond a 5% tie), {ours.Ms:F1} ms vs {sharp!.Ms:F1} ms ({rs:F2}×).");
             }
 
-            if (memMiss && !icc && memReported.Add(task + "/is"))
+            if (peakV == "miss" && !icc && memReported.Add(task + "/is"))
             {
                 gaps.Add($"- **{task}**: more peak working memory than ImageSharp, {po!.Delta:F0} MiB vs {ps!.Delta:F0} MiB ({ms:F2}×).");
             }
@@ -156,12 +202,12 @@ internal static class GateReport
             }
 
             detail.AppendLine(string.Create(CultureInfo.InvariantCulture, $"### {label}")).AppendLine();
-            detail.AppendLine("| Library | Row | Mean ms | Managed alloc MiB | Peak working MiB (process total) |").AppendLine("|---|---|--:|--:|--:|");
+            detail.AppendLine("| Library | Row | Mean ms | Managed alloc MiB | Peak working MiB, median ±spread (process total) |").AppendLine("|---|---|--:|--:|--:|");
             foreach (Row r in g.OrderBy(r => r.Ms))
             {
                 // Peak memory is measured per library, not per row: shown on the library's fastest row only.
                 bool first = g.Where(x => x.Lib == r.Lib).MinBy(x => x.Ms) == r;
-                string pk = first && peaks.TryGetValue((task, r.Lib), out Peak? p) ? $"{p.Delta:F0} ({p.PeakMiB:F0})" : "";
+                string pk = first && peaks.TryGetValue((task, r.Lib), out Peak? p) ? $"{p.Delta:F0} ±{p.Spread:F0} ({p.PeakMiB:F0})" : "";
                 detail.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {r.Lib} | {r.Title} | {r.Ms:F1} | {r.AllocMiB:F1} | {pk} |"));
             }
 
@@ -190,6 +236,22 @@ internal static class GateReport
             sb.AppendLine();
         }
 
+        sb.AppendLine("## Gate exceptions").AppendLine();
+        sb.AppendLine("Every task and measure where this library ties or misses ImageSharp (the gate is a win on both time and peak memory). Time: tie within 5%; σ is the standard deviation of the benchmark iterations. Peak: tie within max(2 MiB, either library's run-to-run spread) and within 5%; spread is max − min over the repeated runs.").AppendLine();
+        if (exceptions.Count == 0)
+        {
+            sb.AppendLine("None: a win on every task, in time and in peak memory.");
+        }
+        else
+        {
+            sb.AppendLine("| Task | Measure | Result | Ours | ImageSharp | Ratio | Note |").AppendLine("|---|---|---|---|---|--:|---|");
+            foreach (string e in exceptions)
+            {
+                sb.AppendLine(e);
+            }
+        }
+
+        sb.AppendLine();
         sb.AppendLine("## Gaps").AppendLine();
         foreach (string gap in gaps)
         {
@@ -214,6 +276,11 @@ internal static class GateReport
     private static string Lib(string method)
     {
         string m = method.ToLowerInvariant();
+        if (m.Contains("degree", StringComparison.Ordinal))
+        {
+            return "oneimage-degree";
+        }
+
         if (m.Contains("magick", StringComparison.Ordinal))
         {
             return "magick";

@@ -2,11 +2,15 @@
 # Release gate: faster than ImageSharp 3.1.12 on every task with lower peak memory, and the distance to the native wrappers.
 #
 #   bench/gate.sh [--avx512] [--out FILE] [--work DIR] [--note TEXT] [--skip-timing] [--skip-peak]
+#                [--tasks a,b,c] [--repeats N]
 #
 # 1. builds the benchmark project in Release;
 # 2. runs the BenchmarkDotNet rows tagged [BenchmarkCategory("Gate")] (standard MemoryDiagnoser output, JSON kept in DIR/bdn);
 # 3. measures peak resident memory per task and library, one process each ("gate-peak");
 # 4. writes one markdown report (default bench/results/gate-<date>.md).
+#
+# --tasks limits timing and peak runs to the named tasks (default: all gate tasks); --repeats sets how often each peak
+# measurement is repeated in a fresh process (default 3).
 #
 # The x64 gate runs with AVX-512 switched off (DOTNET_EnableAVX512=0) so the AVX2 path is what is measured;
 # --avx512 leaves it on for information. Inputs are generated deterministically; nothing is downloaded.
@@ -21,6 +25,8 @@ WORK="${GATE_WORK:-${TMPDIR:-$HERE/../.gate-work}/gate-work}"
 NOTE=""
 TIMING=1
 PEAK=1
+TASKSEL=""
+REPEATS=3
 while [ $# -gt 0 ]; do
   case "$1" in
     --avx512) AVX512=1 ;;
@@ -29,6 +35,8 @@ while [ $# -gt 0 ]; do
     --note) NOTE="$2"; shift ;;
     --skip-timing) TIMING=0 ;;
     --skip-peak) PEAK=0 ;;
+    --tasks) TASKSEL="${2//,/ }"; shift ;;
+    --repeats) REPEATS="$2"; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -53,17 +61,24 @@ START="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 
 if [ $TIMING = 1 ]; then
   rm -rf "$WORK/bdn"
-  "${RUN[@]}" --anyCategories Gate --exporters json --artifacts "$WORK/bdn" 2>&1 | tee "$WORK/bdn.log" | tail -n 5
+  CATS="Gate"
+  [ -z "$TASKSEL" ] || CATS="$TASKSEL"
+  # shellcheck disable=SC2086
+  "${RUN[@]}" --anyCategories $CATS --exporters json --artifacts "$WORK/bdn" 2>&1 | tee "$WORK/bdn.log" | tail -n 5
 fi
 
 TASKS="thumb-jpeg thumb-webp png-to-webp jpeg-decode jpeg-encode png-decode png-encode webp-decode webp-encode gif-decode gif-encode gif-resize tiff-multipage-decode tiff-encode bmp-decode bmp-encode upscale-2x watermark cmyk-jpeg-to-srgb"
+[ -z "$TASKSEL" ] || TASKS="$TASKSEL"
 LIBS="oneimage imagesharp skia netvips magick"
 PEAKTSV="$WORK/peak.tsv"
 if [ $PEAK = 1 ]; then
   : > "$PEAKTSV"
   for t in $TASKS; do
     for l in $LIBS; do
-      timeout 900 "${RUN[@]}" gate-peak "$t" "$l" 2>>"$WORK/peak.err" | grep -E '^(PEAK|SKIP)' >> "$PEAKTSV" || echo "FAILED $t $l" | tee -a "$WORK/peak.err" >&2
+      # Repeated in separate processes: the report shows the median and the spread (max - min).
+      for ((r = 1; r <= REPEATS; r++)); do
+        timeout 900 "${RUN[@]}" gate-peak "$t" "$l" 2>>"$WORK/peak.err" | grep -E '^(PEAK|SKIP)' >> "$PEAKTSV" || echo "FAILED $t $l" | tee -a "$WORK/peak.err" >&2
+      done
     done
   done
 fi
@@ -71,7 +86,7 @@ fi
 # Colour accuracy of the CMYK task (CIEDE2000 against an ICC-correct reference; one process, all libraries).
 DELTAE="$WORK/deltae.tsv"
 : > "$DELTAE"
-if [ $PEAK = 1 ]; then
+if [ $PEAK = 1 ] && { [ -z "$TASKSEL" ] || [[ " $TASKSEL " == *" cmyk-jpeg-to-srgb "* ]]; }; then
   timeout 1800 "${RUN[@]}" gate-deltae 2>>"$WORK/peak.err" | grep -E '^DELTAE' >> "$DELTAE" || echo "FAILED gate-deltae" | tee -a "$WORK/peak.err" >&2
 fi
 
@@ -96,13 +111,17 @@ HEADER="$WORK/header.md"
   echo "- Load during (sampled each minute):"
   sed 's/^/  - /' "$LOADLOG"
   echo "- Load after: \`$UP_AFTER\`"
-  echo "- Libraries: ImageSharp 3.1.12, SkiaSharp, NetVips, Magick.NET (Q8), through their .NET packages; this library built from the same checkout."
   echo
   echo "## Method"
   echo
-  echo "- Time: BenchmarkDotNet, \`MemoryDiagnoser\`, Throughput strategy with 2-3 warmup and 8-12 measured iterations per row (the job each benchmark class declares); Mean shown. Inputs are generated deterministically (\`bench/OneImage.Benchmarks\`); every task runs from and to memory."
-  echo "- Peak memory: one process per task and library. After the inputs are built the process runs the operation once to warm up (one-time code generation, thread-pool start-up and native library loading are excluded for every library alike), collects garbage, resets the kernel's resident-set high-water mark, runs the operation 4 times (collecting garbage after each run, outside the timed part, so a result left on the managed heap by one run does not add to the next), and reports (peak − resident before) in MiB, i.e. the working memory of the operation (differences under 2 MiB count as a tie), with the process total in brackets. Native allocations are included; they are what NetVips, SkiaSharp and Magick.NET use."
-  echo "- Rows within a task pick each library's idiomatic one-call path to the same output (stated per row). Where output types differ (Rgb24 vs Rgba32) both rows exist."
+  echo "- Measured on a shared workstation: other work may have been running, and the load samples above say how much. Absolute times carry that noise."
+  echo "- Libraries: ImageSharp 3.1.12 is the reference (the last release that builds without a license key); SkiaSharp, NetVips and Magick.NET run through their .NET packages."
+  echo "- Time: BenchmarkDotNet, \`MemoryDiagnoser\`, Throughput strategy, 2-3 warm-up and 8-12 measured iterations per row; Mean shown. Inputs are generated deterministically; every task runs from and to memory. A ratio within 5% of 1 is a tie, printed as \"tie\", never as a win."
+  echo "- Peak memory: one process per task and library, repeated $REPEATS times; the report shows the median and the spread (max - min). Each process runs the operation once to warm up (code generation, thread-pool start-up, native library loading), collects garbage, resets the kernel's resident-set high-water mark, runs the operation 4 times (collecting garbage after each, outside the timed part), and reports peak minus resident-before: the working memory of the operation. Native allocations are included."
+  echo "- Peak tie rule against ImageSharp: a tie only when the difference is within max(2 MiB, the spread of either library) and within 5%; otherwise a win (ours lower) or a miss."
+  echo "- Rows pick each library's idiomatic one-call path to the same output (stated per row). Where a competitor writes into reused or pooled storage, our row writes into a caller-supplied buffer too; rows that allocate a fresh result are kept beside them. Where output types differ (Rgb24 vs Rgba32) both rows exist."
+  echo "- CMYK JPEG to sRGB: the bar is the libraries that apply the embedded ICC profile (Magick.NET, NetVips). ImageSharp does not convert, so its row is information only; colour accuracy (CIEDE2000) is reported for each library."
+  echo "- Rows marked NOT DEFAULT use a raised per-call degree of parallelism (all cores, or 8) against the default of min(4, cores). The default row is the gate row; the raised rows are shown for information."
   echo "- A library that cannot do a task has no row: SkiaSharp has no BMP, TIFF or animated GIF encoder and no TIFF decoder here; NetVips's native build has no BMP loader or saver."
   echo
 } > "$HEADER"
