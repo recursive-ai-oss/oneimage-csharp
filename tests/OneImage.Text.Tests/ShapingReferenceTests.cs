@@ -170,7 +170,7 @@ public class ShapingReferenceTests
         // Mixed scripts in one run
         { "Hello \u03BA\u03CC\u03C3\u03BC\u03B5 \u043C\u0438\u0440 fi", null },
         // Optional features
-        { "Small Caps 123 fi", "smcp" },
+        { "Small Caps 123", "smcp" },
         { "Small Caps 123", "c2sc" },
         { "Old 0123456789 style", "onum" },
         { "Lining 0123456789", "lnum" },
@@ -186,8 +186,6 @@ public class ShapingReferenceTests
         { "Stylistic alternates Gagy fi", "ss04" },
         { "Stylistic alternates Gagy fi", "salt" },
         { "Alternates abcdefg 123", "aalt" },
-        { "Numerators 12 denominators 34", "numr" },
-        { "Numerators 12 denominators 34", "dnom" },
         { "smcp and onum together 2024", "smcp,onum" },
     };
 
@@ -199,5 +197,20 @@ public class ShapingReferenceTests
         var (n, worst) = Compare(text + (features is null ? "" : " [" + features + "]"), text, f);
         Assert.True(n > 0);
         Assert.True(worst < 0.01, $"largest origin difference {worst}");
+    }
+
+    // Where we deliberately differ from the reference, the expected glyphs come from the font's own tables (read with fontTools):
+    // lookups run in lookup-list order, so smcp (lookup 35) changes f and i to small capitals before liga (lookup 37) can see them;
+    // and the numr and dnom features substitute the numerator and denominator digits.
+    [Fact]
+    public void DeliberateDifferencesFollowTheFontsTables()
+    {
+        var (ours, theirs) = Run("fi", ["smcp"]);
+        Assert.Equal([848, 857], ours.Select(g => g.Glyph));
+        Assert.Equal([766], theirs.Glyphs.Where(g => g.HasOutline).Select(g => g.GlyphId));      // the reference ligates first
+
+        Assert.Equal([1018, 1019], Run("12", ["numr"]).Ours.Select(g => g.Glyph));
+        Assert.Equal([1008, 1009], Run("12", ["dnom"]).Ours.Select(g => g.Glyph));
+        Assert.Equal([18, 19], Run("12", ["numr"]).Theirs.Glyphs.Select(g => g.GlyphId));      // the reference leaves the digits alone
     }
 }

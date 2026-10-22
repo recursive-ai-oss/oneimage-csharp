@@ -27,3 +27,5 @@ The files in `tests/testdata/fonts/` are subsets of Noto Sans (Copyright 2015 Go
 Adobe), made by `tools/TextFonts/make-test-fonts.py`: fewer glyphs, hinting removed, and in one face a synthetic legacy `kern`
 table. The fonts are licensed under the SIL Open Font License 1.1; the license text is `tests/testdata/fonts/OFL.txt`. They are
 used only by the test and benchmark projects and are not part of the shipped package.
+
+`tests/testdata/fonts/NotoSans-Shaping-Subset.ttf` is a further Noto Sans subset (Copyright 2015 Google LLC, SIL Open Font License 1.1, same license text) made by `tools/TextFonts/make-shaping-fonts.py`: Latin, Greek, Cyrillic and the combining marks, hinting removed, with all of the font's GSUB, GPOS and GDEF layout kept. It is used only by the test and benchmark projects.

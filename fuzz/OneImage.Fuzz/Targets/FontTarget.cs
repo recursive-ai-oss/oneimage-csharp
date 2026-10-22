@@ -4,6 +4,7 @@ using System.Text;
 using OneImage;
 using OneImage.Text;
 using OneImage.Text.Fonts;
+using OneImage.Text.Shaping;
 
 /// <summary>
 /// Font files of every supported container: parse, read the header tables, walk glyph outlines and kerning, then lay out, measure and
@@ -41,10 +42,40 @@ internal static class FontTarget
             _ = face.GetKerning(g, (g * 7) % glyphs);
         }
 
+        ShapeGlyphIds(face);
+
         // Out-of-range ids are legal inputs for the callers (a cmap may point past the end).
         _ = face.GetOutline(face.NumGlyphs + 5);
         _ = face.GetOutline(-1);
         _ = face.GetAdvance(65535);
+    }
+
+    private static readonly string[] FeatureTags = ["smcp", "onum", "salt", "aalt", "ss01", "dlig", "frac", "calt", "ccmp", "locl", "kern", "mark", "mkmk", "curs"];
+
+    // Shapes runs of glyph ids straight through GSUB/GPOS, so every lookup the font has meets glyphs it covers, whatever its character map says.
+    private static void ShapeGlyphIds(FontFace face)
+    {
+        int n = Math.Min(face.NumGlyphs, 600);
+        if (n == 0)
+        {
+            return;
+        }
+
+        int[] glyphs = new int[Math.Min(n * 2, 1200)];
+        for (int i = 0; i < glyphs.Length; i++)
+        {
+            glyphs[i] = i < n ? i : (i * 37) % n;
+        }
+
+        foreach (int value in new[] { 1, 2 })
+        {
+            var features = FeatureSet.Create(Array.ConvertAll(FeatureTags, t => (Be.Tag(t), value)));
+            foreach (uint language in new[] { 0u, Be.Tag("ROM "), Be.Tag("SRB ") })
+            {
+                var output = new List<ShapedRunGlyph>();
+                TextShaper.ShapeGlyphs(face, glyphs, language, features, output);
+            }
+        }
     }
 
     private static void Draw(FontFamily family)
@@ -59,8 +90,10 @@ internal static class FontTarget
             }
         }
 
-        text.Append("\nAV To 12 gy");
-        var options = new TextOptions(font) { WrappingLength = 120, Origin = new System.Numerics.Vector2(4, 4) };
+        text.Append("\nAV To 12 gy fi ffl e\u0301 a\u0308\u0301 \u03B1\u0301 \u0438\u0306");
+        var options = new TextOptions(font) { WrappingLength = 120, Origin = new System.Numerics.Vector2(4, 4), Language = "ro" };
+        options.Features.Add(FontFeature.On("smcp"));
+        options.Features.Add(new FontFeature("aalt", 2));
         _ = TextMeasurer.Measure(text.ToString(), options);
         _ = TextMeasurer.GetCharacterBounds(text.ToString(), options);
         OneImage.Drawing.Path path = TextBuilder.GeneratePath(text.ToString(), options);

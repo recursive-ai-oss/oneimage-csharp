@@ -154,6 +154,8 @@ internal sealed class Gdef
     private readonly int _classDef;
     private readonly int _markAttachClassDef;
     private readonly int[] _markSets;
+    private bool _classBroken;
+    private bool _attachBroken;
 
     private Gdef(ReadOnlyMemory<byte> data, int classDef, int markAttach, int[] markSets)
     {
@@ -208,11 +210,44 @@ internal sealed class Gdef
         }
     }
 
-    /// <summary>The GDEF class of a glyph, 0 when it has none.</summary>
-    public int GlyphClass(int glyph) => OtCommon.ClassOf(_data.Span, _classDef, glyph);
+    /// <summary>The GDEF class of a glyph, 0 when it has none or the class data is damaged.</summary>
+    public int GlyphClass(int glyph) => Read(ref _classBroken, _classDef, glyph);
 
-    public int MarkAttachClass(int glyph) => OtCommon.ClassOf(_data.Span, _markAttachClassDef, glyph);
+    public int MarkAttachClass(int glyph) => Read(ref _attachBroken, _markAttachClassDef, glyph);
 
-    public bool InMarkSet(int set, int glyph) =>
-        (uint)set < (uint)_markSets.Length && OtCommon.CoverageIndex(_data.Span, _markSets[set], glyph) >= 0;
+    public bool InMarkSet(int set, int glyph)
+    {
+        if ((uint)set >= (uint)_markSets.Length)
+        {
+            return false;
+        }
+
+        try
+        {
+            return OtCommon.CoverageIndex(_data.Span, _markSets[set], glyph) >= 0;
+        }
+        catch (FontFormatException)
+        {
+            return false;
+        }
+    }
+
+    // Damaged class data reads as "no class" from the first failure on, without paying for an exception per glyph.
+    private int Read(ref bool broken, int classDef, int glyph)
+    {
+        if (broken)
+        {
+            return 0;
+        }
+
+        try
+        {
+            return OtCommon.ClassOf(_data.Span, classDef, glyph);
+        }
+        catch (FontFormatException)
+        {
+            broken = true;
+            return 0;
+        }
+    }
 }

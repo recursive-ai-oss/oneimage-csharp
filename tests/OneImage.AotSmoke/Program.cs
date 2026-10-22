@@ -420,5 +420,23 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Shaping: ligatures, composed marks, features and a language through the OpenType engine (GSUB and GPOS lookups).
+{
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily shaped = fonts.Add(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSans-Shaping-Subset.ttf"));
+    var plain = new OneImage.Text.TextOptions(shaped.CreateFont(24));
+    var noLigatures = new OneImage.Text.TextOptions(shaped.CreateFont(24)) { Language = "ro" };
+    noLigatures.Features.Add(OneImage.Text.FontFeature.Off("liga"));
+    noLigatures.Features.Add(OneImage.Text.FontFeature.On("smcp"));
+    int ligated = OneImage.Text.TextMeasurer.GetCharacterBounds("afib", plain).Count;
+    int separate = OneImage.Text.TextMeasurer.GetCharacterBounds("afib", noLigatures).Count;
+    var marked = OneImage.Text.TextMeasurer.GetCharacterBounds("a\u0301 \u03B1\u0301 \u0438\u0306", plain);
+    if (ligated != 3 || separate != 4 || marked.Count < 6)
+    {
+        Console.Error.WriteLine("shaping smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;
