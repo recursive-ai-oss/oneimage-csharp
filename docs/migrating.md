@@ -331,18 +331,27 @@ long[] red = Image.Load(input).Histogram().Channel(0).ToArray();   // 256 bins; 
 
 ## Not in OneImage yet
 
-This is the one list of what ImageSharp 3.1.x has that OneImage 1.0 does not. It was built by going through the public API of ImageSharp 3.1.12 (the version this guide is checked against) and, for text, shapes and the web middleware, the feature sets of the SixLabors.Fonts, SixLabors.ImageSharp.Drawing and SixLabors.ImageSharp.Web packages. "Coming soon" means the work is planned and next in line; it is not a promise of a date. "Not planned" means we are not working on it and are not promising it.
+This is the one list of what ImageSharp 3.1.x has that OneImage 1.0 does not. It was built by going through the public API of ImageSharp 3.1.12 (the version this guide is checked against) and, for shapes, text and the web middleware, the public API and XML documentation of SixLabors.ImageSharp.Drawing 2.1.7, SixLabors.Fonts 2.1.3 and SixLabors.ImageSharp.Web 3.2.0. These are the last releases of those packages that build without a license key, matching the ImageSharp reference version; newer releases may offer more. "Coming soon" means the work is planned and next in line; it is not a promise of a date. "Not planned" means we are not working on it and are not promising it.
 
 Where OneImage has part of a feature, the table says what it covers and what it does not.
 
 ### Drawing and text: coming soon
 
+Drawing is SixLabors.ImageSharp.Drawing 2.1.7; text layout and fonts are SixLabors.Fonts 2.1.3. OneImage 1.0 has neither.
+
 | ImageSharp | As of 1.0 | Closest workaround |
 |---|---|---|
-| `Mutate(x => x.Fill(...))`, `Draw(...)`, `DrawLine`, `DrawPolygon`, `DrawBeziers`, `DrawPath`, `FillPolygon` and the `IPath`, `PathBuilder`, `Polygon`, `EllipsePolygon`, `RectangularPolygon` shapes (ImageSharp.Drawing) | No paths, shapes, fills or strokes. | Write pixels yourself through `Canvas.Lock`, or draw elsewhere and bring the result in with `Composite`. |
-| `Brush`, `SolidBrush`, `LinearGradientBrush`, `RadialGradientBrush`, `PatternBrush`, `ImageBrush`, `Pen` | None. | A gradient can be generated into a `Canvas` and composited. |
-| `DrawText`, `Font`, `FontCollection`, `TextOptions`, text shaping and layout (SixLabors.Fonts) | No fonts and no text rendering. | Render the text with another tool and `Composite` the result. |
-| Drawing clipped to a shape (`ShapeOptions`, `DrawingOptions`, `GraphicsOptions` anti-aliasing and blending) | None. | None. |
+| `Fill(...)` (whole image, rectangle, path, polygon, path collection), `Draw(...)` (rectangle, path, path collection), `DrawLine`, `DrawPolygon`, `DrawBeziers`, `DrawPath`, `FillPolygon`, `Clear(...)` | No paths, shapes, fills or strokes. | Write pixels yourself through `Canvas.Lock`, or draw elsewhere and bring the result in with `Composite`. |
+| Shapes and paths: `IPath`, `Path`, `PathBuilder` (lines, arcs, quadratic and cubic Béziers, SVG arc, figures, transforms), `Path.TryParseSvgPath`, `Polygon`, `ComplexPolygon`, `RectangularPolygon`, `RegularPolygon`, `Star`, `EllipsePolygon`, `PathCollection`; path `Translate`/`Scale`/`Rotate`/`Reverse`/`ComputeLength`; boolean `Clip` (`ClippingOperation`: union, intersection, difference, xor); `GenerateOutline` (stroke to outline) | None. | None. |
+| Brushes: `SolidBrush`, `LinearGradientBrush`, `RadialGradientBrush`, `EllipticGradientBrush`, `PathGradientBrush` (all with `ColorStop`s and `GradientRepetitionMode` None/Repeat/Reflect/DontFill where applicable), `PatternBrush` and the `Brushes` hatch presets (horizontal, vertical, diagonals, 10%, 20%, min), `ImageBrush`, `RecolorBrush` | None. | A gradient can be generated into a `Canvas` and composited. |
+| Pens: `Pen`, `SolidPen`, `PatternPen`, `Pens` (solid, dash, dot, dash-dot, dash-dot-dot), `PenOptions` (width, brush fill, dash pattern, `JointStyle` miter/round/square, `EndCapStyle` butt/round/square/joined/polygon) | None. | None. |
+| Clipping and options: `Clip(path, action)` (apply any processors only inside a path), `DrawingOptions` (`GraphicsOptions`, `ShapeOptions`, `Transform`), `ShapeOptions.IntersectionRule` (non-zero, even-odd) and `ClippingOperation`, `GraphicsOptions` anti-aliasing and blending | None. | None. |
+| `DrawText` (string or `RichTextOptions`, with a `Brush`, a `Pen` or both, also along a path with `RichTextOptions.Path`), `RichTextRun` (per-run brush, pen, underline, strikeout and overline pens), `TextBuilder.GenerateGlyphs` (text as a path) | No fonts and no text rendering. | Render the text with another tool and `Composite` the result. |
+| Fonts: `Font`, `FontFamily`, `FontCollection`, `SystemFonts`; TrueType, OpenType with CFF outlines, TrueType collections and WOFF/WOFF2 files; `FontStyle` and `TextAttributes` (sub/superscript), `TextDecorations` | No font parsing. | None. |
+| Text layout: `TextOptions` (origin, wrapping length, line spacing, tab width, horizontal and vertical alignment, `TextAlignment`, `TextJustification` inter-word/inter-character, `KerningMode`, `HintingMode`, `WordBreaking`, `Dpi`, `LayoutMode` horizontal and vertical modes, `FeatureTags`), `TextMeasurer`/`TextRenderer`/`TextLayout` | None. | None. |
+| Complex text in SixLabors.Fonts 2.1.3: OpenType GSUB/GPOS shaping (ligatures, kerning, marks), Arabic and Indic shapers, the Unicode bidirectional algorithm (`TextDirection` auto/LTR/RTL) and line breaking, font fallback (`TextOptions.FallbackFontFamilies`), color fonts (`ColorFontSupport.MicrosoftColrFormat`: COLR/CPAL) | None. | None. |
+
+Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with "CFF2 Fonts are not currently supported") and a public API for variable-font axes (the package lists the `rvrn` feature tag but exposes no axis settings). Also not covered by the colour-font option: SVG, `sbix`, CBDT and other bitmap colour glyphs.
 
 ### Blending: coming soon
 
@@ -383,9 +392,16 @@ Where OneImage has part of a feature, the table says what it covers and what it 
 
 ### Web middleware: coming soon
 
+SixLabors.ImageSharp.Web 3.2.0 (it depends on ImageSharp 3.1.11).
+
 | ImageSharp | As of 1.0 | Closest workaround |
 |---|---|---|
-| SixLabors.ImageSharp.Web: URL-driven resizing (`?width=...`), image providers, response caching | No ASP.NET Core package. | Call `Image.Thumbnail` or `Resize` in your own endpoint and cache the result. |
+| ASP.NET Core middleware: `AddImageSharp()` / `UseImageSharp()`, URL query commands handled by processors for resize (`width`, `height`, focal point, resize mode, anchor, sampler, pad color, orient, compand), `format`, `quality`, `bgcolor` and `autoorient` (`ResizeWebProcessor`, `FormatWebProcessor`, `QualityWebProcessor`, `BackgroundColorWebProcessor`, `AutoOrientWebProcessor`); custom processors, converters and request parsers; a preset-only parser (`PresetOnlyQueryCollectionRequestParser`) that accepts named presets instead of free commands | No ASP.NET Core package. | Call `Image.Thumbnail` or `Resize` in your own endpoint and cache the result. |
+| Image providers: `PhysicalFileSystemProvider`, `WebRootImageProvider`, `FileProviderImageProvider` (any `IFileProvider`), custom `IImageProvider`, `ProcessingBehavior` (`CommandOnly` or `All`) | None. | None. |
+| Caching: `PhysicalFileSystemCache` (on-disk, with a cache folder and folder depth), `IImageCache`, `ICacheKey` and `ICacheHash` (SHA-256), in-memory resolver and metadata caching, browser and cache max-age options, conditional requests | None. | Cache the saved output yourself. |
+| Security and helpers: HMAC-signed URLs (a token command checked with `HMACSecretKey`; SHA-256, SHA-384 and SHA-512 helpers in `HMACUtilities`), `ImageTagHelper` (`<img>` Razor tag helper with width, height, format, quality and so on) and `HmacTokenTagHelper` (adds the token), request and response hooks (`OnParseCommandsAsync`, `OnBeforeLoadAsync`, `OnBeforeSaveAsync`, `OnProcessedAsync`, `OnPrepareResponseAsync`, `OnComputeHMAC`) | None. | None. |
+
+Cloud storage providers (Azure Blob, AWS S3) and cache are not in the 3.2.0 package; they ship as separate ImageSharp.Web provider packages, which this comparison did not check.
 
 ### Formats: not planned
 

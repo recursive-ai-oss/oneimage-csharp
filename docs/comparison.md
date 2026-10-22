@@ -42,7 +42,7 @@ check theirs before you decide. Performance numbers are on the
 | Formats we use it for | PNG, JPEG, WebP, GIF, TIFF, BMP, ICO | JPEG, PNG, GIF, BMP, TIFF, WebP and a few more | JPEG, PNG, WebP, GIF, BMP decode, more through Skia | well over a hundred | what your libvips build includes |
 | ICC color management | ICC v2/v4 profiles, CMYK to sRGB, four intents | did not convert in our CMYK task | color spaces via Skia | LittleCMS | LittleCMS |
 | NativeAOT and trimming | supported, checked in CI | see its documentation | see its documentation | see its documentation | see its documentation |
-| Drawing, text, vectors | no | via the separate Drawing package | yes, a drawing engine | yes | limited |
+| Drawing, text, vectors | no | via the separate Drawing and Fonts packages | yes, a drawing engine | yes | limited |
 | Thumbnail a large JPEG | decodes at reduced scale, bounded memory | decodes with a target size | scaled decode | `jpeg:size` hint | `thumbnail` shrink-on-load |
 
 Notes on the table:
@@ -91,7 +91,7 @@ Notes on the table:
   no drawing yet, and no layers beyond a normal-mode `Composite`. SkiaSharp also decodes
   our 50-frame GIF test in less than half the time.
 - **ImageSharp has a larger ecosystem of processors and a longer
-  record,** and its Drawing and Fonts packages cover text and shapes. If
+  record,** and its Drawing and Fonts packages cover shapes, gradients and text, including complex-script shaping and right-to-left layout. If
   your license situation is fine and you rely on those, staying is
   reasonable. The [migration guide](migrating.md) shows the differences
   if you decide to move.
@@ -103,13 +103,13 @@ Notes on the table:
 
 ## Not in OneImage yet
 
-Compared with ImageSharp 3.1.12 and its Drawing, Fonts and Web packages, as of 1.0 OneImage does not have:
+Compared with ImageSharp 3.1.12 and its Drawing 2.1.7, Fonts 2.1.3 and Web 3.2.0 packages (the last releases that build without a license key), as of 1.0 OneImage does not have:
 
-- **Drawing and text:** shapes, paths, brushes, pens, gradients and text rendering. Coming soon.
+- **Drawing and text:** shapes and paths with boolean operations, fills and strokes (dashes, joins, caps), solid, gradient, pattern and image brushes, clipping to a path, and text (OpenType shaping, bidirectional layout, font fallback, COLR color fonts, text along a path). Coming soon.
 - **Blend modes** beyond normal source-over in `Composite`. Coming soon.
 - **Effects:** pixelate, oil paint, vignette, glow, bokeh blur, preset filters (sepia, Kodachrome, Lomograph, Polaroid), color-blindness filters, histogram equalization, adaptive threshold, the other edge detectors and dither matrices. Coming soon.
 - **Perspective transforms.** Coming soon. Affine transforms exist.
-- **ASP.NET Core resizing middleware.** Coming soon.
+- **ASP.NET Core resizing middleware:** URL-command resizing, file-system and web-root providers, a disk cache, HMAC-signed URLs and Razor tag helpers. Coming soon.
 - **Formats:** TGA, PBM and QOI. Not planned.
 
 Coming soon means planned, without a date. The [full list](migrating.md#not-in-oneimage-yet) has the exact ImageSharp APIs and what to use in the meantime.
