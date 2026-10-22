@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.Intrinsics;
 using OneImage.Kernels;
 
 namespace OneImage;
@@ -396,6 +397,31 @@ internal static class UnsharpKernel
         }
 
         bool alpha = layout.HasAlpha;
+
+        if (p == 4 && Vector128.IsHardwareAccelerated)
+        {
+            // One pixel per vector. Same operations, in the same order, as the scalar loop below, so both give identical bits.
+            var amountV = Vector128.Create(amount);
+            var thresholdV = Vector128.Create(threshold);
+            Vector128<int> alphaLane = Vector128.Create(0, 0, 0, -1);
+            Vector128<int> alphaIndex = Vector128.Create(3, 3, 3, 3);
+            for (int x = 0; x < width; x++)
+            {
+                Vector128<float> o = Vector128.Create(orig.Slice(x * 4, 4));
+                Vector128<float> d = o - Vector128.Create((ReadOnlySpan<float>)filtered.Slice(x * 4, 4));
+                Vector128<float> v = Vector128.ConditionalSelect(Vector128.GreaterThanOrEqual(Vector128.Abs(d), thresholdV), o + (amountV * d), o);
+                if (alpha)
+                {
+                    Vector128<float> a = Vector128.Shuffle(o, alphaIndex);
+                    v = Vector128.ConditionalSelect(alphaLane.AsSingle(), o, Vector128.Min(Vector128.Max(v, Vector128<float>.Zero), a));
+                }
+
+                v.CopyTo(filtered.Slice(x * 4, 4));
+            }
+
+            return;
+        }
+
         for (int x = 0; x < width; x++)
         {
             int i = x * p;
