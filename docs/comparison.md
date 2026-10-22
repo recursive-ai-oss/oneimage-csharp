@@ -107,7 +107,6 @@ Compared with ImageSharp 3.1.12 and its Drawing 2.1.7, Fonts 2.1.3 and Web 3.2.0
 
 - **Drawing and text:** shapes and paths with boolean operations, fills and strokes (dashes, joins, caps), solid, gradient, pattern and image brushes, clipping to a path, and text (OpenType shaping, bidirectional layout, font fallback, COLR color fonts, text along a path). Coming soon.
 - **Effects:** histogram equalization, adaptive threshold and the extra dither matrices and palettes. Coming soon.
-- **ASP.NET Core resizing middleware:** URL-command resizing, file-system and web-root providers, a disk cache, HMAC-signed URLs and Razor tag helpers. Coming soon.
 - **Formats:** TGA, PBM and QOI. Not planned.
 
 Coming soon means planned, without a date. The [full list](migrating.md#not-in-oneimage-yet) has the exact ImageSharp APIs and what to use in the meantime.

@@ -98,6 +98,8 @@ errors appear, how sources are held, limits and threading.
   trimming, formats). The API reference is the XML documentation your
   IDE shows.
 - **Migrating:** [from ImageSharp and System.Drawing](docs/migrating.md).
+- **Serving images from ASP.NET Core:** [OneImage.Web](docs/web.md), URL-driven
+  resizing with a disk cache, signed URLs and request limits.
 - **Choosing a library:** [how OneImage compares](docs/comparison.md),
   including where the others win.
 - **Evidence:** [benchmark tables](docs/performance.md#results-at-a-glance)

@@ -1,13 +1,17 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/OneImage/OneImage.csproj" />
+    <Project Path="src/OneImage.Web/OneImage.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/OneImage.Tests/OneImage.Tests.csproj" />
     <Project Path="tests/OneImage.AotSmoke/OneImage.AotSmoke.csproj" />
+    <Project Path="tests/OneImage.Web.Tests/OneImage.Web.Tests.csproj" />
+    <Project Path="tests/OneImage.Web.AotSmoke/OneImage.Web.AotSmoke.csproj" />
   </Folder>
   <Folder Name="/bench/">
     <Project Path="bench/OneImage.Benchmarks/OneImage.Benchmarks.csproj" />
+    <Project Path="bench/OneImage.Web.Benchmarks/OneImage.Web.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/GenericCmyk/GenericCmyk.csproj" />

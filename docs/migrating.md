@@ -505,16 +505,18 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 
 `BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`, and `ProjectiveTransformBuilder` by `Perspective` (see [Perspective transforms](#perspective-transforms)). `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.
 
-### Web middleware: coming soon
+### Web middleware
 
-SixLabors.ImageSharp.Web 3.2.0 (it depends on ImageSharp 3.1.11).
+SixLabors.ImageSharp.Web 3.2.0 (it depends on ImageSharp 3.1.11) maps to the separate `RecursiveAI.OneImage.Web` package. [The web guide](web.md) has the details; the short version:
 
-| ImageSharp | As of 1.0 | Closest workaround |
-|---|---|---|
-| ASP.NET Core middleware: `AddImageSharp()` / `UseImageSharp()`, URL query commands handled by processors for resize (`width`, `height`, focal point, resize mode, anchor, sampler, pad color, orient, compand), `format`, `quality`, `bgcolor` and `autoorient` (`ResizeWebProcessor`, `FormatWebProcessor`, `QualityWebProcessor`, `BackgroundColorWebProcessor`, `AutoOrientWebProcessor`); custom processors, converters and request parsers; a preset-only parser (`PresetOnlyQueryCollectionRequestParser`) that accepts named presets instead of free commands | No ASP.NET Core package. | Call `Image.Thumbnail` or `Resize` in your own endpoint and cache the result. |
-| Image providers: `PhysicalFileSystemProvider`, `WebRootImageProvider`, `FileProviderImageProvider` (any `IFileProvider`), custom `IImageProvider`, `ProcessingBehavior` (`CommandOnly` or `All`) | None. | None. |
-| Caching: `PhysicalFileSystemCache` (on-disk, with a cache folder and folder depth), `IImageCache`, `ICacheKey` and `ICacheHash` (SHA-256), in-memory resolver and metadata caching, browser and cache max-age options, conditional requests | None. | Cache the saved output yourself. |
-| Security and helpers: HMAC-signed URLs (a token command checked with `HMACSecretKey`; SHA-256, SHA-384 and SHA-512 helpers in `HMACUtilities`), `ImageTagHelper` (`<img>` Razor tag helper with width, height, format, quality and so on) and `HmacTokenTagHelper` (adds the token), request and response hooks (`OnParseCommandsAsync`, `OnBeforeLoadAsync`, `OnBeforeSaveAsync`, `OnProcessedAsync`, `OnPrepareResponseAsync`, `OnComputeHMAC`) | None. | None. |
+| ImageSharp.Web | OneImage.Web |
+|---|---|
+| `AddImageSharp()` / `UseImageSharp()` | `AddOneImage()` / `UseOneImage()`. The builder offers `AddProvider`, `ClearProviders`, `SetCache`, `SetCacheKey`, `SetCacheHash`, `Configure` and `ConfigureCache`. |
+| Query commands `width`, `height`, `xy`, `rmode`, `ranchor`, `rsampler`, `color`, `bgcolor`, `orient`/`autoorient`, `compand`, `format`, `quality`; `PresetOnlyQueryCollectionRequestParser` | All accepted (alongside shorter names such as `w`, `h`, `fit`, `q`); `PresetsOnly = true`. `rmode=manual` and the samplers `welch`, `hermite`, `spline`, `robidoux`, `lanczos5`, `lanczos8` are rejected with 400. Call `options.UseImageSharpDefaults()` to get ImageSharp.Web's default of cropping and enlarging when a width and height are given. |
+| `PhysicalFileSystemProvider`, `WebRootImageProvider`, `FileProviderImageProvider`, `IImageProvider`, `ProcessingBehavior` | `PhysicalFileImageProvider`, `WebRootImageProvider`, `FileProviderImageProvider`, `IImageProvider` (a simpler interface: `Match` and `GetAsync` returning a source with a modified time, a length and a stream), `ProcessingBehavior`. |
+| `PhysicalFileSystemCache`, `IImageCache`, `ICacheKey`, `ICacheHash`, `CacheFolderDepth`, `CacheHashLength`, `BrowserMaxAge`, `CacheMaxAge`, conditional requests | Same names and meanings. The default cache folder is `oneimage-cache` in the content root rather than under `wwwroot`, the default hash length is 32, and ETags are known without reading the cache. There is no in-memory resolver cache. |
+| `HMACSecretKey`, `HMACUtilities`, `ImageTagHelper`, `HmacTokenTagHelper` | `HmacSecretKey`, `HmacUtilities`, `ImageUrlSigner` and `ImageTagHelper` (`oi-width`, `oi-format` and so on; it adds the token itself). Tokens are not interchangeable with ImageSharp.Web's; regenerate signed URLs. A request that needs a token and lacks one gets 403. |
+| `OnParseCommandsAsync`, `OnBeforeSaveAsync`, `OnProcessedAsync`, `OnPrepareResponseAsync`; custom `IImageWebProcessor` | The same four hooks (`OnBeforeLoadAsync` and `OnComputeHMAC` are not offered). A custom processor becomes work on the lazy `Image` in `OnBeforeSaveAsync`. |
 
 Cloud storage providers (Azure Blob, AWS S3) and cache are not in the 3.2.0 package; they ship as separate ImageSharp.Web provider packages, which this comparison did not check.
 
