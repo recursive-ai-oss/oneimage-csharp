@@ -35,10 +35,13 @@ internal sealed class GifState
     public int LastDrawn = -1;
     public byte[]? Saved; // pixels under the last frame's rectangle, kept for disposal "restore to previous"
 
-    // Canvases up to PooledCanvasBytes are rented from the shared pool so repeated loads of small animations reuse memory; images have no
-    // Dispose, so the finalizer gives them back. Bigger canvases are plain arrays: the shared pool keeps what it is handed (per core, until
-    // a memory-pressure trim), and a process decoding many large screens would otherwise hold them all.
+    // Canvases up to PooledCanvasBytes come from, and go back to, one process-wide spare, so repeated loads of small animations reuse the
+    // same memory; images have no Dispose, so the finalizer gives the canvas back. The shared array pool is not used here: it trims what it
+    // holds after collections, which turned every load into a fresh megabyte. Bigger canvases are plain arrays, so a process decoding many
+    // large screens does not keep them all.
     internal const int PooledCanvasBytes = 1 << 20;
+
+    private static byte[]? s_spareCanvas;
 
     private bool _canvasPooled;
 
@@ -50,9 +53,14 @@ internal sealed class GifState
         if (bytes <= PooledCanvasBytes)
         {
             _canvasPooled = true;
-            byte[] pooled = ArrayPool<byte>.Shared.Rent(bytes);
-            pooled.AsSpan(0, bytes).Clear();
-            return pooled;
+            byte[]? spare = Interlocked.Exchange(ref s_spareCanvas, null);
+            if (spare == null || spare.Length < bytes || spare.Length / 2 > bytes)
+            {
+                spare = new byte[bytes]; // a spare of the wrong size is dropped rather than held for an animation that no longer exists
+            }
+
+            spare.AsSpan(0, bytes).Clear();
+            return spare;
         }
 
         _canvasPooled = false;
@@ -95,7 +103,7 @@ internal sealed class GifState
         Saved = null;
         if (c != null && _canvasPooled)
         {
-            ArrayPool<byte>.Shared.Return(c);
+            Interlocked.CompareExchange(ref s_spareCanvas, c, null);
         }
     }
 }
@@ -116,8 +124,10 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
 {
     public static GifDecoder Instance { get; } = new();
 
-    [ThreadStatic]
-    private static LzwDecoder? t_lzw;
+    // One spare decoder for the whole process, taken and given back around each frame. Frames are decoded one at a time per image, but a
+    // thread-pool worker may decode any of them, so a per-thread decoder would end up on every worker that ever touched a GIF and keep its
+    // tables alive with the thread. A second image decoding at the same moment simply makes its own and drops it afterwards.
+    private static LzwDecoder? s_lzw;
 
     // Frames are composited from the start; the decoder keeps the canvas of the last frame it produced, so reading frames in order and
     // reading one frame tile by tile are both cheap. Going back to an earlier frame replays from the first.
@@ -653,8 +663,8 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         // The ratio guard of the LZW decoder is tuned for deflate; LZW can legitimately shrink a solid color by more than 1000x. Output is
         // capped by the frame's own size instead, and one 12-bit code expands to at most 4094 bytes, so input bounds the work.
         _ = limits;
-        // One decoder per thread (its tables are about 68 KB) instead of one per frame; the frame limit is set again by Reset.
-        LzwDecoder lzw = t_lzw ??= new LzwDecoder(LzwVariant.Gif);
+        // The decoder's tables are about 68 KB, so one is reused across frames; the frame limit is set again by Reset.
+        LzwDecoder lzw = Interlocked.Exchange(ref s_lzw, null) ?? new LzwDecoder(LzwVariant.Gif);
         lzw.Reset(f.MinCodeSize, (long)f.Width * f.Height, 0);
         byte[] rowBuf = ArrayPool<byte>.Shared.Rent(f.Width);
         byte[] inBuf = ArrayPool<byte>.Shared.Rent(4096);
@@ -719,6 +729,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         }
         finally
         {
+            Interlocked.CompareExchange(ref s_lzw, lzw, null);
             ArrayPool<byte>.Shared.Return(rowBuf);
             ArrayPool<byte>.Shared.Return(inBuf);
         }

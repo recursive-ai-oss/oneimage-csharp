@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace OneImage.Ops.Quantize;
@@ -208,61 +209,80 @@ internal sealed class ColorQuantizer
         bool full = _alpha == QuantizeAlpha.Full;
 
         // Gather populated cells (mean color, weight) before the histogram is turned into cumulative moments.
-        var cells = new List<Cell>();
-        for (int ab = 1; ab < _aDim; ab++)
+        // The cells go in a pooled array that doubles by renting: a growing List would leave every smaller copy behind as garbage
+        // for each palette built, and an animation builds many.
+        Cell[] cells = ArrayPool<Cell>.Shared.Rent(4096);
+        int cellCount = 0;
+        try
         {
-            for (int r = 1; r < D; r++)
+            for (int ab = 1; ab < _aDim; ab++)
             {
-                for (int g = 1; g < D; g++)
+                for (int r = 1; r < D; r++)
                 {
-                    int rowBase = (((((ab * D) + r) * D) + g) * D);
-                    for (int b = 1; b < D; b++)
+                    for (int g = 1; g < D; g++)
                     {
-                        long w = _w[rowBase + b];
-                        if (w == 0)
+                        int rowBase = (((((ab * D) + r) * D) + g) * D);
+                        for (int b = 1; b < D; b++)
                         {
-                            continue;
-                        }
+                            long w = _w[rowBase + b];
+                            if (w == 0)
+                            {
+                                continue;
+                            }
 
-                        int lutIndex = (((((full ? (_aDim == 2 ? 7 : ab - 1) : 0) << 5) | (r - 1)) << 5 | (g - 1)) << 5) | (b - 1);
-                        cells.Add(new Cell(lutIndex, w, (int)((_r[rowBase + b] + (w >> 1)) / w), (int)((_g[rowBase + b] + (w >> 1)) / w), (int)((_b[rowBase + b] + (w >> 1)) / w), (int)((_a[rowBase + b] + (w >> 1)) / w)));
+                            int lutIndex = (((((full ? (_aDim == 2 ? 7 : ab - 1) : 0) << 5) | (r - 1)) << 5 | (g - 1)) << 5) | (b - 1);
+                            if (cellCount == cells.Length)
+                            {
+                                Cell[] bigger = ArrayPool<Cell>.Shared.Rent(cells.Length * 2);
+                                Array.Copy(cells, bigger, cellCount);
+                                ArrayPool<Cell>.Shared.Return(cells);
+                                cells = bigger;
+                            }
+
+                            cells[cellCount++] = new Cell(lutIndex, w, (int)((_r[rowBase + b] + (w >> 1)) / w), (int)((_g[rowBase + b] + (w >> 1)) / w), (int)((_b[rowBase + b] + (w >> 1)) / w), (int)((_a[rowBase + b] + (w >> 1)) / w));
+                        }
                     }
                 }
             }
-        }
 
-        var entries = new List<(int R, int G, int B, int A)>();
-        if (cells.Count > 0)
+            var entries = new List<(int R, int G, int B, int A)>();
+            if (cellCount > 0)
+            {
+                CumulateMoments();
+                SplitBoxes(target, entries);
+                Refine(cells.AsSpan(0, cellCount), entries);
+            }
+
+            int count = entries.Count;
+            int tIndex = -1;
+            var rgba = new byte[(count + (addTransparent ? 1 : 0)) * 4];
+            for (int i = 0; i < count; i++)
+            {
+                rgba[i * 4] = (byte)entries[i].R;
+                rgba[(i * 4) + 1] = (byte)entries[i].G;
+                rgba[(i * 4) + 2] = (byte)entries[i].B;
+                rgba[(i * 4) + 3] = (byte)entries[i].A;
+            }
+
+            if (addTransparent)
+            {
+                tIndex = count;
+                count++;
+            }
+
+            var palette = new QuantizedPalette(rgba, count, tIndex, _alpha, _alphaThreshold, null);
+            for (int ci = 0; ci < cellCount; ci++)
+            {
+                Cell c = cells[ci];
+                palette.SeedCell(c.LutIndex, c.R, c.G, c.B, c.A);
+            }
+
+            return palette;
+        }
+        finally
         {
-            CumulateMoments();
-            SplitBoxes(target, entries);
-            Refine(cells, entries);
+            ArrayPool<Cell>.Shared.Return(cells);
         }
-
-        int count = entries.Count;
-        int tIndex = -1;
-        var rgba = new byte[(count + (addTransparent ? 1 : 0)) * 4];
-        for (int i = 0; i < count; i++)
-        {
-            rgba[i * 4] = (byte)entries[i].R;
-            rgba[(i * 4) + 1] = (byte)entries[i].G;
-            rgba[(i * 4) + 2] = (byte)entries[i].B;
-            rgba[(i * 4) + 3] = (byte)entries[i].A;
-        }
-
-        if (addTransparent)
-        {
-            tIndex = count;
-            count++;
-        }
-
-        var palette = new QuantizedPalette(rgba, count, tIndex, _alpha, _alphaThreshold, null);
-        foreach (Cell c in cells)
-        {
-            palette.SeedCell(c.LutIndex, c.R, c.G, c.B, c.A);
-        }
-
-        return palette;
     }
 
     private readonly record struct Cell(int LutIndex, long W, int R, int G, int B, int A);
@@ -467,7 +487,7 @@ internal sealed class ColorQuantizer
         }
     }
 
-    private static void Refine(List<Cell> cells, List<(int R, int G, int B, int A)> entries)
+    private static void Refine(ReadOnlySpan<Cell> cells, List<(int R, int G, int B, int A)> entries)
     {
         int n = entries.Count;
         int padded = Kernels.QuantizeKernels.PaddedLength(n);
