@@ -269,6 +269,13 @@ internal sealed class JpegPipeline<T> : IDisposable
                     JpegDiagnostics.ReducedBlocks += p.BxHi - p.BxLo;
                 }
 
+                if (p.Ss == 1)
+                {
+                    JpegIdct.DcRow(row.Slice(p.BxLo * 64), p.BxHi - p.BxLo, quant[0], p.Ring.AsSpan(rowBase + p.BxLo), _precision);
+                    store.Release(p.Src, (r * p.Src.V) + br);
+                    continue;
+                }
+
                 for (int bx = p.BxLo; bx < p.BxHi; bx++)
                 {
                     JpegIdct.Block(row.Slice(bx * 64, 64), quant, p.Ring.AsSpan(rowBase + (bx * p.Ss)), p.PlaneW, p.Ss, _precision);

@@ -200,6 +200,118 @@ internal sealed partial class JpegReader
         throw new ImageFormatException("Invalid JPEG Huffman code.");
     }
 
+    /// <summary>The DC value of a sequential block; the AC data is read past without being decoded, and only <c>block[0]</c> is written.</summary>
+    private void DecodeBlockDcOnly(Span<short> block, ref int pred, JpegHuffmanTable dc, JpegHuffmanTable ac)
+    {
+        ushort[] dcFast = dc.Fast;
+        ushort[] skip = ac.Skip;
+        ulong bits = _bits;
+        int count = _count;
+        if (count < 32)
+        {
+            _bits = bits;
+            _count = count;
+            Fill();
+            bits = _bits;
+            count = _count;
+        }
+
+        int e = dcFast[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
+        int t;
+        if (e != 0)
+        {
+            int l = e >> 8;
+            bits <<= l;
+            count -= l;
+            t = e & 0xFF;
+        }
+        else
+        {
+            _bits = bits;
+            _count = count;
+            t = DecodeHuffmanSlow(dc);
+            bits = _bits;
+            count = _count;
+        }
+
+        if (t > 15)
+        {
+            throw new ImageFormatException("Invalid JPEG DC coefficient size.");
+        }
+
+        if (t != 0)
+        {
+            int v = (int)(bits >> (64 - t));
+            bits <<= t;
+            count -= t;
+            pred += v + (((v - (1 << (t - 1))) >> 31) & ((-1 << t) + 1));
+        }
+
+        block[0] = (short)pred;
+        int k = 1;
+        while (k < 64)
+        {
+            if (count < 32)
+            {
+                _bits = bits;
+                _count = count;
+                Fill();
+                bits = _bits;
+                count = _count;
+            }
+
+            int x = skip[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
+            if (x != 0)
+            {
+                int total = x >> 8;
+                int advance = x & 0xFF;
+                bits <<= total;
+                count -= total;
+                if (advance == 64)
+                {
+                    break;
+                }
+
+                k += advance;
+                if (k > 64 && advance != 16)
+                {
+                    throw new ImageFormatException("JPEG AC coefficient index out of range.");
+                }
+
+                continue;
+            }
+
+            _bits = bits;
+            _count = count;
+            int rs = DecodeHuffmanSlow(ac);
+            bits = _bits;
+            count = _count;
+            int s = rs & 15;
+            if (s == 0)
+            {
+                if (rs != 0xF0)
+                {
+                    break;
+                }
+
+                k += 16;
+                continue;
+            }
+
+            k += (rs >> 4) + 1;
+            if (k > 64)
+            {
+                throw new ImageFormatException("JPEG AC coefficient index out of range.");
+            }
+
+            bits <<= s;
+            count -= s;
+        }
+
+        _bits = bits;
+        _count = count;
+    }
+
     /// <summary>
     /// Decodes one sequential block (T.81 F.2.2): the DC difference and the run-length coded AC coefficients, written in
     /// natural order. The hot loop keeps the bit buffer in locals, which is what makes the entropy stage fast.
@@ -219,6 +331,12 @@ internal sealed partial class JpegReader
         ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
         ushort[] dcFast = dc.Fast;
         ushort[] acFast = ac.Fast;
+        if (dcOnly)
+        {
+            DecodeBlockDcOnly(block, ref pred, dc, ac);
+            return;
+        }
+
         block[..64].Clear();
         ulong bits = _bits;
         int count = _count;

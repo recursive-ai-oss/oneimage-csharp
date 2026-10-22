@@ -70,6 +70,12 @@ internal static class JpegIdct
                 return;
             }
 
+            if (size == 1)
+            {
+                d[0] = (byte)Idct1(coef[0], quant[0], precision);
+                return;
+            }
+
             Span<ushort> tmp = stackalloc ushort[16];
             Reduced(coef, quant, tmp, size, precision);
             for (int y = 0; y < size; y++)
@@ -265,6 +271,24 @@ internal static class JpegIdct
     {
         int v = Descale(dc * q, 3) + (1 << (precision - 1));
         return (ushort)Math.Clamp(v, 0, (1 << precision) - 1);
+    }
+
+    /// <summary>
+    /// The 1/8-size transform of a whole row of blocks: one sample per block, from the DC coefficient alone
+    /// (<paramref name="blocks"/> holds 64 coefficients per block, of which only the first is read).
+    /// </summary>
+    public static void DcRow<T>(ReadOnlySpan<short> blocks, int count, int quant, Span<T> dst, int precision)
+        where T : unmanaged, IBinaryInteger<T>
+    {
+        blocks = blocks[..(count * 64)];
+        dst = dst[..count];
+        int max = (1 << precision) - 1;
+        int bias = 1 << (precision - 1);
+        for (int i = 0; i < dst.Length; i++)
+        {
+            int v = Descale(blocks[i * 64] * quant, 3) + bias;
+            dst[i] = T.CreateTruncating(v < 0 ? 0 : v > max ? max : v);
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

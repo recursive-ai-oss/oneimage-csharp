@@ -121,6 +121,35 @@ internal sealed class JpegHuffmanTable
     /// <summary>Entries are <c>(length &lt;&lt; 8) | symbol</c>, or 0 when the code is longer than <see cref="FastBits"/>.</summary>
     public readonly ushort[] Fast = new ushort[1 << FastBits];
 
+    private ushort[]? _skip;
+
+    /// <summary>
+    /// For decoders that only need to get past AC data: entries are <c>(bits &lt;&lt; 8) | advance</c>, where bits is the code length
+    /// plus the size of the coefficient that follows, and advance is how far the coefficient index moves (run + 1, 16 for a
+    /// run of sixteen zeros, 64 for end of block). 0 means the code is longer than <see cref="FastBits"/>.
+    /// </summary>
+    public ushort[] Skip => _skip ??= BuildSkip();
+
+    private ushort[] BuildSkip()
+    {
+        var skip = new ushort[Fast.Length];
+        for (int i = 0; i < skip.Length; i++)
+        {
+            int e = Fast[i];
+            if (e == 0)
+            {
+                continue;
+            }
+
+            int rs = e & 0xFF;
+            int size = rs & 15;
+            int advance = size != 0 ? (rs >> 4) + 1 : rs == 0xF0 ? 16 : 64;
+            skip[i] = (ushort)(((e >> 8) + size) << 8 | advance);
+        }
+
+        return skip;
+    }
+
     /// <summary>Largest code of each length, or -1.</summary>
     public readonly int[] MaxCode = new int[18];
 
