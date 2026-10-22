@@ -127,13 +127,17 @@ internal sealed class TiffBlockCache
                     throw;
                 }
 
-                e.Block = block;
-                e.Size = length(state);
+                long size = length(state);
                 block.TryAcquire();
+
+                // Publishing the block and the liveness check happen under one lock: Clear/Drop may run at any moment and
+                // must either see the finished entry (and release the cache's reference) or not see the block at all.
                 lock (_gate)
                 {
                     if (e.Node is not null)
                     {
+                        e.Block = block;
+                        e.Size = size;
                         _used += e.Size;
                         while (_used > _budget && _lru.Last is { } last && last.Value != e)
                         {

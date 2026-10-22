@@ -124,6 +124,61 @@ public sealed class TiffRobustnessTests
     }
 
     [Fact]
+    public void BlockCacheKeepsLeasedBlocksIntactWhileCleared()
+    {
+        // Readers verify the whole buffer while another thread clears: a block must never reach the pool under a reader.
+        var cache = new TiffBlockCache(1L << 20);
+        using var stop = new CancellationTokenSource();
+        Task clearer = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                cache.Clear();
+            }
+        });
+        int bad = 0;
+        try
+        {
+            Parallel.For(0, 8, new ParallelOptions { MaxDegreeOfParallelism = 8 }, t =>
+            {
+                for (int i = 0; i < 20000; i++)
+                {
+                    long key = (i * 7) % 5;
+                    TiffBlock b = cache.GetOrCompute(
+                        key,
+                        key,
+                        static k =>
+                        {
+                            byte[] d = System.Buffers.ArrayPool<byte>.Shared.Rent(4096);
+                            d.AsSpan(0, 4096).Fill((byte)(k + 1));
+                            return d;
+                        },
+                        static _ => 4096);
+                    try
+                    {
+                        byte[] d = b.Data;
+                        if (d[0] != (byte)(key + 1) || d[4095] != (byte)(key + 1))
+                        {
+                            Interlocked.Increment(ref bad);
+                        }
+                    }
+                    finally
+                    {
+                        b.Release();
+                    }
+                }
+            });
+        }
+        finally
+        {
+            stop.Cancel();
+            clearer.Wait();
+        }
+
+        Assert.Equal(0, bad);
+    }
+
+    [Fact]
     public void LoadedImageCropMatchesFullDecode()
     {
         var b = new TiffBuilder { Width = 700, Height = 500, Bits = 16, Spp = 3, Photometric = 2, TileW = 128, TileH = 64, Compression = 8, Predictor = 2 };
