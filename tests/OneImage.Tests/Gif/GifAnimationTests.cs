@@ -184,6 +184,13 @@ public class GifAnimationTests
 
     private static long Rss()
     {
+        // VmRSS is read straight from the kernel on Linux; other systems report the working set.
+        if (!OperatingSystem.IsLinux())
+        {
+            using Process self = Process.GetCurrentProcess();
+            return self.WorkingSet64;
+        }
+
         foreach (string line in File.ReadLines("/proc/self/status"))
         {
             if (line.StartsWith("VmRSS:", StringComparison.Ordinal))

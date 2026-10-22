@@ -10,7 +10,15 @@ public sealed class DocsExamples : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("oneimage-docs-");
 
-    public void Dispose() => _dir.Delete(recursive: true);
+    // Images loaded from a path keep a shared read handle on the file while they are reachable. On Windows a directory
+    // cannot be removed while a handle inside it is open, so let the finalizers release them before cleaning up.
+    public void Dispose()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        _dir.Delete(recursive: true);
+    }
 
     private string P(string name) => Path.Combine(_dir.FullName, name);
 
