@@ -262,6 +262,67 @@ public class LzwTests
         return bytes.ToArray();
     }
 
+    [Fact]
+    public void ResetReusesDecoderAndEncoderAcrossStreams()
+    {
+        foreach (LzwVariant v in new[] { LzwVariant.Gif, LzwVariant.Tiff })
+        {
+            var sink = new ArrayBufferWriter<byte>();
+            var enc = new LzwEncoder(sink, v, 8);
+            var dec = new LzwDecoder(v, 8);
+            byte[] outBuf = new byte[1 << 16];
+            for (int round = 0; round < 4; round++)
+            {
+                int bits = v == LzwVariant.Gif ? 2 + (round * 2) : 8;
+                byte[] data = Symbols(20_000 + (round * 7000), bits, round, round % 2 == 0);
+                sink.Clear();
+                enc.Reset(bits);
+                enc.Write(data);
+                enc.Finish();
+                Assert.Equal(LzwEncoder.Compress(data, v, bits), sink.WrittenSpan.ToArray());
+                dec.Reset(bits);
+                var result = new MemoryStream();
+                byte[] z = sink.WrittenSpan.ToArray();
+                int pos = 0;
+                while (true)
+                {
+                    InflateStatus st = dec.Decode(z.AsSpan(pos), outBuf.AsSpan(0, 1000 + (round * 333)), out int c, out int w);
+                    result.Write(outBuf, 0, w);
+                    pos += c;
+                    if (st == InflateStatus.Done)
+                    {
+                        break;
+                    }
+                }
+
+                Assert.Equal(data, result.ToArray());
+            }
+        }
+    }
+
+    [Fact]
+    public void LongAndOddLengthStringsDecodeExactly()
+    {
+        // Runs of one symbol build strings of every length up to 4096; mixed run lengths hit all chunk remainders.
+        var rnd = new Random(9);
+        var data = new List<byte>();
+        for (int i = 0; i < 300; i++)
+        {
+            byte sym = (byte)rnd.Next(4);
+            data.AddRange(Enumerable.Repeat(sym, rnd.Next(1, 5000)));
+        }
+
+        byte[] arr = data.ToArray();
+        foreach (LzwVariant v in new[] { LzwVariant.Gif, LzwVariant.Tiff })
+        {
+            byte[] z = LzwEncoder.Compress(arr, v, v == LzwVariant.Gif ? 2 : 8);
+            foreach (int outChunk in new[] { 1 << 20, 4097, 4096, 1000, 13, 7 })
+            {
+                Assert.True(arr.AsSpan().SequenceEqual(Decode(z, v, 2, int.MaxValue, outChunk)), $"{v} outChunk={outChunk}");
+            }
+        }
+    }
+
     // ---- malformed input and guards -----------------------------------------------------------------
 
     [Fact]

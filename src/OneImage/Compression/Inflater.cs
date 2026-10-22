@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Numerics;
+using System.Runtime.Intrinsics;
 
 namespace OneImage.Compression;
 
@@ -599,6 +600,66 @@ internal sealed class Inflater : IDisposable
         }
     }
 
+    /// <summary>
+    /// Copies a match inside the window. Callers guarantee 0 &lt; dist &lt;= wp and slack after the soft limit, so
+    /// chunked copies that overshoot the match by a few bytes stay inside the buffer; the overshoot is overwritten later.
+    /// </summary>
+    private static void CopyMatch(byte[] win, int wp, int dist, int length)
+    {
+        int src = wp - dist;
+        if (dist >= 16)
+        {
+            int n = length;
+            int t = wp;
+            int s = src;
+            do
+            {
+                Vector128.Create(new ReadOnlySpan<byte>(win, s, 16)).CopyTo(new Span<byte>(win, t, 16));
+                s += 16;
+                t += 16;
+                n -= 16;
+            }
+            while (n > 0);
+        }
+        else if (dist == 1)
+        {
+            win.AsSpan(wp, length).Fill(win[src]);
+        }
+        else if (length <= 16)
+        {
+            for (int i = 0; i < length; i++)
+            {
+                win[wp + i] = win[src + i];
+            }
+        }
+        else
+        {
+            // Short period: write the first 16 bytes one by one, then copy 16 at a time from a multiple of the
+            // period that is at least 16 back, which still reproduces the repeating pattern.
+            for (int i = 0; i < 16; i++)
+            {
+                win[wp + i] = win[src + i];
+            }
+
+            int d2 = dist;
+            while (d2 < 16)
+            {
+                d2 += dist;
+            }
+
+            int t = wp + 16;
+            int s = t - d2;
+            int n = length - 16;
+            while (n > 0)
+            {
+                Vector128.Create(new ReadOnlySpan<byte>(win, s, 16)).CopyTo(new Span<byte>(win, t, 16));
+                s += 16;
+                t += 16;
+                n -= 16;
+            }
+        }
+    }
+
     /// <summary>Hot loop. Returns 0 at end of block, 1 when more input is needed, 2 when the window is full.</summary>
     private int DecodeBlock(ReadOnlySpan<byte> input, ref int inPos, byte[] win)
     {
@@ -611,6 +672,79 @@ internal sealed class Inflater : IDisposable
         const int LitMask = (1 << HuffmanTable.LitRootBits) - 1;
         const int DistMask = (1 << HuffmanTable.DistRootBits) - 1;
         int result;
+
+        // Fast loop: while at least 8 input bytes remain, one refill guarantees 56 bits, enough for three
+        // literals (3 x 15) or a whole length/distance pair (15 + 5 + 15 + 13), so no per-symbol input checks.
+        while (ip <= input.Length - 8 && wp <= SoftLimit)
+        {
+            bitbuf |= BinaryPrimitives.ReadUInt64LittleEndian(input.Slice(ip)) << bitcount;
+            ip += (63 - bitcount) >> 3;
+            bitcount |= 56;
+            for (int k = 0; k < 3; k++)
+            {
+                uint e = lit[(int)(bitbuf & LitMask)];
+                if ((e & HuffmanTable.TypeMask) == HuffmanTable.TypeSub)
+                {
+                    e = lit[(int)(e >> 16) + (int)((bitbuf >> HuffmanTable.LitRootBits) & ((1u << (int)((e >> 12) & 15)) - 1))];
+                }
+
+                int clen = (int)(e & 0xFF);
+                uint type = e & HuffmanTable.TypeMask;
+                if (type == HuffmanTable.TypeLiteral)
+                {
+                    bitbuf >>= clen;
+                    bitcount -= clen;
+                    win[wp++] = (byte)(e >> 16);
+                    continue;
+                }
+
+                if (type == HuffmanTable.TypeBase)
+                {
+                    int extra = (int)((e >> 12) & 15);
+                    int length = (int)(e >> 16) + (int)((bitbuf >> clen) & ((1UL << extra) - 1));
+                    ulong tb = bitbuf >> (clen + extra);
+                    int tc = bitcount - clen - extra;
+                    uint d = dst[(int)(tb & DistMask)];
+                    if ((d & HuffmanTable.TypeMask) == HuffmanTable.TypeSub)
+                    {
+                        d = dst[(int)(d >> 16) + (int)((tb >> HuffmanTable.DistRootBits) & ((1u << (int)((d >> 12) & 15)) - 1))];
+                    }
+
+                    if ((d & HuffmanTable.TypeMask) != HuffmanTable.TypeBase)
+                    {
+                        throw new ImageFormatException("Invalid distance code.");
+                    }
+
+                    int dl = (int)(d & 0xFF);
+                    int dextra = (int)((d >> 12) & 15);
+                    int dist = (int)(d >> 16) + (int)((tb >> dl) & ((1UL << dextra) - 1));
+                    if (dist > wp)
+                    {
+                        throw new ImageFormatException("Distance reaches before the start of the data.");
+                    }
+
+                    bitbuf = tb >> (dl + dextra);
+                    bitcount = tc - dl - dextra;
+                    CopyMatch(win, wp, dist, length);
+                    wp += length;
+                    break;
+                }
+
+                if (type == HuffmanTable.TypeEndOfBlock)
+                {
+                    bitbuf >>= clen;
+                    bitcount -= clen;
+                    _bitbuf = bitbuf & ((1UL << bitcount) - 1);
+                    _bitcount = bitcount;
+                    inPos = ip;
+                    _wpos = wp;
+                    return 0;
+                }
+
+                throw new ImageFormatException("Invalid literal/length code.");
+            }
+        }
+
         while (true)
         {
             if (wp > SoftLimit)
@@ -704,36 +838,7 @@ internal sealed class Inflater : IDisposable
                 bitbuf = tb >> (dl + dextra);
                 bitcount = tc - dl - dextra;
 
-                // Copy the match. The window has slack after the soft limit, so a few bytes of
-                // overshoot in the 8-byte copy are harmless.
-                int src = wp - dist;
-                if (dist >= 8)
-                {
-                    Span<byte> w = win;
-                    int s = src;
-                    int t = wp;
-                    int n = length;
-                    do
-                    {
-                        BinaryPrimitives.WriteUInt64LittleEndian(w.Slice(t), BinaryPrimitives.ReadUInt64LittleEndian(w.Slice(s)));
-                        s += 8;
-                        t += 8;
-                        n -= 8;
-                    }
-                    while (n > 0);
-                }
-                else if (dist == 1)
-                {
-                    win.AsSpan(wp, length).Fill(win[src]);
-                }
-                else
-                {
-                    for (int i = 0; i < length; i++)
-                    {
-                        win[wp + i] = win[src + i];
-                    }
-                }
-
+                CopyMatch(win, wp, dist, length);
                 wp += length;
                 continue;
             }

@@ -46,27 +46,35 @@ internal static class Lzw
 /// <see cref="ImageLimitException"/>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// When the table is full the decoder keeps decoding with the existing entries until a clear code
 /// (the "deferred clear" convention), as GIF and TIFF writers in the wild rely on.
+/// </para>
+/// <para>
+/// Table entries are stored in 8-byte chunks: each entry holds the last 1-8 bytes of its string packed in a
+/// <see cref="ulong"/> plus a link to the entry for the string without those bytes (always a multiple of 8 long).
+/// Emitting a string then costs one table hop and one 8-byte store per 8 bytes instead of one per byte.
+/// The same instance can decode many streams: call <see cref="Reset"/> between them.
+/// </para>
 /// </remarks>
 internal sealed class LzwDecoder
 {
     private const long RatioGrace = 1 << 16;
 
     private readonly LzwVariant _variant;
-    private readonly int _minSize;
-    private readonly int _clear;
-    private readonly int _eoi;
-    private readonly int _first;
     private readonly int _early;
-    private readonly long _maxOutput;
-    private readonly double _maxRatio;
+    private int _minSize;
+    private int _clear;
+    private int _eoi;
+    private int _first;
+    private long _maxOutput;
+    private double _maxRatio;
 
-    private readonly ushort[] _prefix = new ushort[Lzw.MaxCodes];
+    private readonly ulong[] _tail = new ulong[Lzw.MaxCodes];
+    private readonly short[] _chunkPrev = new short[Lzw.MaxCodes];
     private readonly ushort[] _length = new ushort[Lzw.MaxCodes];
-    private readonly byte[] _suffix = new byte[Lzw.MaxCodes];
     private readonly byte[] _firstByte = new byte[Lzw.MaxCodes];
-    private readonly byte[] _scratch = new byte[Lzw.MaxCodes];
+    private readonly byte[] _scratch = new byte[Lzw.MaxCodes + 16];
     private int _pendPos;
     private int _pendLen;
 
@@ -86,28 +94,42 @@ internal sealed class LzwDecoder
     /// <param name="maxExpansionRatio">Maximum decoded bytes per input byte (plus a 64 KiB allowance); 0 for none.</param>
     public LzwDecoder(LzwVariant variant, int minCodeSize = 8, long maxOutputBytes = long.MaxValue, double maxExpansionRatio = 0)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(maxOutputBytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(maxExpansionRatio);
         _variant = variant;
-        _minSize = Lzw.RootBits(variant, minCodeSize);
-        _clear = 1 << _minSize;
-        _eoi = _clear + 1;
-        _first = _clear + 2;
         _early = variant == LzwVariant.Tiff ? 1 : 0;
-        _maxOutput = maxOutputBytes;
-        _maxRatio = double.IsFinite(maxExpansionRatio) ? maxExpansionRatio : 0;
-        for (int i = 0; i < _clear; i++)
-        {
-            _suffix[i] = (byte)i;
-            _firstByte[i] = (byte)i;
-            _length[i] = 1;
-        }
-
-        ResetTable();
+        Reset(minCodeSize, maxOutputBytes, maxExpansionRatio);
     }
 
     /// <summary>Total decoded bytes produced so far.</summary>
     public long TotalOut => _total;
+
+    /// <summary>Starts a new stream with new limits, reusing the tables. The variant stays the same.</summary>
+    public void Reset(int minCodeSize = 8, long maxOutputBytes = long.MaxValue, double maxExpansionRatio = 0)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxOutputBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxExpansionRatio);
+        _minSize = Lzw.RootBits(_variant, minCodeSize);
+        _clear = 1 << _minSize;
+        _eoi = _clear + 1;
+        _first = _clear + 2;
+        _maxOutput = maxOutputBytes;
+        _maxRatio = double.IsFinite(maxExpansionRatio) ? maxExpansionRatio : 0;
+        for (int i = 0; i < _clear; i++)
+        {
+            _tail[i] = (ulong)i;
+            _chunkPrev[i] = -1;
+            _firstByte[i] = (byte)i;
+            _length[i] = 1;
+        }
+
+        _pendPos = 0;
+        _pendLen = 0;
+        _bitbuf = 0;
+        _bitcount = 0;
+        _done = false;
+        _total = 0;
+        _inTotal = 0;
+        ResetTable();
+    }
 
     private void ResetTable()
     {
@@ -127,6 +149,7 @@ internal sealed class LzwDecoder
         consumed = 0;
         written = 0;
         bool msb = _variant == LzwVariant.Tiff;
+        long limit = Limit(0);
         while (true)
         {
             if (_pendPos < _pendLen)
@@ -183,6 +206,8 @@ internal sealed class LzwDecoder
                         return InflateStatus.NeedInput;
                     }
                 }
+
+                limit = Limit(ip);
             }
 
             int code;
@@ -211,15 +236,12 @@ internal sealed class LzwDecoder
                 continue;
             }
 
-            int firstChar;
             if (_prev < 0)
             {
                 if (code >= _clear)
                 {
                     throw new ImageFormatException("LZW stream does not start with a literal after a clear code.");
                 }
-
-                firstChar = code;
             }
             else
             {
@@ -228,14 +250,25 @@ internal sealed class LzwDecoder
                     throw new ImageFormatException("LZW code refers to an entry that does not exist yet.");
                 }
 
-                firstChar = code < _next ? _firstByte[code] : _firstByte[_prev];
                 if (_next < Lzw.MaxCodes)
                 {
+                    // New entry: the previous string plus the first byte of the current one.
                     int e = _next++;
-                    _prefix[e] = (ushort)_prev;
-                    _suffix[e] = (byte)firstChar;
+                    int lp = _length[_prev];
+                    ulong ch = _firstByte[code < e ? code : _prev];
                     _firstByte[e] = _firstByte[_prev];
-                    _length[e] = (ushort)(_length[_prev] + 1);
+                    _length[e] = (ushort)(lp + 1);
+                    if ((lp & 7) == 0)
+                    {
+                        _chunkPrev[e] = (short)_prev;
+                        _tail[e] = ch;
+                    }
+                    else
+                    {
+                        _chunkPrev[e] = _chunkPrev[_prev];
+                        _tail[e] = _tail[_prev] | (ch << (8 * (((lp - 1) & 7) + 1)));
+                    }
+
                     if (_next + _early == (1 << _codeSize) && _codeSize < Lzw.MaxBits)
                     {
                         _codeSize++;
@@ -246,37 +279,26 @@ internal sealed class LzwDecoder
             _prev = code;
             int len = _length[code];
             _total += len;
-            if (_total > _maxOutput)
+            if (_total > limit)
             {
-                throw new ImageLimitException("Decompressed data exceeds the configured output limit.");
+                ThrowLimit();
             }
 
-            if (_maxRatio > 0 && _total > (long)(_maxRatio * (_inTotal + ip)) + RatioGrace)
+            if (output.Length - op >= len + 8)
             {
-                throw new ImageLimitException("Decompressed data exceeds the configured expansion ratio.");
+                Emit(code, len, output.Slice(op));
+                op += len;
             }
-
-            int c = code;
-            if (output.Length - op >= len)
+            else if (output.Length - op >= len)
             {
-                int p = op + len;
-                while (p > op)
-                {
-                    output[--p] = _suffix[c];
-                    c = _prefix[c];
-                }
-
+                // Too close to the end of the output for the 8-byte stores: build in scratch, then copy.
+                Emit(code, len, _scratch);
+                _scratch.AsSpan(0, len).CopyTo(output.Slice(op));
                 op += len;
             }
             else
             {
-                int p = len;
-                while (p > 0)
-                {
-                    _scratch[--p] = _suffix[c];
-                    c = _prefix[c];
-                }
-
+                Emit(code, len, _scratch);
                 _pendPos = 0;
                 _pendLen = len;
             }
@@ -291,6 +313,43 @@ internal sealed class LzwDecoder
         consumed = ip;
         written = op;
         return InflateStatus.Done;
+    }
+
+    // Writes the string for 'code' so that it ends at dst[len]. The first (partial) chunk stores 8 bytes and so
+    // scribbles up to 7 bytes past the string; callers pass a span with that much room.
+    private void Emit(int code, int len, Span<byte> dst)
+    {
+        int pos = len - (((len - 1) & 7) + 1);
+        BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(pos), _tail[code]);
+        int c = _chunkPrev[code];
+        while (c >= 0)
+        {
+            pos -= 8;
+            BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(pos), _tail[c]);
+            c = _chunkPrev[c];
+        }
+    }
+
+    // The most output allowed so far: the output cap, or the ratio budget for the input consumed.
+    private long Limit(int ip)
+    {
+        if (_maxRatio <= 0)
+        {
+            return _maxOutput;
+        }
+
+        double budget = (_maxRatio * (_inTotal + ip)) + RatioGrace;
+        return budget >= _maxOutput ? _maxOutput : (long)budget;
+    }
+
+    private void ThrowLimit()
+    {
+        if (_total > _maxOutput)
+        {
+            throw new ImageLimitException("Decompressed data exceeds the configured output limit.");
+        }
+
+        throw new ImageLimitException("Decompressed data exceeds the configured expansion ratio.");
     }
 
     private void ClearGarbage()
@@ -322,12 +381,12 @@ internal sealed class LzwEncoder
     private const int OutSize = 4096;
     private const int HashSize = 1 << 14;
 
-    private readonly IBufferWriter<byte> _sink;
+    private IBufferWriter<byte> _sink = null!;
     private readonly LzwVariant _variant;
-    private readonly int _minSize;
-    private readonly int _clear;
-    private readonly int _eoi;
-    private readonly int _first;
+    private int _minSize;
+    private int _clear;
+    private int _eoi;
+    private int _first;
     private readonly int _early;
     private readonly int _fullAt;
 
@@ -353,14 +412,33 @@ internal sealed class LzwEncoder
     public LzwEncoder(IBufferWriter<byte> sink, LzwVariant variant, int minCodeSize = 8)
     {
         ArgumentNullException.ThrowIfNull(sink);
-        _sink = sink;
         _variant = variant;
-        _minSize = Lzw.RootBits(variant, minCodeSize);
+        _early = variant == LzwVariant.Tiff ? 1 : 0;
+        _fullAt = variant == LzwVariant.Tiff ? 4094 : Lzw.MaxCodes;
+        Reset(sink, minCodeSize);
+    }
+
+    /// <summary>Starts a new stream on the same sink, reusing the tables.</summary>
+    /// <param name="minCodeSize">GIF minimum code size (2-8); ignored for TIFF.</param>
+    public void Reset(int minCodeSize = 8) => Reset(_sink, minCodeSize);
+
+    /// <summary>Starts a new stream writing to <paramref name="sink"/>, reusing the tables.</summary>
+    /// <param name="sink">Receives the code stream.</param>
+    /// <param name="minCodeSize">GIF minimum code size (2-8); ignored for TIFF.</param>
+    public void Reset(IBufferWriter<byte> sink, int minCodeSize = 8)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        _sink = sink;
+        _minSize = Lzw.RootBits(_variant, minCodeSize);
         _clear = 1 << _minSize;
         _eoi = _clear + 1;
         _first = _clear + 2;
-        _early = variant == LzwVariant.Tiff ? 1 : 0;
-        _fullAt = variant == LzwVariant.Tiff ? 4094 : Lzw.MaxCodes;
+        _outPos = 0;
+        _bitbuf = 0;
+        _bitcount = 0;
+        _cur = -1;
+        _started = false;
+        _finished = false;
         ResetTable();
     }
 
