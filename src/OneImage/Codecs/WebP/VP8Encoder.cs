@@ -348,7 +348,8 @@ internal sealed class VP8Encoder
         while (Volatile.Read(ref _rowProgress[y - 1]) < need)
         {
             _token.ThrowIfCancellationRequested();
-            spin.SpinOnce();
+            // Never sleep: the row above is at most a few macroblocks away, and a one millisecond nap costs more than the whole wait.
+            spin.SpinOnce(-1);
         }
     }
 
@@ -789,12 +790,12 @@ internal sealed class VP8Encoder
 
             VP8Fwd.Wht(dc, y2);
             lv.Clear();
-            sp.Y2.Quantize(y2, lv[..16], 0);
+            int lastDc = sp.Y2.Quantize(y2, lv[..16], 0);
             VP8Decoder.TransformWht(y2, deq);
 
             // Reconstruct into the scratch copy of the prediction.
             CopyLuma(w, s.Scr);
-            int rate = VP8Cost.BlockCost(lv[..16], 1, 0, _nzTop[(mbx * 9) + 8] + s.NzLeft[8]);
+            int rate = VP8Cost.BlockCost(lv[..16], 1, 0, _nzTop[(mbx * 9) + 8] + s.NzLeft[8], lastDc);
             _nzTop.AsSpan(mbx * 9, 4).CopyTo(tnz);
             s.NzLeft.AsSpan(0, 4).CopyTo(lnz);
             for (int b = 0; b < 16; b++)
@@ -807,7 +808,7 @@ internal sealed class VP8Encoder
                 blockCoef[0] = savedDc;
                 int bx = b & 3;
                 int by = b >> 2;
-                rate += VP8Cost.BlockCost(lv.Slice(16 + (b * 16), 16), 0, 1, lnz[by] + tnz[bx]);
+                rate += VP8Cost.BlockCost(lv.Slice(16 + (b * 16), 16), 0, 1, lnz[by] + tnz[bx], last);
                 byte nz = last >= 1 ? (byte)1 : (byte)0;
                 lnz[by] = nz;
                 tnz[bx] = nz;
@@ -930,7 +931,7 @@ internal sealed class VP8Encoder
                 Buffer.BlockCopy(preds, m * 16, rec, 0, 16);
                 AddResidual(rec, 0, 4, coef, HasAc(lv), last >= 0);
                 long d = WebPSseKernel.Sse(s.SrcMb, srcOff, 16, rec, 0, 4, 4);
-                int rate = VP8Cost.BlockCost(lv, 3, 0, lnz[by] + tnz[bx]);
+                int rate = VP8Cost.BlockCost(lv, 3, 0, lnz[by] + tnz[bx], last);
                 int mbits = SubModeBits[(pb * 10) + m];
                 long score = Score(d, rate + mbits, sp.LambdaI4);
                 if (score < bestScore)
@@ -1045,7 +1046,7 @@ internal sealed class VP8Encoder
                     WebPFdctKernel.Forward(s.SrcMb, srcBase + (by * 4 * 8) + (bx * 4), 8, w, off, Bps, coef);
                     int last = sp.Uv.Quantize(coef, lv, 0);
                     AddResidual(s.Scr, off, Bps, coef, HasAc(lv), last >= 0);
-                    bits += VP8Cost.BlockCost(lv, 2, 0, lnz[by] + tnz[bx]);
+                    bits += VP8Cost.BlockCost(lv, 2, 0, lnz[by] + tnz[bx], last);
                     byte nz = last >= 0 ? (byte)1 : (byte)0;
                     lnz[by] = nz;
                     tnz[bx] = nz;

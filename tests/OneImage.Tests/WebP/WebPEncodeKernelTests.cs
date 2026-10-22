@@ -186,7 +186,13 @@ public sealed class WebPEncodeKernelTests
             int ctx = rnd.Next(3);
             var sink = new CostSink(probs);
             VP8Tokens.EmitBlock(ref sink, lv, type, first, ctx);
-            Assert.Equal(sink.Cost, VP8Cost.BlockCost(lv, type, first, ctx));
+            int last = -1;
+            for (int i = 15; i >= first && last < 0; i--)
+            {
+                last = lv[i] != 0 ? i : -1;
+            }
+
+            Assert.Equal(sink.Cost, VP8Cost.BlockCost(lv, type, first, ctx, last));
         }
     }
 

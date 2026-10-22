@@ -239,19 +239,12 @@ internal static class VP8Cost
         return t;
     }
 
-    /// <summary>Returns the cost in 1/256 bit of the tokens of a block, as <see cref="VP8Tokens.EmitBlock{TSink}"/> with default probabilities would count it.</summary>
-    public static int BlockCost(ReadOnlySpan<short> levels, int type, int first, int ctx)
+    /// <summary>
+    /// Returns the cost in 1/256 bit of the tokens of a block, as <see cref="VP8Tokens.EmitBlock{TSink}"/> with default probabilities
+    /// would count it. <paramref name="last"/> is the index of the last nonzero level (at or after <paramref name="first"/>), or -1 if there is none.
+    /// </summary>
+    public static int BlockCost(ReadOnlySpan<short> levels, int type, int first, int ctx, int last)
     {
-        int last = -1;
-        for (int i = 15; i >= first; i--)
-        {
-            if (levels[i] != 0)
-            {
-                last = i;
-                break;
-            }
-        }
-
         ReadOnlySpan<byte> bands = VP8Fwd.Bands;
         ReadOnlySpan<byte> probs = Probs;
         ReadOnlySpan<ushort> cost0 = VP8Fwd.BitCost0;

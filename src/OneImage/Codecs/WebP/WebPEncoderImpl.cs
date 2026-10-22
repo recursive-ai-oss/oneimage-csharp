@@ -318,18 +318,20 @@ internal sealed class WebPEncoderImpl : IImageEncoder
 
     private static EncodedFrame LossyEncode(byte[] rgba, int w, int h, bool hasAlpha, WebPEncoderOptions options, int degree, CancellationToken token)
     {
+        // The alpha plane is coded on the side while the color planes are.
+        Task<byte[]>? alphaTask = hasAlpha && degree > 1 ? Task.Run(() => EncodeAlpha(rgba, w, h, options.Effort, degree, token), token) : null;
         byte[] data = VP8Encoder.Encode(rgba, w, h, options.Quality, options.Effort, token, degree);
         byte[]? alpha = null;
         if (hasAlpha)
         {
-            alpha = EncodeAlpha(rgba, w, h, options.Effort, token);
+            alpha = alphaTask != null ? alphaTask.GetAwaiter().GetResult() : EncodeAlpha(rgba, w, h, options.Effort, degree, token);
         }
 
         return new EncodedFrame { Data = data, Alpha = alpha, Lossless = false, HasAlpha = hasAlpha };
     }
 
     // Alpha of a lossy image: a prediction-filtered plane coded with the lossless coder, or stored raw when that is smaller.
-    private static byte[] EncodeAlpha(byte[] rgba, int w, int h, int effort, CancellationToken token)
+    private static byte[] EncodeAlpha(byte[] rgba, int w, int h, int effort, int degree, CancellationToken token)
     {
         byte[] plane = new byte[w * h];
         for (int i = 0; i < plane.Length; i++)
@@ -337,23 +339,37 @@ internal sealed class WebPEncoderImpl : IImageEncoder
             plane[i] = rgba[(i * 4) + 3];
         }
 
+        var lo = new VP8LEncodeOptions { Effort = Math.Min(effort, 4) };
+        int[] filters = effort < 2 ? [0, 3] : [0, 1, 2, 3];
+        byte[][] encoded = new byte[filters.Length][];
+        void Candidate(int k)
+        {
+            byte[] filtered = new byte[plane.Length];
+            ApplyAlphaFilter(filters[k], plane, filtered, w, h);
+            encoded[k] = VP8LEncoder.EncodePlane(filtered, w, h, lo, token);
+        }
+
+        if (degree > 1)
+        {
+            Parallel.For(0, filters.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(degree, filters.Length), CancellationToken = token }, Candidate);
+        }
+        else
+        {
+            for (int k = 0; k < filters.Length; k++)
+            {
+                Candidate(k);
+            }
+        }
+
+        // The smallest wins; on a tie the earlier filter does.
         byte[]? best = null;
         int bestFilter = 0;
-        byte[] filtered = new byte[plane.Length];
-        var lo = new VP8LEncodeOptions { Effort = Math.Min(effort, 4) };
-        for (int filter = 0; filter < 4; filter++)
+        for (int k = 0; k < filters.Length; k++)
         {
-            if (effort < 2 && filter != 0 && filter != 3)
+            if (best == null || encoded[k].Length < best.Length)
             {
-                continue;
-            }
-
-            ApplyAlphaFilter(filter, plane, filtered, w, h);
-            byte[] enc = VP8LEncoder.EncodePlane(filtered, w, h, lo, token);
-            if (best == null || enc.Length < best.Length)
-            {
-                best = enc;
-                bestFilter = filter;
+                best = encoded[k];
+                bestFilter = filters[k];
             }
         }
 
