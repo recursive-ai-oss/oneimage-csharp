@@ -27,6 +27,13 @@ public sealed class GifEncoderOptions : ImageEncoderOptions
     public Dither Dither { get; init; } = Dither.FloydSteinberg;
 
     /// <summary>
+    /// Gets where palettes come from (default <see cref="Quantizer.Wu"/>). <see cref="Quantizer.WebSafe"/> and <see cref="Quantizer.Werner"/> use their
+    /// fixed colors (and a transparent entry when a frame needs one) and ignore <see cref="MaxColors"/>. Frames whose colors already fit
+    /// <see cref="MaxColors"/> are written exactly, whatever the quantizer. Only the palette changes; <see cref="Dither"/> still applies.
+    /// </summary>
+    public Quantizer Quantizer { get; init; } = Quantizer.Wu;
+
+    /// <summary>
     /// Gets whether animation frames after the first store only the rectangle that changed, with unchanged pixels inside it written as
     /// transparent (default <see langword="true"/>). Turning it off writes every frame completely; the decoded animation is the same.
     /// </summary>

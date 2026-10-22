@@ -156,6 +156,11 @@ internal sealed class PaletteMapper
     private int[] _errCur;
     private int[] _errNext;
     private int _nextRow;
+    private readonly DiffusionKernel? _kernel;
+    private readonly int[][] _ring = [];
+    private readonly int[]? _matrix;
+    private readonly int _matrixSize;
+    private const int RingPad = 4;
 
     /// <summary>Creates a mapper.</summary>
     /// <param name="palette">The palette to map to.</param>
@@ -169,6 +174,22 @@ internal sealed class PaletteMapper
         _spread = OrderedSpread(palette);
         _errCur = _dither == Dither.FloydSteinberg ? new int[(width + 2) * 3] : [];
         _errNext = _dither == Dither.FloydSteinberg ? new int[(width + 2) * 3] : [];
+        if (_dither != Dither.FloydSteinberg)
+        {
+            _kernel = DitherTables.Kernel(_dither);
+            if (_kernel != null)
+            {
+                _ring = new int[_kernel.RowsBelow + 1][];
+                for (int i = 0; i < _ring.Length; i++)
+                {
+                    _ring[i] = new int[(width + (2 * RingPad)) * 3];
+                }
+            }
+            else if (_dither != Dither.Ordered)
+            {
+                _matrix = DitherTables.Matrix(_dither, out _matrixSize);
+            }
+        }
     }
 
     /// <summary>
@@ -281,6 +302,11 @@ internal sealed class PaletteMapper
 
                 break;
             case Dither.Ordered:
+            case Dither.Bayer2x2:
+            case Dither.Ordered3x3:
+            case Dither.Bayer4x4:
+            case Dither.Bayer8x8:
+            case Dither.Bayer16x16:
                 for (int x = 0; x < w; x++)
                 {
                     ReadOnlySpan<byte> px = rgba.Slice(x * 4, 4);
@@ -291,13 +317,18 @@ internal sealed class PaletteMapper
                     }
 
                     // Threshold in (-spread/2, spread/2), centred so flat colors keep their average.
-                    int t = ((((s_bayer[((y & 7) * 8) + (x & 7)] * 2) + 1) - 64) * _spread) / 128;
+                    int t = _matrix is null
+                        ? ((((s_bayer[((y & 7) * 8) + (x & 7)] * 2) + 1) - 64) * _spread) / 128
+                        : ((((_matrix[((y % _matrixSize) * _matrixSize) + (x % _matrixSize)] * 2) + 1) - (_matrixSize * _matrixSize)) * _spread) / (2 * _matrixSize * _matrixSize);
                     indices[x] = (byte)p.Lookup(Math.Clamp(px[0] + t, 0, 255), Math.Clamp(px[1] + t, 0, 255), Math.Clamp(px[2] + t, 0, 255), px[3]);
                 }
 
                 break;
-            default:
+            case Dither.FloydSteinberg:
                 FloydSteinberg(rgba, indices, limit, tIndex);
+                break;
+            default:
+                Diffuse(rgba, indices, limit, tIndex);
                 break;
         }
 
@@ -344,5 +375,54 @@ internal sealed class PaletteMapper
         }
 
         (_errCur, _errNext) = (next, cur);
+    }
+
+    // Any other kernel: errors accumulate in a ring of rows (the current row and the rows below that the kernel reaches). Integer
+    // weights over the kernel's divisor, rounded to nearest with ties toward +infinity, as the Floyd–Steinberg path does.
+    private void Diffuse(ReadOnlySpan<byte> rgba, Span<byte> indices, int limit, int tIndex)
+    {
+        QuantizedPalette p = _palette;
+        byte[] pal = p.Rgba;
+        DiffusionKernel k = _kernel!;
+        int rows = _ring.Length;
+        int[] cur = _ring[_nextRow % rows];
+        int div = k.Divisor;
+        int half = div / 2;
+        var taps = k.Taps;
+        for (int x = 0; x < _width; x++)
+        {
+            ReadOnlySpan<byte> px = rgba.Slice(x * 4, 4);
+            if (tIndex >= 0 && px[3] < limit)
+            {
+                indices[x] = (byte)tIndex;
+                continue;
+            }
+
+            int e = (x + RingPad) * 3;
+            int r = Math.Clamp(px[0] + FloorDiv(cur[e] + half, div), 0, 255);
+            int g = Math.Clamp(px[1] + FloorDiv(cur[e + 1] + half, div), 0, 255);
+            int b = Math.Clamp(px[2] + FloorDiv(cur[e + 2] + half, div), 0, 255);
+            int idx = p.Lookup(r, g, b, px[3]);
+            indices[x] = (byte)idx;
+            int er = r - pal[idx * 4];
+            int eg = g - pal[(idx * 4) + 1];
+            int eb = b - pal[(idx * 4) + 2];
+            foreach ((int dx, int dy, int wt) in taps)
+            {
+                int[] row = _ring[(_nextRow + dy) % rows];
+                int o = (x + dx + RingPad) * 3;
+                row[o] += er * wt;
+                row[o + 1] += eg * wt;
+                row[o + 2] += eb * wt;
+            }
+        }
+
+        Array.Clear(cur);
+    }
+
+    private static int FloorDiv(int a, int b)
+    {
+        int q = a / b;
+        return (a % b < 0) ? q - 1 : q;
     }
 }

@@ -486,9 +486,9 @@ internal sealed class GifEncoder : IImageEncoder
         }
         else
         {
-            var q = new ColorQuantizer(options.MaxColors, QuantizeAlpha.Binary, AlphaThreshold, reserveTransparent: multi);
+            var q = new PaletteBuilder(options.Quantizer, options.MaxColors, QuantizeAlpha.Binary, AlphaThreshold, reserveTransparent: multi);
             q.AddRows(work);
-            pal = q.BuildPalette();
+            pal = q.Build();
             rgb = new byte[pal.Count * 3];
             for (int i = 0; i < pal.Count; i++)
             {

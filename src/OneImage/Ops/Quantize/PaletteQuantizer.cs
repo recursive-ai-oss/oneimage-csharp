@@ -49,21 +49,29 @@ internal sealed class QuantizeNode : Node
     private readonly int _colors;
     private readonly Dither _dither;
     private readonly QuantizeAlpha _alpha;
+    private readonly Quantizer _quantizer;
     private readonly object _gate = new();
     private TileGrid? _grid;
 
-    public QuantizeNode(Node input, int colors, Dither dither, QuantizeAlpha alpha)
+    public QuantizeNode(Node input, int colors, Dither dither, QuantizeAlpha alpha, Quantizer quantizer)
         : base(
             input.Width,
             input.Height,
             input.Format.HasAlpha ? PixelFormat.Rgba8 : PixelFormat.Rgb8,
-            new OpDescriptor("quantize", new OpParameter("colors", (long)colors), new OpParameter("dither", dither.ToString()), new OpParameter("alpha", alpha.ToString())),
+            Describe(colors, dither, alpha, quantizer),
             input)
     {
         _colors = colors;
         _dither = dither;
         _alpha = alpha;
+        _quantizer = quantizer;
     }
+
+    // The quantizer is named only when it is not the default, so graphs of the default stay as they were.
+    private static OpDescriptor Describe(int colors, Dither dither, QuantizeAlpha alpha, Quantizer quantizer) =>
+        quantizer == Quantizer.Wu
+            ? new OpDescriptor("quantize", new OpParameter("colors", (long)colors), new OpParameter("dither", dither.ToString()), new OpParameter("alpha", alpha.ToString()))
+            : new OpDescriptor("quantize", new OpParameter("colors", (long)colors), new OpParameter("dither", dither.ToString()), new OpParameter("alpha", alpha.ToString()), new OpParameter("quantizer", quantizer.ToString()));
 
     public override bool Cacheable => false;
 
@@ -95,7 +103,7 @@ internal sealed class QuantizeNode : Node
             var grid = new TileGrid(w, h, Format, null);
             try
             {
-                var q = new ColorQuantizer(_colors, _alpha);
+                var q = new PaletteBuilder(_quantizer, _colors, _alpha);
                 for (int y = 0; y < h; y += Tile.Size)
                 {
                     int rows = Math.Min(Tile.Size, h - y);
@@ -103,7 +111,7 @@ internal sealed class QuantizeNode : Node
                     q.AddRows(band.AsSpan(0, rows * inRow));
                 }
 
-                QuantizedPalette palette = q.BuildPalette();
+                QuantizedPalette palette = q.Build();
                 var mapper = new PaletteMapper(palette, w, _dither);
                 byte[] pal = palette.Rgba;
                 using var sink = new StripToTileBuffer(grid);

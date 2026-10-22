@@ -460,6 +460,47 @@ Image.Load(input)
 
 These ops fuse with the other color ops (`Gamma`, `Levels`, `Invert`, ...) into one pass over each tile, so `Sepia().BrightnessContrast(...).Opacity(...)` reads the pixels once.
 
+### Histograms, thresholds and dithering
+
+ImageSharp:
+
+```csharp
+using Image image = Image.Load(input);
+image.Mutate(x => x.HistogramEqualization(new HistogramEqualizationOptions { Method = HistogramEqualizationMethod.AutoLevel }));
+image.Mutate(x => x.AdaptiveThreshold(Color.White, Color.Black, 0.85f));
+image.Mutate(x => x.BinaryDither(KnownDitherings.Bayer4x4));
+image.Mutate(x => x.Dither(KnownDitherings.Stucki, new[] { Color.Black, Color.White, Color.Red }));
+image.Mutate(x => x.Quantize(KnownQuantizers.Octree));
+image.Save(output);
+```
+
+OneImage:
+
+```csharp
+Image.Load(input)
+    .AutoLevel()
+    .AdaptiveThreshold(new Rgba32(255, 255, 255, 255), new Rgba32(0, 0, 0, 255), 0.85f)
+    .BinaryDither(Dither.Bayer4x4)
+    .Dither([new Rgba32(0, 0, 0, 255), new Rgba32(255, 255, 255, 255), new Rgba32(255, 0, 0, 255)], Dither.Stucki)
+    .Quantize(256, quantizer: Quantizer.Octree)
+    .Save(output);
+```
+
+| ImageSharp | OneImage | Differences |
+|---|---|---|
+| `HistogramEqualization` with `Method = AutoLevel`, `SyncChannels` | `AutoLevel(syncChannels)` | A method of its own rather than an option value. Per-channel (`syncChannels: false`) is within 1 level of ImageSharp, synchronized (the default) within 2. |
+| `AdaptiveThreshold(upper, lower, limit)` | `AdaptiveThreshold(upper, lower, thresholdLimit)` | Same Bradley window and defaults (white over black, 0.85). Identical on gray input; on photos a pixel or two on the border can differ (2 of 31,871 in the test image). |
+| `BinaryDither(dither, upper, lower)` | `BinaryDither(dither, upper, lower)` | Same dithers, black and white by default. |
+| `Dither(dither, palette)` | `Dither(palette, dither, scale, fastMatch)` | All the `KnownDitherings` map to `Dither` members: Atkinson, Burkes, JarvisJudiceNinke, Sierra2, Sierra3, SierraLite, StevensonArce, Stucki, FloydSteinberg, Bayer2x2, Ordered3x3, Bayer4x4, Bayer8x8, Bayer16x16. See below for exactness. |
+
+How exact the dithers are:
+
+- **Error diffusion** (all nine kernels) is bit-identical to ImageSharp with the default `fastMatch: true`. ImageSharp finds the nearest palette color through a cache keyed by the top five bits of each channel and keeps the first answer for a cell, so its result depends on the order colors are met. Pass `fastMatch: false` to answer for the exact color of every pixel instead, which is more accurate but slower (about 1.1× ImageSharp's time with the web palette on one thread).
+- **Ordered dithers** use the same matrices and the same amplitude rule as ImageSharp. With small palettes the output is identical; with the web-safe and Werner palettes up to about 2.5% of pixels differ, from the same cache effect.
+- **Threads.** Ordered dithering runs on all tiles in parallel. Error diffusion is a single pass in row order, so it uses one thread whatever the setting, and its output never depends on the thread count.
+- `Dither` takes a palette as a list of `Rgba32`; a palette with one transparent entry works with opaque photos.
+- ImageSharp's `CalculateIntegralImage` has no public counterpart; `AdaptiveThreshold` uses a window sum internally.
+
 ## Behavior to expect after porting
 
 - **Orientation is applied for you.** If your old code called `AutoOrient()` or rotated by the EXIF tag, remove that, or the picture will be turned twice.
@@ -497,11 +538,8 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 
 | ImageSharp | OneImage today | Closest workaround |
 |---|---|---|
-| `HistogramEqualization(options)` (global, adaptive tile, sliding window, `AutoLevel`) | None. `Histogram` gives the data. | `Levels` or `Curves` with values you compute from `Histogram`. |
-| `AdaptiveThreshold(...)` | None. `Threshold(level)` is a global threshold. | None. |
-| `BinaryDither(...)` and `Dither(..., palette)` with `KnownDitherings` (Atkinson, Burkes, JarvisJudiceNinke, Sierra2/3/Lite, Stucki, StevensonArce, Bayer2x2/4x4/8x8/16x16, Ordered3x3) | `Quantize(colors, dither)` offers none, Floyd–Steinberg and an 8×8 ordered dither, and picks its own palette. | Quantize to 2 colors for a bilevel result. A caller-supplied palette and the other matrices are not available. |
-| `Quantize(KnownQuantizers.Octree / WebSafe / Werner, ...)` | One built-in quantizer; no `PaletteQuantizer`, web-safe or Werner palettes. | `Quantize(colors, ...)`. |
-| `CalculateIntegralImage()` | None. | `Histogram` and `Statistics` cover the common uses. |
+| `HistogramEqualization(options)` (global, adaptive tile, sliding window) | None. `Histogram` gives the data; `AutoLevel` covers the auto-level method. | `Levels` or `Curves` with values you compute from `Histogram`. |
+| `CalculateIntegralImage()` | None as a public API (`AdaptiveThreshold` sums windows internally). | `Histogram` and `Statistics` cover the common uses. |
 
 `BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`, and `ProjectiveTransformBuilder` by `Perspective` (see [Perspective transforms](#perspective-transforms)). `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.
 

@@ -239,6 +239,18 @@ They are lazy (except `EntropyCrop`), read only their tile plus a margin (the ra
 - **`Vignette` and `Glow`** blend the color over the pixel (source-over, its alpha times the falloff). The vignette falloff is `0.9 * distance / sqrt(rx^2 + ry^2)`; the glow's is `1 - 0.95 * distance / radius`. Pass `area:` to confine the effect to a rectangle and center it there. The default glow color is black, as in ImageSharp.
 - Results do not depend on the thread count.
 
+**Histograms, thresholds and dithering**
+
+```csharp
+img.AutoLevel();                                                      // stretch the luminance histogram; syncChannels: false curves each channel
+img.AdaptiveThreshold();                                              // black and white against the mean of the surrounding window
+img.BinaryDither(Dither.Bayer8x8);                                    // two colors, any of the dithers; upper:, lower: set the colors
+img.Dither(KnownPalettes.WebSafe, Dither.FloydSteinberg);             // your own palette; scale: weakens it; fastMatch: false matches every pixel exactly
+img.Quantize(64, Dither.Atkinson, quantizer: Quantizer.Octree);       // Wu (default), Octree, WebSafe or Werner
+```
+
+They are lazy and apply to every frame. `AutoLevel` counts the 8-bit luminance (Rec. 709) histogram exactly, so results do not depend on the thread count. `AdaptiveThreshold` reads a margin of `width / 16` pixels around each tile. Ordered dithers run per tile; error diffusion runs once, in row order, when the first tile is requested, and gives the same pixels whatever the thread count.
+
 **Analysis**
 
 ```csharp

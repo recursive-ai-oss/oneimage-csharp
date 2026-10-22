@@ -302,5 +302,19 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Histograms and dithering: auto-level, adaptive threshold, a palette dither and the octree quantizer.
+{
+    Image rgbPhoto = snapshot.ConvertTo(PixelFormat.Rgb8);
+    int total = 0;
+    total += rgbPhoto.AutoLevel().ToArray<Rgb24>().Length + rgbPhoto.AdaptiveThreshold().ToArray<Rgba32>().Length;
+    total += rgbPhoto.Dither(KnownPalettes.WebSafe, Dither.Stucki).ToArray<Rgba32>().Length + rgbPhoto.BinaryDither(Dither.Bayer4x4).ToArray<Rgba32>().Length;
+    total += rgbPhoto.Quantize(16, Dither.None, quantizer: Quantizer.Octree).ToArray<Rgba32>().Length;
+    if (total != 5 * 300 * 200)
+    {
+        Console.Error.WriteLine("histogram/dither smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;
