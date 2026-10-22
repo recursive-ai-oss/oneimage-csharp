@@ -652,7 +652,9 @@ internal sealed class TextLayout
                 list.Add(new GlyphBounds
                 {
                     Ink = ink,
-                    Index = g.Cluster,
+                    // A dropped zero-width character can leave the first glyph of a paragraph inside its cluster; the box then
+                    // starts where the line (and so the cluster) starts.
+                    Index = !ClusterStart[k] && k == l.GlyphStart ? l.TextStart : g.Cluster,
                     CodePoint = g.CodePoint,
                     Line = i,
                     Bounds = box,

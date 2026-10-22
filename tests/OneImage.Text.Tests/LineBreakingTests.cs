@@ -310,6 +310,16 @@ public class LineBreakingTests
     }
 
     [Fact]
+    public void CharacterBoxesStartAtClusterStartsAfterInvisibleCharacters()
+    {
+        // Same fuzz input as above: the box of the cluster "ZWJ + virama" must start at 0, not inside it.
+        IReadOnlyList<GlyphBounds> boxes = TextMeasurer.GetCharacterBounds("\u200D\u1B44", Latin());
+        Assert.All(boxes, b => Assert.Equal(0, b.Index));
+        boxes = TextMeasurer.GetCharacterBounds("\u200Da", Latin());
+        Assert.Equal(1, boxes[^1].Index);
+    }
+
+    [Fact]
     public void RandomTextKeepsTheLayoutInvariants()
     {
         string[] pool =
