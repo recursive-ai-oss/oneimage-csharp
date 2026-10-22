@@ -4,6 +4,7 @@ using Xunit;
 namespace OneImage.Tests.Filter;
 
 /// <summary>Tile locality of the filters and their behavior on a huge sequential (streaming) source.</summary>
+[Collection(MemoryMeasurement.Name)]
 public class FilterLocalityStreamingTests
 {
     private static int TilesOf(ImageRect r) => r.IsEmpty ? 0 : (((r.Right - 1) >> 7) - (r.X >> 7) + 1) * (((r.Bottom - 1) >> 7) - (r.Y >> 7) + 1);
