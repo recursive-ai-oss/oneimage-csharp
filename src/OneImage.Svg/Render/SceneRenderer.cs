@@ -91,7 +91,7 @@ internal static class SceneRenderer
         }
     }
 
-    private static void DrawNode(Canvas canvas, RNode node, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits)
+    internal static void DrawNode(Canvas canvas, RNode node, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits)
     {
         if (node.X1 < qx0 || node.X0 > qx1 || node.Y1 < qy0 || node.Y0 > qy1)
         {
@@ -144,19 +144,55 @@ internal static class SceneRenderer
 
         Path? clip = p.Clip?.Transform(d);
         IntersectionRule rule = p.EvenOdd ? IntersectionRule.EvenOdd : IntersectionRule.NonZero;
-        if (p.HasFill)
+        if (p.StrokeFirst)
         {
-            Interlocked.Increment(ref _pathsDrawn);
-            canvas.Fill(p.FillColor, p.Geometry, p.Antialias, rule, p.FillOpacity, transform: m, clip: clip);
+            Stroke(canvas, p, dev, m, full, clip);
+            Fill(canvas, p, dev, m, rule, clip);
+        }
+        else
+        {
+            Fill(canvas, p, dev, m, rule, clip);
+            Stroke(canvas, p, dev, m, full, clip);
+        }
+    }
+
+    private static void Fill(Canvas canvas, RPath p, Affine dev, Matrix3x2 m, IntersectionRule rule, Path? clip)
+    {
+        if (!p.HasFill)
+        {
+            return;
         }
 
-        if (p.HasStroke)
+        Interlocked.Increment(ref _pathsDrawn);
+        if (p.FillPaint is null)
         {
-            Interlocked.Increment(ref _pathsDrawn);
+            canvas.Fill(p.FillColor, p.Geometry, p.Antialias, rule, p.FillOpacity, transform: m, clip: clip);
+        }
+        else if (p.FillPaint.CreateBrush(dev) is { } brush)
+        {
+            canvas.Fill(brush, p.Geometry, p.Antialias, rule, p.FillOpacity, transform: m, clip: clip);
+        }
+    }
 
-            // Flatten curves finely enough for the pixel grid: 0.1 px, expressed in the geometry's own units.
-            float tolerance = (float)Math.Clamp(Path.DefaultTolerance / Math.Max(full.MaxScale, 1e-6), 1e-6, 1e6);
-            canvas.Fill(p.StrokeColor, p.StrokeOutline(tolerance), p.Antialias, IntersectionRule.NonZero, p.StrokeOpacity, transform: m, clip: clip);
+    private static void Stroke(Canvas canvas, RPath p, Affine dev, Matrix3x2 m, Affine full, Path? clip)
+    {
+        if (!p.HasStroke)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _pathsDrawn);
+
+        // Flatten curves finely enough for the pixel grid: 0.1 px, expressed in the geometry's own units.
+        float tolerance = (float)Math.Clamp(Path.DefaultTolerance / Math.Max(full.MaxScale, 1e-6), 1e-6, 1e6);
+        Path outline = p.StrokeOutline(tolerance);
+        if (p.StrokePaint is null)
+        {
+            canvas.Fill(p.StrokeColor, outline, p.Antialias, IntersectionRule.NonZero, p.StrokeOpacity, transform: m, clip: clip);
+        }
+        else if (p.StrokePaint.CreateBrush(dev) is { } brush)
+        {
+            canvas.Fill(brush, outline, p.Antialias, IntersectionRule.NonZero, p.StrokeOpacity, transform: m, clip: clip);
         }
     }
 }

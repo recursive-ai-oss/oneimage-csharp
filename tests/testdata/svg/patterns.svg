@@ -1,0 +1,271 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1000 800" width="1000" height="800">
+<defs>
+<pattern id="p0" width="25" height="25" patternUnits="userSpaceOnUse"><circle cx="12.5" cy="12.5" r="8.3" fill="#78b266"/></pattern>
+<pattern id="p1" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><rect width="10" height="5.0" fill="#5a1ed4"/></pattern>
+<pattern id="p2" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="scale(1.37) skewX(9)"><rect width="5.0" height="5.0" fill="#6cc1d1"/><rect x="5.0" y="5.0" width="5.0" height="5.0" fill="#c6bd39"/></pattern>
+<pattern id="p3" width="0.1" height="0.12"><path d="M0 10 L 10 0" stroke="#a03b55" stroke-width="2"/></pattern>
+<pattern id="p4" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(12)"><rect width="20" height="20" fill="#b37797" fill-opacity="0.4"/><circle cx="10.0" cy="10.0" r="5.0" fill="#3b7c42"/></pattern>
+<pattern id="p5" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="scale(0.90) skewX(14)" viewBox="0 0 10 10"><circle cx="4.0" cy="4.0" r="2.7" fill="#434393"/></pattern>
+<pattern id="p6" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="20" height="10.0" fill="#73364b"/></pattern>
+<pattern id="p7" width="0.1" height="0.12" patternTransform="rotate(10)"><rect width="8.0" height="8.0" fill="#348b92"/><rect x="8.0" y="8.0" width="8.0" height="8.0" fill="#d3e1e5"/></pattern>
+<pattern id="p8" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="scale(1.03) skewX(-6)"><path d="M0 10 L 10 0" stroke="#80a553" stroke-width="2"/></pattern>
+<pattern id="p9" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="20" height="20" fill="#318156" fill-opacity="0.4"/><circle cx="10.0" cy="10.0" r="5.0" fill="#4f1f37"/></pattern>
+<pattern id="p10" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(12)"><circle cx="10.0" cy="10.0" r="6.7" fill="#9a98be"/></pattern>
+<pattern id="p11" width="0.1" height="0.12" patternTransform="scale(1.13) skewX(-8)" viewBox="0 0 10 10"><rect width="12" height="6.0" fill="#28e3b5"/></pattern>
+<pattern id="p12" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="4.0" height="4.0" fill="#dfd347"/><rect x="4.0" y="4.0" width="4.0" height="4.0" fill="#6ba29e"/></pattern>
+<pattern id="p13" width="25" height="25" patternUnits="userSpaceOnUse" patternTransform="rotate(64)"><path d="M0 25 L 25 0" stroke="#a2c87c" stroke-width="2"/></pattern>
+<pattern id="p14" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="scale(1.52) skewX(8)"><rect width="8" height="8" fill="#b2b52a" fill-opacity="0.4"/><circle cx="4.0" cy="4.0" r="2.0" fill="#3c2568"/></pattern>
+<pattern id="p15" width="0.1" height="0.12"><circle cx="10.0" cy="10.0" r="6.7" fill="#e42180"/></pattern>
+<pattern id="p16" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="4.0" fill="#93d874"/></pattern>
+<pattern id="p17" width="25" height="25" patternUnits="userSpaceOnUse" patternTransform="scale(1.18) skewX(0)" viewBox="0 0 10 10"><rect width="12.5" height="12.5" fill="#b8acce"/><rect x="12.5" y="12.5" width="12.5" height="12.5" fill="#c9a0d7"/></pattern>
+<pattern id="p18" width="12" height="12" patternUnits="userSpaceOnUse"><path d="M0 12 L 12 0" stroke="#ddc75f" stroke-width="2"/></pattern>
+<pattern id="p19" width="0.1" height="0.12" patternTransform="rotate(50)"><rect width="20" height="20" fill="#d5daea" fill-opacity="0.4"/><circle cx="10.0" cy="10.0" r="5.0" fill="#efaf78"/></pattern>
+<pattern id="p20" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="scale(1.11) skewX(5)"><circle cx="5.0" cy="5.0" r="3.3" fill="#449e44"/></pattern>
+<pattern id="p21" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="4.0" fill="#27e8c1"/></pattern>
+<pattern id="p22" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(20)"><rect width="6.0" height="6.0" fill="#caa7e0"/><rect x="6.0" y="6.0" width="6.0" height="6.0" fill="#a058d2"/></pattern>
+<pattern id="p23" width="0.1" height="0.12" patternTransform="scale(1.13) skewX(3)" viewBox="0 0 10 10"><path d="M0 25 L 25 0" stroke="#9a8ccd" stroke-width="2"/></pattern>
+<pattern id="n0" patternUnits="userSpaceOnUse" width="60" height="60"><rect width="60" height="60" fill="url(#p0)"/><circle cx="30" cy="30" r="14" fill="url(#p2)" stroke="#000"/></pattern>
+<pattern id="n1" patternUnits="userSpaceOnUse" width="90" height="70" patternTransform="rotate(15)"><rect width="90" height="70" fill="url(#n0)"/><rect x="10" y="10" width="40" height="30" fill="url(#p4)"/></pattern>
+</defs>
+<rect width="1000" height="800" fill="#f5f2ea"/>
+<rect x="4" y="4" width="39" height="51" fill="url(#p19)" stroke="#444"/>
+<rect x="54" y="4" width="30" height="50" fill="url(#p12)" stroke="#444"/>
+<circle cx="124" cy="32" r="17" fill="url(#p3)" stroke="url(#p0)" stroke-width="5"/>
+<rect x="154" y="4" width="39" height="57" fill="url(#p23)" stroke="#444"/>
+<circle cx="224" cy="32" r="16" fill="url(#p19)" stroke="url(#p7)" stroke-width="5"/>
+<polygon points="254,54 276,4 298,54" fill="url(#p6)"/>
+<polygon points="304,54 326,4 348,54" fill="url(#n0)"/>
+<rect x="354" y="4" width="36" height="51" fill="url(#p4)" stroke="#444"/>
+<rect x="404" y="4" width="39" height="49" fill="url(#p23)" stroke="#444"/>
+<rect x="454" y="4" width="40" height="54" fill="url(#p1)" stroke="#444"/>
+<rect x="504" y="4" width="34" height="45" fill="url(#p15)" stroke="#444"/>
+<rect x="554" y="4" width="36" height="50" fill="url(#p15)" stroke="#444"/>
+<circle cx="624" cy="32" r="17" fill="url(#p7)" stroke="url(#p12)" stroke-width="5"/>
+<circle cx="674" cy="32" r="20" fill="url(#p14)" stroke="url(#p16)" stroke-width="5"/>
+<polygon points="704,54 726,4 748,54" fill="url(#p16)"/>
+<rect x="754" y="4" width="40" height="58" fill="url(#n0)" stroke="#444"/>
+<circle cx="824" cy="32" r="17" fill="url(#n0)" stroke="url(#p17)" stroke-width="5"/>
+<rect x="854" y="4" width="35" height="48" fill="url(#n1)" stroke="#444"/>
+<rect x="904" y="4" width="39" height="51" fill="url(#p16)" stroke="#444"/>
+<rect x="954" y="4" width="38" height="48" fill="url(#n0)" stroke="#444"/>
+<rect x="4" y="70" width="35" height="42" fill="url(#p4)" stroke="#444"/>
+<polygon points="54,120 76,70 98,120" fill="url(#n0)"/>
+<rect x="104" y="70" width="42" height="50" fill="url(#p5)" stroke="#444"/>
+<polygon points="154,120 176,70 198,120" fill="url(#p16)"/>
+<circle cx="224" cy="98" r="19" fill="url(#p21)" stroke="url(#p12)" stroke-width="5"/>
+<circle cx="274" cy="98" r="16" fill="url(#p11)" stroke="url(#p10)" stroke-width="5"/>
+<rect x="304" y="70" width="39" height="59" fill="url(#p8)" stroke="#444"/>
+<rect x="354" y="70" width="39" height="55" fill="url(#p11)" stroke="#444"/>
+<rect x="404" y="70" width="34" height="43" fill="url(#p0)" stroke="#444"/>
+<rect x="454" y="70" width="40" height="52" fill="url(#n1)" stroke="#444"/>
+<rect x="504" y="70" width="38" height="57" fill="url(#p9)" stroke="#444"/>
+<rect x="554" y="70" width="31" height="41" fill="url(#p19)" stroke="#444"/>
+<rect x="604" y="70" width="34" height="58" fill="url(#p8)" stroke="#444"/>
+<circle cx="674" cy="98" r="20" fill="url(#p5)" stroke="url(#p23)" stroke-width="5"/>
+<circle cx="724" cy="98" r="19" fill="url(#p3)" stroke="url(#p1)" stroke-width="5"/>
+<rect x="754" y="70" width="35" height="51" fill="url(#p14)" stroke="#444"/>
+<rect x="804" y="70" width="35" height="55" fill="url(#p1)" stroke="#444"/>
+<rect x="854" y="70" width="34" height="51" fill="url(#p11)" stroke="#444"/>
+<rect x="904" y="70" width="31" height="41" fill="url(#p21)" stroke="#444"/>
+<polygon points="954,120 976,70 998,120" fill="url(#p8)"/>
+<circle cx="24" cy="164" r="17" fill="url(#p9)" stroke="url(#p12)" stroke-width="5"/>
+<polygon points="54,186 76,136 98,186" fill="url(#p10)"/>
+<circle cx="124" cy="164" r="17" fill="url(#p3)" stroke="url(#p14)" stroke-width="5"/>
+<rect x="154" y="136" width="40" height="41" fill="url(#p23)" stroke="#444"/>
+<rect x="204" y="136" width="35" height="53" fill="url(#p1)" stroke="#444"/>
+<rect x="254" y="136" width="42" height="58" fill="url(#p5)" stroke="#444"/>
+<circle cx="324" cy="164" r="21" fill="url(#n1)" stroke="url(#p19)" stroke-width="5"/>
+<circle cx="374" cy="164" r="16" fill="url(#n1)" stroke="url(#p12)" stroke-width="5"/>
+<rect x="404" y="136" width="41" height="43" fill="url(#p15)" stroke="#444"/>
+<rect x="454" y="136" width="41" height="50" fill="url(#p5)" stroke="#444"/>
+<rect x="504" y="136" width="30" height="55" fill="url(#n0)" stroke="#444"/>
+<rect x="554" y="136" width="39" height="46" fill="url(#p23)" stroke="#444"/>
+<rect x="604" y="136" width="40" height="45" fill="url(#p8)" stroke="#444"/>
+<rect x="654" y="136" width="37" height="45" fill="url(#p14)" stroke="#444"/>
+<polygon points="704,186 726,136 748,186" fill="url(#p23)"/>
+<polygon points="754,186 776,136 798,186" fill="url(#p5)"/>
+<rect x="804" y="136" width="30" height="52" fill="url(#p20)" stroke="#444"/>
+<circle cx="874" cy="164" r="16" fill="url(#p5)" stroke="url(#p1)" stroke-width="5"/>
+<polygon points="904,186 926,136 948,186" fill="url(#p7)"/>
+<rect x="954" y="136" width="33" height="52" fill="url(#p2)" stroke="#444"/>
+<rect x="4" y="202" width="33" height="57" fill="url(#p19)" stroke="#444"/>
+<circle cx="74" cy="230" r="16" fill="url(#n0)" stroke="url(#p5)" stroke-width="5"/>
+<rect x="104" y="202" width="36" height="48" fill="url(#p0)" stroke="#444"/>
+<circle cx="174" cy="230" r="17" fill="url(#p14)" stroke="url(#p20)" stroke-width="5"/>
+<rect x="204" y="202" width="30" height="57" fill="url(#p10)" stroke="#444"/>
+<rect x="254" y="202" width="38" height="58" fill="url(#n1)" stroke="#444"/>
+<circle cx="324" cy="230" r="21" fill="url(#p14)" stroke="url(#p4)" stroke-width="5"/>
+<rect x="354" y="202" width="41" height="50" fill="url(#p15)" stroke="#444"/>
+<circle cx="424" cy="230" r="19" fill="url(#p11)" stroke="url(#p11)" stroke-width="5"/>
+<polygon points="454,252 476,202 498,252" fill="url(#p7)"/>
+<circle cx="524" cy="230" r="17" fill="url(#p18)" stroke="url(#p13)" stroke-width="5"/>
+<rect x="554" y="202" width="41" height="52" fill="url(#p1)" stroke="#444"/>
+<polygon points="604,252 626,202 648,252" fill="url(#p19)"/>
+<circle cx="674" cy="230" r="17" fill="url(#p2)" stroke="url(#p3)" stroke-width="5"/>
+<circle cx="724" cy="230" r="18" fill="url(#p9)" stroke="url(#p8)" stroke-width="5"/>
+<rect x="754" y="202" width="34" height="52" fill="url(#n0)" stroke="#444"/>
+<rect x="804" y="202" width="30" height="58" fill="url(#n1)" stroke="#444"/>
+<rect x="854" y="202" width="43" height="57" fill="url(#p20)" stroke="#444"/>
+<circle cx="924" cy="230" r="19" fill="url(#p7)" stroke="url(#p12)" stroke-width="5"/>
+<circle cx="974" cy="230" r="21" fill="url(#p7)" stroke="url(#p7)" stroke-width="5"/>
+<circle cx="24" cy="296" r="18" fill="url(#p16)" stroke="url(#p12)" stroke-width="5"/>
+<circle cx="74" cy="296" r="17" fill="url(#p3)" stroke="url(#p16)" stroke-width="5"/>
+<circle cx="124" cy="296" r="20" fill="url(#n1)" stroke="url(#p7)" stroke-width="5"/>
+<rect x="154" y="268" width="43" height="42" fill="url(#p14)" stroke="#444"/>
+<rect x="204" y="268" width="34" height="54" fill="url(#p15)" stroke="#444"/>
+<rect x="254" y="268" width="34" height="59" fill="url(#p17)" stroke="#444"/>
+<circle cx="324" cy="296" r="17" fill="url(#p11)" stroke="url(#p22)" stroke-width="5"/>
+<polygon points="354,318 376,268 398,318" fill="url(#p18)"/>
+<rect x="404" y="268" width="40" height="44" fill="url(#p21)" stroke="#444"/>
+<rect x="454" y="268" width="33" height="45" fill="url(#p5)" stroke="#444"/>
+<rect x="504" y="268" width="42" height="59" fill="url(#p20)" stroke="#444"/>
+<rect x="554" y="268" width="43" height="48" fill="url(#p20)" stroke="#444"/>
+<rect x="604" y="268" width="39" height="46" fill="url(#p11)" stroke="#444"/>
+<rect x="654" y="268" width="37" height="59" fill="url(#p3)" stroke="#444"/>
+<rect x="704" y="268" width="40" height="57" fill="url(#p16)" stroke="#444"/>
+<circle cx="774" cy="296" r="15" fill="url(#p0)" stroke="url(#p11)" stroke-width="5"/>
+<circle cx="824" cy="296" r="17" fill="url(#p9)" stroke="url(#p1)" stroke-width="5"/>
+<circle cx="874" cy="296" r="15" fill="url(#p10)" stroke="url(#p22)" stroke-width="5"/>
+<circle cx="924" cy="296" r="15" fill="url(#p18)" stroke="url(#p23)" stroke-width="5"/>
+<rect x="954" y="268" width="31" height="58" fill="url(#p9)" stroke="#444"/>
+<polygon points="4,384 26,334 48,384" fill="url(#p6)"/>
+<polygon points="54,384 76,334 98,384" fill="url(#p12)"/>
+<circle cx="124" cy="362" r="14" fill="url(#p9)" stroke="url(#p6)" stroke-width="5"/>
+<rect x="154" y="334" width="37" height="41" fill="url(#p23)" stroke="#444"/>
+<circle cx="224" cy="362" r="18" fill="url(#p4)" stroke="url(#p22)" stroke-width="5"/>
+<rect x="254" y="334" width="31" height="47" fill="url(#p18)" stroke="#444"/>
+<rect x="304" y="334" width="41" height="54" fill="url(#p0)" stroke="#444"/>
+<rect x="354" y="334" width="42" height="48" fill="url(#n1)" stroke="#444"/>
+<rect x="404" y="334" width="42" height="54" fill="url(#p4)" stroke="#444"/>
+<rect x="454" y="334" width="33" height="45" fill="url(#p7)" stroke="#444"/>
+<circle cx="524" cy="362" r="14" fill="url(#p18)" stroke="url(#p11)" stroke-width="5"/>
+<circle cx="574" cy="362" r="17" fill="url(#p12)" stroke="url(#p7)" stroke-width="5"/>
+<polygon points="604,384 626,334 648,384" fill="url(#p0)"/>
+<rect x="654" y="334" width="43" height="58" fill="url(#p15)" stroke="#444"/>
+<circle cx="724" cy="362" r="17" fill="url(#p19)" stroke="url(#p6)" stroke-width="5"/>
+<circle cx="774" cy="362" r="16" fill="url(#p6)" stroke="url(#p4)" stroke-width="5"/>
+<circle cx="824" cy="362" r="21" fill="url(#p15)" stroke="url(#p5)" stroke-width="5"/>
+<polygon points="854,384 876,334 898,384" fill="url(#p13)"/>
+<polygon points="904,384 926,334 948,384" fill="url(#p16)"/>
+<rect x="954" y="334" width="34" height="41" fill="url(#p7)" stroke="#444"/>
+<circle cx="24" cy="428" r="16" fill="url(#p23)" stroke="url(#p0)" stroke-width="5"/>
+<circle cx="74" cy="428" r="14" fill="url(#p15)" stroke="url(#p9)" stroke-width="5"/>
+<rect x="104" y="400" width="43" height="42" fill="url(#p1)" stroke="#444"/>
+<rect x="154" y="400" width="42" height="58" fill="url(#p8)" stroke="#444"/>
+<circle cx="224" cy="428" r="15" fill="url(#p18)" stroke="url(#p2)" stroke-width="5"/>
+<polygon points="254,450 276,400 298,450" fill="url(#n1)"/>
+<circle cx="324" cy="428" r="15" fill="url(#p0)" stroke="url(#p14)" stroke-width="5"/>
+<rect x="354" y="400" width="36" height="50" fill="url(#p14)" stroke="#444"/>
+<circle cx="424" cy="428" r="17" fill="url(#p18)" stroke="url(#p14)" stroke-width="5"/>
+<rect x="454" y="400" width="32" height="59" fill="url(#p7)" stroke="#444"/>
+<rect x="504" y="400" width="30" height="45" fill="url(#p5)" stroke="#444"/>
+<rect x="554" y="400" width="33" height="52" fill="url(#p2)" stroke="#444"/>
+<rect x="604" y="400" width="30" height="41" fill="url(#p4)" stroke="#444"/>
+<polygon points="654,450 676,400 698,450" fill="url(#p19)"/>
+<circle cx="724" cy="428" r="15" fill="url(#p16)" stroke="url(#p7)" stroke-width="5"/>
+<rect x="754" y="400" width="39" height="55" fill="url(#p5)" stroke="#444"/>
+<rect x="804" y="400" width="30" height="44" fill="url(#n1)" stroke="#444"/>
+<circle cx="874" cy="428" r="15" fill="url(#n0)" stroke="url(#p8)" stroke-width="5"/>
+<circle cx="924" cy="428" r="16" fill="url(#p23)" stroke="url(#p21)" stroke-width="5"/>
+<rect x="954" y="400" width="40" height="55" fill="url(#p2)" stroke="#444"/>
+<circle cx="24" cy="494" r="14" fill="url(#p7)" stroke="url(#p18)" stroke-width="5"/>
+<polygon points="54,516 76,466 98,516" fill="url(#p13)"/>
+<circle cx="124" cy="494" r="18" fill="url(#p4)" stroke="url(#p16)" stroke-width="5"/>
+<rect x="154" y="466" width="33" height="44" fill="url(#n0)" stroke="#444"/>
+<circle cx="224" cy="494" r="21" fill="url(#p12)" stroke="url(#p12)" stroke-width="5"/>
+<circle cx="274" cy="494" r="20" fill="url(#p0)" stroke="url(#p8)" stroke-width="5"/>
+<polygon points="304,516 326,466 348,516" fill="url(#p10)"/>
+<rect x="354" y="466" width="40" height="40" fill="url(#p5)" stroke="#444"/>
+<circle cx="424" cy="494" r="21" fill="url(#p21)" stroke="url(#p2)" stroke-width="5"/>
+<polygon points="454,516 476,466 498,516" fill="url(#p16)"/>
+<circle cx="524" cy="494" r="14" fill="url(#p12)" stroke="url(#p17)" stroke-width="5"/>
+<circle cx="574" cy="494" r="21" fill="url(#p3)" stroke="url(#p1)" stroke-width="5"/>
+<circle cx="624" cy="494" r="17" fill="url(#p0)" stroke="url(#p16)" stroke-width="5"/>
+<rect x="654" y="466" width="39" height="52" fill="url(#p1)" stroke="#444"/>
+<polygon points="704,516 726,466 748,516" fill="url(#p13)"/>
+<rect x="754" y="466" width="31" height="43" fill="url(#p13)" stroke="#444"/>
+<circle cx="824" cy="494" r="21" fill="url(#p10)" stroke="url(#p14)" stroke-width="5"/>
+<rect x="854" y="466" width="41" height="48" fill="url(#p12)" stroke="#444"/>
+<rect x="904" y="466" width="32" height="55" fill="url(#p7)" stroke="#444"/>
+<rect x="954" y="466" width="37" height="54" fill="url(#p19)" stroke="#444"/>
+<rect x="4" y="532" width="30" height="53" fill="url(#p23)" stroke="#444"/>
+<circle cx="74" cy="560" r="20" fill="url(#p17)" stroke="url(#p14)" stroke-width="5"/>
+<rect x="104" y="532" width="42" height="43" fill="url(#p0)" stroke="#444"/>
+<rect x="154" y="532" width="35" height="47" fill="url(#p6)" stroke="#444"/>
+<rect x="204" y="532" width="34" height="59" fill="url(#n1)" stroke="#444"/>
+<polygon points="254,582 276,532 298,582" fill="url(#p16)"/>
+<rect x="304" y="532" width="42" height="57" fill="url(#n0)" stroke="#444"/>
+<circle cx="374" cy="560" r="15" fill="url(#p16)" stroke="url(#p7)" stroke-width="5"/>
+<circle cx="424" cy="560" r="18" fill="url(#p20)" stroke="url(#p0)" stroke-width="5"/>
+<circle cx="474" cy="560" r="19" fill="url(#p18)" stroke="url(#p11)" stroke-width="5"/>
+<circle cx="524" cy="560" r="20" fill="url(#p21)" stroke="url(#p13)" stroke-width="5"/>
+<polygon points="554,582 576,532 598,582" fill="url(#p6)"/>
+<circle cx="624" cy="560" r="20" fill="url(#p12)" stroke="url(#p2)" stroke-width="5"/>
+<circle cx="674" cy="560" r="20" fill="url(#p2)" stroke="url(#p4)" stroke-width="5"/>
+<rect x="704" y="532" width="31" height="48" fill="url(#p15)" stroke="#444"/>
+<circle cx="774" cy="560" r="17" fill="url(#p8)" stroke="url(#p23)" stroke-width="5"/>
+<circle cx="824" cy="560" r="19" fill="url(#p20)" stroke="url(#p5)" stroke-width="5"/>
+<rect x="854" y="532" width="32" height="55" fill="url(#p6)" stroke="#444"/>
+<circle cx="924" cy="560" r="17" fill="url(#p22)" stroke="url(#p13)" stroke-width="5"/>
+<rect x="954" y="532" width="33" height="44" fill="url(#p17)" stroke="#444"/>
+<rect x="4" y="598" width="37" height="46" fill="url(#p6)" stroke="#444"/>
+<rect x="54" y="598" width="30" height="56" fill="url(#p17)" stroke="#444"/>
+<rect x="104" y="598" width="36" height="40" fill="url(#p3)" stroke="#444"/>
+<circle cx="174" cy="626" r="14" fill="url(#p0)" stroke="url(#p2)" stroke-width="5"/>
+<polygon points="204,648 226,598 248,648" fill="url(#p3)"/>
+<circle cx="274" cy="626" r="14" fill="url(#n0)" stroke="url(#p4)" stroke-width="5"/>
+<circle cx="324" cy="626" r="21" fill="url(#p15)" stroke="url(#p1)" stroke-width="5"/>
+<circle cx="374" cy="626" r="15" fill="url(#p17)" stroke="url(#p4)" stroke-width="5"/>
+<rect x="404" y="598" width="38" height="59" fill="url(#n0)" stroke="#444"/>
+<circle cx="474" cy="626" r="16" fill="url(#p1)" stroke="url(#p1)" stroke-width="5"/>
+<polygon points="504,648 526,598 548,648" fill="url(#p6)"/>
+<circle cx="574" cy="626" r="14" fill="url(#p7)" stroke="url(#p22)" stroke-width="5"/>
+<rect x="604" y="598" width="37" height="46" fill="url(#n0)" stroke="#444"/>
+<rect x="654" y="598" width="42" height="41" fill="url(#p5)" stroke="#444"/>
+<circle cx="724" cy="626" r="18" fill="url(#p5)" stroke="url(#p9)" stroke-width="5"/>
+<rect x="754" y="598" width="33" height="55" fill="url(#p7)" stroke="#444"/>
+<circle cx="824" cy="626" r="21" fill="url(#p23)" stroke="url(#p5)" stroke-width="5"/>
+<rect x="854" y="598" width="33" height="51" fill="url(#p16)" stroke="#444"/>
+<rect x="904" y="598" width="33" height="45" fill="url(#p10)" stroke="#444"/>
+<polygon points="954,648 976,598 998,648" fill="url(#p7)"/>
+<circle cx="24" cy="692" r="21" fill="url(#p5)" stroke="url(#p4)" stroke-width="5"/>
+<circle cx="74" cy="692" r="19" fill="url(#p19)" stroke="url(#p7)" stroke-width="5"/>
+<circle cx="124" cy="692" r="20" fill="url(#p14)" stroke="url(#p1)" stroke-width="5"/>
+<circle cx="174" cy="692" r="16" fill="url(#n1)" stroke="url(#p10)" stroke-width="5"/>
+<rect x="204" y="664" width="33" height="41" fill="url(#p18)" stroke="#444"/>
+<rect x="254" y="664" width="42" height="59" fill="url(#p23)" stroke="#444"/>
+<rect x="304" y="664" width="38" height="51" fill="url(#p16)" stroke="#444"/>
+<circle cx="374" cy="692" r="21" fill="url(#p14)" stroke="url(#p15)" stroke-width="5"/>
+<rect x="404" y="664" width="32" height="41" fill="url(#p23)" stroke="#444"/>
+<rect x="454" y="664" width="43" height="54" fill="url(#p9)" stroke="#444"/>
+<circle cx="524" cy="692" r="15" fill="url(#p15)" stroke="url(#p22)" stroke-width="5"/>
+<rect x="554" y="664" width="38" height="44" fill="url(#p13)" stroke="#444"/>
+<rect x="604" y="664" width="34" height="51" fill="url(#p9)" stroke="#444"/>
+<rect x="654" y="664" width="35" height="51" fill="url(#p10)" stroke="#444"/>
+<rect x="704" y="664" width="34" height="45" fill="url(#p23)" stroke="#444"/>
+<rect x="754" y="664" width="39" height="49" fill="url(#p4)" stroke="#444"/>
+<rect x="804" y="664" width="30" height="46" fill="url(#n0)" stroke="#444"/>
+<rect x="854" y="664" width="36" height="55" fill="url(#p15)" stroke="#444"/>
+<polygon points="904,714 926,664 948,714" fill="url(#p4)"/>
+<rect x="954" y="664" width="42" height="42" fill="url(#p1)" stroke="#444"/>
+<circle cx="24" cy="758" r="21" fill="url(#p13)" stroke="url(#p19)" stroke-width="5"/>
+<rect x="54" y="730" width="41" height="44" fill="url(#n0)" stroke="#444"/>
+<circle cx="124" cy="758" r="19" fill="url(#p13)" stroke="url(#p4)" stroke-width="5"/>
+<rect x="154" y="730" width="33" height="53" fill="url(#p0)" stroke="#444"/>
+<circle cx="224" cy="758" r="16" fill="url(#p20)" stroke="url(#p4)" stroke-width="5"/>
+<circle cx="274" cy="758" r="21" fill="url(#p11)" stroke="url(#p1)" stroke-width="5"/>
+<circle cx="324" cy="758" r="20" fill="url(#p6)" stroke="url(#p20)" stroke-width="5"/>
+<rect x="354" y="730" width="37" height="47" fill="url(#n0)" stroke="#444"/>
+<circle cx="424" cy="758" r="16" fill="url(#p13)" stroke="url(#p23)" stroke-width="5"/>
+<polygon points="454,780 476,730 498,780" fill="url(#p16)"/>
+<polygon points="504,780 526,730 548,780" fill="url(#n1)"/>
+<polygon points="554,780 576,730 598,780" fill="url(#p9)"/>
+<rect x="604" y="730" width="33" height="42" fill="url(#p19)" stroke="#444"/>
+<polygon points="654,780 676,730 698,780" fill="url(#p4)"/>
+<rect x="704" y="730" width="35" height="43" fill="url(#p2)" stroke="#444"/>
+<circle cx="774" cy="758" r="18" fill="url(#p16)" stroke="url(#p16)" stroke-width="5"/>
+<polygon points="804,780 826,730 848,780" fill="url(#p3)"/>
+<circle cx="874" cy="758" r="15" fill="url(#p4)" stroke="url(#p7)" stroke-width="5"/>
+<polygon points="904,780 926,730 948,780" fill="url(#p14)"/>
+<rect x="954" y="730" width="33" height="41" fill="url(#p13)" stroke="#444"/>
+</svg>

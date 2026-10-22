@@ -515,6 +515,29 @@ foreach (bool lossless in new[] { true, false })
         Console.Error.WriteLine("svg render smoke failed");
         return 1;
     }
+
+    // Paint servers: a focal radial gradient with a transform, a linear gradient and a pattern tile.
+    byte[] paints = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20' width='40' height='20'>"
+        + "<defs><radialGradient id='r' fx='0.8' gradientTransform='rotate(10)'><stop offset='0' stop-color='black'/><stop offset='1' stop-color='white'/></radialGradient>"
+        + "<linearGradient id='l'><stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>"
+        + "<pattern id='p' patternUnits='userSpaceOnUse' width='10' height='10' patternTransform='rotate(20)'><rect width='5' height='5' fill='lime'/></pattern></defs>"
+        + "<rect width='20' height='20' fill='url(#r)'/><rect x='20' width='10' height='20' fill='url(#l)'/><rect x='30' width='10' height='20' fill='url(#p)' paint-order='stroke'/></svg>");
+    Rgba32[] paintPixels = Image.Load(paints, new LoadOptions { Configuration = svgConfig }).Resize(width: 160).ToArray<Rgba32>();
+    int covered = 0;
+    for (int y = 0; y < 80; y++)
+    {
+        for (int x = 120; x < 160; x++)
+        {
+            covered += paintPixels[(y * 160) + x].A != 0 ? 1 : 0;
+        }
+    }
+
+    if (paintPixels[(40 * 160) + 85].A != 255 || paintPixels[(40 * 160) + 85].R <= paintPixels[(40 * 160) + 115].R || paintPixels[(40 * 160) + 40].A != 255 || covered is < 200 or > 3000)
+    {
+        Console.Error.WriteLine("svg paint server smoke failed");
+        return 1;
+    }
 }
 
 // Right-to-left text: joined Arabic, Hebrew and a mixed-direction line through the bidirectional algorithm and the Arabic shaper.

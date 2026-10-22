@@ -1,6 +1,6 @@
 # SVG
 
-Design of `RecursiveAI.OneImage.Svg` (assembly and namespace `OneImage.Svg`): SVG as an image format that renders directly at the size you ask for. This page describes what the package is, how it is built, and where it stands. The package detects SVG, reads its natural size and draws shapes, paths, strokes, groups with opacity, transforms, viewports, `use` and `symbol` at any size and one region at a time; the rest of the feature list arrives in the order given under [Roadmap](#roadmap). It is not published yet.
+Design of `RecursiveAI.OneImage.Svg` (assembly and namespace `OneImage.Svg`): SVG as an image format that renders directly at the size you ask for. This page describes what the package is, how it is built, and where it stands. The package detects SVG, reads its natural size and draws shapes, paths, strokes, gradients, patterns, groups with opacity, transforms, viewports, `use` and `symbol` at any size and one region at a time; the rest of the feature list arrives in the order given under [Roadmap](#roadmap). It is not published yet.
 
 ```csharp
 using OneImage;
@@ -171,7 +171,7 @@ Every bound is checked before the allocation or work it guards; breaking one rai
 | Nested image documents | 3 levels | `image` of an SVG data URI; they share the budgets above |
 | `data:` payload per image / per document | 16 MiB / 64 MiB | render tree; decoded under `ImageLimits` |
 | Text characters | 1 million | render tree |
-| Pattern tile size | 16 megapixels | renderer, after scaling to device pixels |
+| Pattern tile size | 16 megapixels (`MaxPatternTilePixels`) | renderer, after scaling to device pixels — implemented: a larger tile is drawn at a coarser resolution, not refused; each level of pattern nesting gets half of its parent's share |
 | Offscreen layer | one band: region width × at most 128 rows, under 4 megapixels | renderer — implemented |
 | Filter region | 64 megapixels | renderer, in device pixels after clipping to what is needed |
 | Filter primitives per filter / filter nesting | 256 / 4 | render tree |
@@ -186,14 +186,15 @@ Lazy behavior follows the rest of the library: `Identify` and `Load` read the ro
 - **Document and style.** A typed element tree of the SVG-namespace elements (non-SVG elements and their content are skipped); presentation attributes, then the `style` attribute's declarations on top (comments, `!important` and quoted or parenthesized semicolons handled); `inherit`; inherited and non-inherited properties computed per element; `currentColor` kept as a keyword and resolved against the element's own `color`. An invalid value is ignored as if unwritten, except a negative `stroke-width`, which drops the stroke.
 - **Colors.** Keywords, `transparent`, `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()` and `hwb()` in the comma and the space syntax, with percentages, angle units and `/` alpha. Integers and percentages may not be mixed among the three channels of `rgb()`.
 - **Geometry.** `rect` (with `rx`/`ry` and the auto rule), `circle`, `ellipse` (SVG 2 `auto` radii), `line`, `polyline`, `polygon`, and `path` with the whole grammar. Path data is read by the package's own parser, which draws what precedes the first error (the core's parser rejects the whole path) and reads arc flags without separators. A zero-length subpath draws a dot under round and square caps. Numbers beyond ±10¹⁵ are clamped, so hostile coordinates cannot reach the drawing code as infinities.
-- **Paint.** `fill`, `stroke` with solid colors, `fill-rule`, `fill-opacity`, `stroke-opacity`, `opacity`; a `url(#id)` paint uses its fallback color or draws nothing until paint servers exist. `shape-rendering` crisp values turn anti-aliasing off. `visibility` and `display`.
+- **Paint.** `fill`, `stroke` with solid colors, `fill-rule`, `fill-opacity`, `stroke-opacity`, `opacity`; `shape-rendering` crisp values turn anti-aliasing off. `visibility` and `display`. `paint-order` puts the stroke before the fill (its `markers` slot is kept for markers).
+- **Paint servers.** `linearGradient` and `radialGradient` with `gradientUnits`, `gradientTransform`, `spreadMethod`, stops (offsets clamped and kept non-decreasing, `stop-color` with `currentColor` and `inherit`, `stop-opacity`), `href` inheritance (attributes only from a gradient of the same kind, stops from the first gradient in the chain that has some, loops end the chain) and the SVG 2 focal point and `fr` as a two-circle gradient (a focal circle outside the end circle is a cone, painted only inside it; equal concentric circles paint their disc in the first color). Stops interpolate as straight, non-premultiplied colors. A gradient with one stop is that color, with no usable geometry (both ends equal, no radius) the last stop, with no stops or a box without area (bounding-box units) it is unusable. `pattern` with `patternUnits`, `patternContentUnits`, `viewBox` and `preserveAspectRatio`, `patternTransform`, `href` inheritance of attributes and children, nested patterns. The pattern content is built once per pattern element, the tile is drawn at the resolution it is seen at (rounded up to whole pixels, then stretched to the exact period) and repeated through an image brush: nearest sampling when the pattern is not turned or skewed, bilinear otherwise. A tile past `SvgLimits.MaxPatternTilePixels` is drawn at a coarser resolution. An unusable server, or a reference that is dangling or points at another kind of element, uses its fallback (`url(#id) color`) or paints nothing; a pattern whose own content is painted by itself, directly or in a loop, paints nothing there. `context-fill` and `context-stroke` take the paints of the nearest `use` (gradients and patterns included, with the box of what the `use` drew), and nothing without one. `color-interpolation: linearRGB` on gradients is not supported.
 - **Stroke.** Width, caps, joins (`miter-clip` and `arcs` fall back to miter), miter limit, dash array (an odd count is repeated) and offset, through the core stroker; the stroke outline is made once per scale and reused by every tile.
 - **Structure.** Transforms (attribute and style property), `viewBox` and `preserveAspectRatio` on the root and nested `svg`, `g`, `a`, `defs` (not drawn), `use` (with `x`, `y`, `width`, `height`), `symbol` (viewBox, size from the `use`, its own `transform` ignored as in SVG 1.1), nested `svg` with the default clip (`overflow: visible` or `auto` removes it). The root's `transform` takes its origin at the center of the viewport, and the root's `background-color` paints the whole output.
 - **Layers.** A group with `opacity` below 1, and a shape with both fill and stroke and `opacity` below 1, is drawn to a band-sized layer and composited once, so overlaps inside it do not show through.
 - **Units.** `px`, `pt`, `pc`, `mm`, `cm`, `in`, `em`, `ex` (half the font size), `rem` and `%` of the viewport (width, height, or the diagonal measure for lengths that follow neither). The default font size is 16.
 - **References** (`use`) are instantiated under budgets (see [Limits](#limits)); a `use` of itself, of an ancestor, or around a cycle draws nothing; a dangling or external reference draws nothing.
 
-Seams for the following steps: a style sheet adds its declarations between the presentation attributes and the `style` attribute in `SvgDocument.Build`; paint servers replace `ResolvePaint` in `SceneBuilder` and add brush fields to `RPath`; markers, clip, mask and filters wrap or add `RNode`s where `EmitShape` and `Open` create them (the frame already carries an inherited viewport clip path in scene space and decides when a group needs a layer); text becomes `RPath`s from outlines.
+Seams for the following steps: a style sheet adds its declarations between the presentation attributes and the `style` attribute in `SvgDocument.Build`; paint servers are in; markers set `Frame.CtxFill`/`CtxStroke` (the `ResolvedPaint`s of the shape) on their frames, as `use` does, and take their slot from `SvgStyle.PaintOrder`; text outlines resolve paints through `SceneBuilder.ResolvePaint` (it takes the geometry for the bounding box); markers, clip, mask and filters wrap or add `RNode`s where `EmitShape` and `Open` create them (the frame already carries an inherited viewport clip path in scene space and decides when a group needs a layer); text becomes `RPath`s from outlines.
 
 ## Testing against resvg's suite
 
@@ -214,15 +215,15 @@ Committed subset, 1,748 files (42 excluded), run on the render-at-size path. "Be
 | category | rendered | pass before | pass now | rate now |
 |---|---:|---:|---:|---:|
 | shapes | 133 | 0 | 128 | 96.2% |
-| painting | 307 | 0 | 138 | 45.0% |
-| structure | 230 | 0 | 124 | 53.9% |
-| paint-servers | 154 | 0 | 11 | 7.1% |
+| painting | 307 | 0 | 160 | 52.1% |
+| structure | 230 | 0 | 134 | 58.3% |
+| paint-servers | 154 | 0 | 146 | 94.8% |
 | masking | 93 | 0 | 7 | 7.5% |
-| filters | 406 | 0 | 77 | 19.0% |
+| filters | 406 | 0 | 76 | 18.7% |
 | text | 383 | 0 | 16 | 4.2% |
-| **all** | 1,706 | 0 | 501 | 29.4% |
+| **all** | 1,706 | 0 | 667 | 39.1% |
 
-The paint-server, masking, filter and text passes are tests whose result happens not to need the feature (an empty result, or an element that is skipped). Subcategories in scope for this step:
+The masking, filter and text passes are tests whose result happens not to need the feature (an empty result, or an element that is skipped). Subcategories in scope for this step:
 
 | subcategory | pass |
 |---|---:|
@@ -242,13 +243,24 @@ Of the 85 failures in these subcategories (and `fill`/`opacity`/`display` and so
 - later steps: `fill`/`stroke` with gradients and patterns (painting fill, stroke, fill-opacity, stroke-opacity, defs, `funcIRI` tests), `context-fill`/`context-stroke`, markers, `paint-order`, `mix-blend-mode`, `isolation`, `image`, `<style>` rules (`use/cSS-rules`, `use/complex-style-resolving-order`), `switch`/`systemLanguage`, `transform-origin` (`svg/root-transform-origin-with-viewbox`), `clipPath`/`mask`, filters and text (`display`/`visibility` on `tspan`, text in `defs`);
 - deliberate differences: `shapes/rect/rem-values` (resvg does not support `rem`, so its reference shows nothing; this renders it as CSS defines), `painting/fill/rgba-0-127-0-50percent` (CSS Color 4 accepts a percentage alpha in the comma syntax; the reference rejects it), `structure/svg/zero-size` and `negative-size` (resvg's reference is empty; this renders the content at its measured size), `structure/svg/not-UTF-8-encoding` (Windows-1251 is not a supported encoding), `painting/shape-rendering/on-horizontal-line` (the pixel rows a non-anti-aliased line covers when its edge falls exactly on a pixel center), `structure/svg/preserveAspectRatio=none` (a 0.75 px frame stroke that the reference draws as a hairline).
 
+### Paint servers results
+
+First run of the 154 rendered `paint-servers` tests passed 11; now 146 pass. The eight failures:
+
+- tile period (deliberate): resvg rounds a pattern tile up to whole pixels and repeats it at that period, so with a tile of 28.8 px its copies drift against the exact geometry; this renderer keeps the exact period, so the seams between tiles fall up to one pixel elsewhere (`pattern/invalid-patternUnits-and-patternContentUnits`, `self-recursive`, `self-recursive-on-child`, `pattern-on-child`: they pass with the rounded period; `out-of-order-referencing` and `recursive-on-child` differ by 2.4% even then, on nested tiles of a few pixels);
+- `pattern/transform-and-patternTransform`: a rotation cancelled by its opposite leaves a pattern that is axis-aligned up to rounding noise; the reference smooths its tile, this renderer snaps it (6%, edge pixels of the tile);
+- `pattern/text-child`: text in a pattern (the text step);
+- `radialGradient/invalid-xlink-href` is excluded (external reference).
+
+Of the `painting/context` and `painting/paint-order` tests, 3 pass and the rest need other steps: markers (`in-marker`, `in-nested-marker`, `in-nested-use-and-marker`, `on-shape-with-zero-size-bbox`, `with-gradient-on-marker`, `with-pattern-on-marker`, `with-viewbox`, and all of `paint-order` except `on-text`/`on-tspan`, which need text), text (`with-text`) and the `transform-origin` attribute (`with-gradient-and-gradient-transform`, `with-gradient-in-use`, `with-pattern-and-transform-in-use`, `with-pattern-in-use`, `with-pattern-objectBoundingBox-in-use`: with `transform-origin` written as an equivalent `transform`, the first three pass and `with-pattern-in-use` differs by 0.8% from tile period; `with-pattern-objectBoundingBox-in-use` differs by 21% and its tile size does not match the reference, cause not found). Gradients and patterns on text (`painting/fill`, `painting/stroke`) wait for the text step. Fifteen `filters` tests that passed before (invalid `feConvolveMatrix`, lighting and morphology parameters whose reference shows nothing) now fail: they fill with a pattern, which is drawn now, and the filter that should remove the element is the filter step's.
+
 ## Roadmap
 
 Planned order. Each step is a coherent piece with its own observable claim, measured by the conformance table above and the stated tests.
 
 1. **Document model and shapes** (done). The core render-at-size hook and rewrite; typed document; presentation attributes and the `style` attribute; the render tree for `g`, shapes and `path`; solid fill and stroke with all stroke properties; transforms, `viewBox`, `preserveAspectRatio`, nested `svg`, basic `use`/`symbol`; region rendering; bounding-box natural size. Claim: `shapes` and the stroke/fill groups of `painting` pass at a stated rate, and `Thumbnail` of an SVG renders at the target size (compared against rasterizing then resizing). Result: 96.2% of `shapes`; the render-at-size output equals a direct render within 1 level and differs from a raster downscale (see [Results](#results)).
 2. **CSS and structure.** `<style>`, selectors, cascade, inheritance, `currentColor`, `switch`, `systemLanguage`, `use` budgets and cycle handling, `data:` images, `transform-origin`. Claim: `structure` passes at a stated rate; the CSS cost limits are tested with hostile stylesheets.
-3. **Paint servers.** Gradients (including focal radial and gradient transforms), patterns, `paint-order`, `context-fill`/`context-stroke`, plus the brush additions in the core. Claim: `paint-servers` pass rate.
+3. **Paint servers** (done). Gradients (including focal radial and gradient transforms), patterns, `paint-order`, `context-fill`/`context-stroke` through `use`, plus the brush additions in the core. Claim: `paint-servers` pass rate. Result: 146 of 154 (94.8%); see [Paint servers](#paint-servers-results).
 4. **Painting extras.** Markers, `mix-blend-mode`, `isolation`, group opacity layers, `shape-rendering`, `image-rendering`, `visibility`, `display`. Claim: `painting` pass rate.
 5. **Clipping and masking.** `clipPath`, `mask`, viewport clipping; the layer-multiply op. Claim: `masking` pass rate.
 6. **Filters, part one.** The filter graph, regions and subregions, linear-light float evaluation, and the primitives that map onto existing operations, `feDropShadow` and the CSS filter functions. Claim: the corresponding `filters` directories.
@@ -273,4 +285,17 @@ Measured on a shared host (local smoke, load 7, .NET 10.0.400, BenchmarkDotNet s
 | illustration, resvg 0.48.1 CLI (process, parse, render, PNG write) | 112 ms | — |
 | icon, resvg 0.48.1 CLI (same) | 3.0 ms | — |
 
-The small icon is twice Svg.Skia's time: the fixed cost of four tile renders (canvas, layer and fill setup) dominates a drawing this small. Paint servers, markers, clipping, masks, filters, text and `image` are not drawn yet.
+The small icon is twice Svg.Skia's time: the fixed cost of four tile renders (canvas, layer and fill setup) dominates a drawing this small. Gradients and patterns are measured in [Paint servers](#paint-servers-results); markers, clipping, masks, filters, text and `image` are not drawn yet.
+
+Paint servers, a 1000 x 800 drawing of about 600 shapes with 56 gradients and one of about 250 shapes with 26 patterns (rotated, skewed, nested), drawn at 1024 px wide (local smoke, load 18–20 on a shared host, .NET 10.0.11, BenchmarkDotNet short job, `SvgPaintBenchmarks`):
+
+| row | mean | allocated |
+|---|---:|---:|
+| gradients, OneImage load + render | 15.6 ms | 11.7 MB |
+| gradients, OneImage render (loaded) | 12.3 ms | 7.1 MB |
+| gradients, Svg.Skia load + render | 22.0 ms | 7.4 MB |
+| gradients, Svg.Skia render (loaded) | 13.8 ms | managed 184 B |
+| patterns, OneImage load + render | 15.0 ms | 31.7 MB |
+| patterns, OneImage render (loaded) | 11.8 ms | 7.0 MB |
+| patterns, Svg.Skia load + render | 91.2 ms | 87.9 MB |
+| patterns, Svg.Skia render (loaded) | 13.2 ms | managed 184 B |

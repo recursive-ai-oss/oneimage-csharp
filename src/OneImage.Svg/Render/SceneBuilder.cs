@@ -10,7 +10,7 @@ namespace OneImage.Svg.Render;
 /// shapes into paths with final geometry and paint, in scene space. It walks the document with an explicit stack (document nesting
 /// and <c>use</c> chains never grow the call stack) and counts every instantiated element against <see cref="SvgLimits.MaxInstances"/>.
 /// </summary>
-internal sealed class SceneBuilder
+internal sealed partial class SceneBuilder
 {
     private enum Axis
     {
@@ -52,6 +52,17 @@ internal sealed class SceneBuilder
         public Length? UseWidth { get; init; }
 
         public Length? UseHeight { get; init; }
+
+        /// <summary>The fill and stroke a <c>use</c> element offers its content as <c>context-fill</c> and <c>context-stroke</c> (inherited by nested frames; markers will set theirs the same way).</summary>
+        public ResolvedPaint? CtxFill { get; init; }
+
+        public ResolvedPaint? CtxStroke { get; init; }
+
+        /// <summary>For a <c>use</c> frame whose context paints depend on its box: filled in when the frame closes.</summary>
+        public BBoxHolder? UseBox { get; init; }
+
+        /// <summary>Index in <see cref="Out"/> where this frame's own nodes start.</summary>
+        public int OutStart { get; init; }
     }
 
     private const double AntialiasPad = 0.5;
@@ -101,6 +112,8 @@ internal sealed class SceneBuilder
         {
             vp = new Viewport(w ?? 100, h ?? 100);
         }
+
+        _rootVp = vp;
 
         if (!st.Displayed)
         {
@@ -177,6 +190,11 @@ internal sealed class SceneBuilder
 
     private void Close(Frame f)
     {
+        if (f.UseBox is { Needed: true } box)
+        {
+            Measure(f, box);
+        }
+
         if (f.UseTarget is not null)
         {
             _active.Remove(f.UseTarget);
@@ -273,7 +291,7 @@ internal sealed class SceneBuilder
             && Math.Abs(ctm.D) <= Coord.Limit && Math.Abs(ctm.E) <= Coord.Limit && Math.Abs(ctm.F) <= Coord.Limit;
     }
 
-    private static void Open(Stack<Frame> stack, Frame parent, IReadOnlyList<SvgElement> kids, in SvgStyle st, Affine ctm, Viewport vp, Path? clip, bool layered, SvgElement? useTarget = null, Length? useW = null, Length? useH = null, int useDepth = -1, int maxLayers = 0)
+    private static void Open(Stack<Frame> stack, Frame parent, IReadOnlyList<SvgElement> kids, in SvgStyle st, Affine ctm, Viewport vp, Path? clip, bool layered, SvgElement? useTarget = null, Length? useW = null, Length? useH = null, int useDepth = -1, int maxLayers = 0, ResolvedPaint? ctxFill = null, ResolvedPaint? ctxStroke = null, BBoxHolder? useBox = null)
     {
         List<RNode> output = parent.Out;
         RLayer? layer = null;
@@ -305,6 +323,10 @@ internal sealed class SceneBuilder
             UseTarget = useTarget,
             UseWidth = useW,
             UseHeight = useH,
+            CtxFill = ctxFill ?? parent.CtxFill,
+            CtxStroke = ctxStroke ?? parent.CtxStroke,
+            UseBox = useBox,
+            OutStart = layer is null ? parent.Out.Count : 0,
         });
     }
 
@@ -352,7 +374,8 @@ internal sealed class SceneBuilder
         Length? uw = Length.TryParse(e.Attr("width") ?? string.Empty, out Length lw) ? lw : null;
         Length? uh = Length.TryParse(e.Attr("height") ?? string.Empty, out Length lh) ? lh : null;
         _active.Add(target);
-        Open(stack, f, [target], st, ctm, f.Vp, f.Clip, st.Opacity < 1, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth);
+        (ResolvedPaint ctxFill, ResolvedPaint ctxStroke, BBoxHolder useBox) = ContextPaints(f, st, ctm);
+        Open(stack, f, [target], st, ctm, f.Vp, f.Clip, st.Opacity < 1, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth, ctxFill, ctxStroke, useBox);
     }
 
     private static bool IsAncestorOrSelf(SvgElement candidate, SvgElement of)
@@ -454,17 +477,24 @@ internal sealed class SceneBuilder
         _hasContent = true;
         bool isLine = e.Name is "line";
 
-        bool fill = st.Visible && ResolvePaint(st.Fill);
-        Rgba32 fillColor = fill ? ResolveColor(st.Fill, st) : default;
+        BBoxHolder? bbox = null;
+        ResolvedPaint fillPaint = st.Visible ? ResolvePaint(st.Fill, f, st, ctm, geometry, ref bbox) : ResolvedPaint.None;
+        bool fill = fillPaint.Kind != ResolvedKind.None;
+        Rgba32 fillColor = fillPaint.Color;
         bool stroke = false;
         float width = 0;
-        Rgba32 strokeColor = default;
-        if (st.Visible && ResolvePaint(st.Stroke))
+        ResolvedPaint strokePaint = ResolvedPaint.None;
+        if (st.Visible)
         {
-            width = Math.Min(Coord.F(Resolve(st.StrokeWidth, Axis.Other, st, f.Vp)), Pen.MaxWidth);
-            stroke = width > 0 && float.IsFinite(width);
-            strokeColor = ResolveColor(st.Stroke, st);
+            strokePaint = ResolvePaint(st.Stroke, f, st, ctm, geometry, ref bbox);
+            if (strokePaint.Kind != ResolvedKind.None)
+            {
+                width = Math.Min(Coord.F(Resolve(st.StrokeWidth, Axis.Other, st, f.Vp)), Pen.MaxWidth);
+                stroke = width > 0 && float.IsFinite(width);
+            }
         }
+
+        Rgba32 strokeColor = strokePaint.Color;
 
         if (isLine)
         {
@@ -491,6 +521,9 @@ internal sealed class SceneBuilder
             Ctm = ctm,
             HasFill = fill,
             FillColor = fillColor,
+            FillPaint = fillPaint.Server,
+            StrokePaint = strokePaint.Server,
+            StrokeFirst = st.StrokeFirst,
             FillOpacity = (float)st.FillOpacity * groupOpacity,
             EvenOdd = st.FillEvenOdd,
             HasStroke = stroke,
@@ -544,25 +577,6 @@ internal sealed class SceneBuilder
         {
             f.Out.Add(node);
         }
-    }
-
-    // The paint is something this renderer can draw as a flat color (paint servers arrive with their own unit; a reference to one falls back).
-    private static bool ResolvePaint(Paint p) => p.Kind switch
-    {
-        PaintKind.Color or PaintKind.CurrentColor => true,
-        PaintKind.Server => p.Fallback is PaintKind.Color or PaintKind.CurrentColor,
-        _ => false,
-    };
-
-    private static Rgba32 ResolveColor(Paint p, in SvgStyle st)
-    {
-        PaintKind kind = p.Kind == PaintKind.Server ? p.Fallback : p.Kind;
-        return kind switch
-        {
-            PaintKind.Color => p.Kind == PaintKind.Server ? p.FallbackColor : p.Color,
-            PaintKind.CurrentColor => st.Color,
-            _ => default,
-        };
     }
 
     private float[]? ResolveDash(in SvgStyle st, Viewport vp)

@@ -3,7 +3,21 @@ using OneImage.Kernels;
 
 namespace OneImage.Drawing;
 
-/// <summary>Paints with the pixels of an image, nearest-neighbor, tiled or placed once.</summary>
+/// <summary>How a brush made from an image reads the source between pixel centers.</summary>
+public enum ImageSampling
+{
+    /// <summary>Each pixel takes the source pixel its center falls in; no smoothing. Colors are exact copies of source pixels.</summary>
+    Nearest = 0,
+
+    /// <summary>
+    /// Each pixel blends the four source pixels around its center, weighted by distance (source pixel centers sit at +0.5), on premultiplied
+    /// color so transparent pixels do not bleed their color. With tiling, the neighbors wrap around the source's edges, so tiles join
+    /// without a seam. A pixel whose center lands exactly on a source pixel center gets that pixel unchanged.
+    /// </summary>
+    Bilinear = 1,
+}
+
+/// <summary>Paints with the pixels of an image, nearest-neighbor or bilinear, tiled or placed once.</summary>
 internal sealed class ImageBrush : Brush
 {
     // 2^26 pixels = 256 MiB as 8-bit RGBA. A bigger picture is not a brush; crop it with a region first.
@@ -13,13 +27,20 @@ internal sealed class ImageBrush : Brush
     private readonly ImageRect _region;
     private readonly int _ox, _oy;
     private readonly bool _tile;
+    private readonly ImageSampling _sampling;
     private readonly Matrix3x2? _transform;
     private readonly Matrix3x2 _inverse;
     private readonly Pixels _pixels;
 
-    public ImageBrush(Image source, ImageRect? region, int offsetX, int offsetY, Matrix3x2? transform, bool tile)
+    public ImageBrush(Image source, ImageRect? region, int offsetX, int offsetY, Matrix3x2? transform, bool tile, ImageSampling sampling = ImageSampling.Nearest)
     {
         ArgumentNullException.ThrowIfNull(source);
+        if (sampling is < ImageSampling.Nearest or > ImageSampling.Bilinear)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampling));
+        }
+
+        _sampling = sampling;
         _source = source;
         _node = source.Root;
         ImageRect r = region ?? new ImageRect(0, 0, _node.Width, _node.Height);
@@ -82,6 +103,12 @@ internal sealed class ImageBrush : Brush
         int w = _region.Width, h = _region.Height;
         int n = rgba.Length / 4;
         const float k = 1f / 255f;
+        if (_sampling == ImageSampling.Bilinear)
+        {
+            FillBilinear(data, x, y, rgba);
+            return;
+        }
+
         if (_transform == null && _tile)
         {
             int row = (int)Mod((long)y - _oy, h) * w;
@@ -137,6 +164,70 @@ internal sealed class ImageBrush : Brush
         }
     }
 
+    private void FillBilinear(byte[] data, int x, int y, Span<float> rgba)
+    {
+        int w = _region.Width, h = _region.Height;
+        int n = rgba.Length / 4;
+        Matrix3x2 m = _inverse;
+        double py = y + 0.5;
+        for (int i = 0; i < n; i++)
+        {
+            double px = x + i + 0.5;
+            double u = (px * m.M11) + (py * m.M21) + m.M31 - 0.5;
+            double v = (px * m.M12) + (py * m.M22) + m.M32 - 0.5;
+            int o = i * 4;
+            if (!(Math.Abs(u) < 1e15 && Math.Abs(v) < 1e15))
+            {
+                rgba.Slice(o, 4).Clear();
+                continue;
+            }
+
+            double fu = Math.Floor(u), fv = Math.Floor(v);
+            float ax = (float)(u - fu), ay = (float)(v - fv);
+            long u0 = (long)fu, v0 = (long)fv;
+            float r = 0, g = 0, b = 0, a = 0;
+            for (int k = 0; k < 4; k++)
+            {
+                long cu = u0 + (k & 1), cv = v0 + (k >> 1);
+                float wt = ((k & 1) == 0 ? 1f - ax : ax) * ((k >> 1) == 0 ? 1f - ay : ay);
+                if (wt == 0f)
+                {
+                    continue;
+                }
+
+                if (_tile)
+                {
+                    cu = Mod(cu, w);
+                    cv = Mod(cv, h);
+                }
+                else if (cu < 0 || cu >= w || cv < 0 || cv >= h)
+                {
+                    continue;
+                }
+
+                int s = (int)((cv * w) + cu) * 4;
+                float sa = data[s + 3] * wt;
+                a += sa;
+                r += data[s] * sa;
+                g += data[s + 1] * sa;
+                b += data[s + 2] * sa;
+            }
+
+            if (a > 0f)
+            {
+                float k = 1f / (a * 255f);
+                rgba[o] = Math.Min(r * k, 1f);
+                rgba[o + 1] = Math.Min(g * k, 1f);
+                rgba[o + 2] = Math.Min(b * k, 1f);
+                rgba[o + 3] = Math.Min(a * (1f / 255f), 1f);
+            }
+            else
+            {
+                rgba.Slice(o, 4).Clear();
+            }
+        }
+    }
+
     private static long Mod(long a, int m)
     {
         long r = a % m;
@@ -146,7 +237,7 @@ internal sealed class ImageBrush : Brush
     public override IReadOnlyList<OpParameter> Describe()
     {
         Matrix3x2 m = _transform ?? Matrix3x2.Identity;
-        return
+        IReadOnlyList<OpParameter> core =
         [
             new("brush", "image"),
             new("source", _node.Id),
@@ -164,5 +255,8 @@ internal sealed class ImageBrush : Brush
             new("m31", (double)m.M31),
             new("m32", (double)m.M32),
         ];
+
+        // Nearest sampling keeps the descriptor it always had.
+        return _sampling == ImageSampling.Bilinear ? [.. core, new("sampling", "bilinear")] : core;
     }
 }

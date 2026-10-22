@@ -36,6 +36,26 @@ internal struct SvgStyle
 {
     public const double DefaultFontSize = 16;
 
+    /// <summary>The <see cref="PaintOrder"/> code for fill, stroke, markers.</summary>
+    public const int NormalPaintOrder = 0 | (1 << 2) | (2 << 4);
+
+    /// <summary>Gets whether the stroke is painted before the fill.</summary>
+    public readonly bool StrokeFirst => PaintIndex(1) < PaintIndex(0);
+
+    /// <summary>Gets the position (0 first) of fill (0), stroke (1) or markers (2) in the paint order.</summary>
+    public readonly int PaintIndex(int what)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            if (((PaintOrder >> (2 * i)) & 3) == what)
+            {
+                return i;
+            }
+        }
+
+        return what;
+    }
+
     // Inherited.
     public Paint Fill;
     public Paint Stroke;
@@ -53,6 +73,9 @@ internal struct SvgStyle
     public double FontSize;
     public bool Visible;
     public bool Antialias;
+
+    /// <summary>The <c>paint-order</c> as three base-4 digits, first painted first: 0 fill, 1 stroke, 2 markers. Normal is fill, stroke, markers.</summary>
+    public int PaintOrder;
 
     // Not inherited.
     public double Opacity;
@@ -73,6 +96,7 @@ internal struct SvgStyle
         FontSize = DefaultFontSize,
         Visible = true,
         Antialias = true,
+        PaintOrder = NormalPaintOrder,
         Opacity = 1,
         Displayed = true,
     };
@@ -154,6 +178,13 @@ internal struct SvgStyle
                     if (TryOpacity(value, out double o))
                     {
                         s.Opacity = o;
+                    }
+
+                    break;
+                case "paint-order":
+                    if (TryPaintOrder(value, out int po))
+                    {
+                        s.PaintOrder = po;
                     }
 
                     break;
@@ -244,6 +275,7 @@ internal struct SvgStyle
             case "stroke-opacity": s.StrokeOpacity = p.StrokeOpacity; break;
             case "opacity": s.Opacity = p.Opacity; break;
             case "fill-rule": s.FillEvenOdd = p.FillEvenOdd; break;
+            case "paint-order": s.PaintOrder = p.PaintOrder; break;
             case "clip-rule": s.ClipEvenOdd = p.ClipEvenOdd; break;
             case "stroke-width": s.StrokeWidth = p.StrokeWidth; break;
             case "stroke-linecap": s.LineCap = p.LineCap; break;
@@ -258,6 +290,50 @@ internal struct SvgStyle
         }
 
         _ = e;
+    }
+
+    /// <summary>Parses <c>paint-order</c>: <c>normal</c>, or one to three of fill, stroke, markers (each once); the ones left out follow in the normal order.</summary>
+    private static bool TryPaintOrder(string value, out int code)
+    {
+        code = NormalPaintOrder;
+        string[] parts = value.Split([' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return false;
+        }
+
+        if (parts.Length == 1 && parts[0] == "normal")
+        {
+            return true;
+        }
+
+        if (parts.Length > 3)
+        {
+            return false;
+        }
+
+        var order = new List<int>(3);
+        foreach (string part in parts)
+        {
+            int what = part switch { "fill" => 0, "stroke" => 1, "markers" => 2, _ => -1 };
+            if (what < 0 || order.Contains(what))
+            {
+                return false;
+            }
+
+            order.Add(what);
+        }
+
+        for (int what = 0; what < 3; what++)
+        {
+            if (!order.Contains(what))
+            {
+                order.Add(what);
+            }
+        }
+
+        code = order[0] | (order[1] << 2) | (order[2] << 4);
+        return true;
     }
 
     private static bool TryOpacity(string v, out double result)

@@ -55,12 +55,15 @@ img = img.Fill(Brush.FromImage(texture, offsetX: 10), Path.Star(300, 200, 5, 60,
 |---|---|
 | `Brush.Solid(color)` | one color |
 | `Brush.LinearGradient(start, end, stops, repetition, premultiplied)` | position = projection of the pixel center on the line start→end |
+| `Brush.LinearGradient(start, end, stops, transform, repetition, premultiplied)` | the same, with the line given in gradient space and placed in the image by an affine `Matrix3x2` (the position of a pixel is that of its center taken back through the inverse; double precision) |
 | `Brush.RadialGradient(center, radius, stops, ...)` | position = distance from the center / radius |
+| `Brush.RadialGradient(center, radius, focalCenter, focalRadius, stops, transform, ...)` | a two-circle (focal) gradient as SVG 2 defines it: position *t* where the circle growing linearly from (focal center, focal radius) to (center, radius) passes through the pixel, the larger *t* with a non-negative radius winning. A focal circle outside the end circle makes a cone, outside which pixels are transparent; equal concentric circles paint only their disc in the first color |
 | `Brush.EllipticGradient(center, axisEnd, axisRatio, stops, ..., squaredDistance)` | position = normalized distance in an ellipse whose first axis runs from the center to `axisEnd` and whose other axis is `axisRatio` times as long |
 | `Brush.PathGradient(points, colors, centerColor, center)` | barycentric blend of the vertex colors and a center color over the triangles (center, point *i*, point *i*+1); transparent outside them |
 | `Brush.Pattern(foreground, background, bool[,] cells, transform)` | a tiled two-color bitmap, cells indexed `[row, column]` |
 | `Brush.Hatch(HatchStyle, foreground, background, transform)` | `Horizontal`, `Vertical`, `ForwardDiagonal`, `BackwardDiagonal`, `Percent10`, `Percent20`, `Min` (4 × 4 cells) |
 | `Brush.FromImage(source, region, offsetX, offsetY, transform, tile)` | the pixels of an image, repeated (or placed once with `tile: false`) |
+| `Brush.FromImage(source, sampling, region, offsetX, offsetY, transform, tile)` | the same with `ImageSampling.Bilinear`: each pixel blends the four source pixels around its center, on premultiplied color; tiles wrap without a seam, and with `tile: false` the edge fades over half a source pixel. `Nearest` is the behavior of the overload without `sampling` |
 | `Brush.Recolor(source, target, threshold)` | the target color where the pixels already there are close to the source color |
 
 **Coordinates.** A brush works in the image's pixel grid, at pixel centers, and does not move with the shape: two fills with one brush line up. A fill's `transform` moves only the path. Patterns and image brushes take their own `transform` (pattern or source space to image space, row-vector `Matrix3x2`; each pixel takes the cell or source pixel under its center, without smoothing); gradients take their geometry in image pixels.

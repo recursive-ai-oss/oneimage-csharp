@@ -45,4 +45,10 @@ public sealed class SvgLimits
 
     /// <summary>Gets how deep isolated layers (groups with <c>opacity</c>) may nest. Default 32.</summary>
     public int MaxLayerDepth { get; init; } = 32;
+
+    /// <summary>
+    /// Gets the most pixels one pattern tile is rendered with, after scaling to the output. A pattern seen larger than this is
+    /// rendered at a coarser resolution (nested patterns get half of their parent's share each), not refused. Default 16 megapixels.
+    /// </summary>
+    public int MaxPatternTilePixels { get; init; } = 16 * 1024 * 1024;
 }

@@ -43,6 +43,15 @@ internal sealed class RPath : RNode
 
     public Rgba32 FillColor { get; init; }
 
+    /// <summary>The paint server that paints the fill (a gradient or pattern), or <see langword="null"/> for the flat <see cref="FillColor"/>.</summary>
+    public RPaint? FillPaint { get; init; }
+
+    /// <summary>The paint server that paints the stroke, or <see langword="null"/> for the flat <see cref="StrokeColor"/>.</summary>
+    public RPaint? StrokePaint { get; init; }
+
+    /// <summary>Gets whether the stroke is painted before the fill (<c>paint-order</c>).</summary>
+    public bool StrokeFirst { get; init; }
+
     public float FillOpacity { get; init; } = 1;
 
     public bool EvenOdd { get; init; }

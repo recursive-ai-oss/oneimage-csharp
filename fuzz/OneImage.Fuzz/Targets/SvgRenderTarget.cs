@@ -20,6 +20,7 @@ internal static class SvgRenderTarget
         MaxInstances = 20_000,
         MaxReferenceDepth = 8,
         MaxLayerDepth = 8,
+        MaxPatternTilePixels = 1 << 18,
     };
 
     private static readonly LoadOptions Options = new()

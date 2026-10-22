@@ -7,8 +7,8 @@ namespace OneImage.Drawing;
 /// Says what color a fill puts down at each pixel. A fill asks its brush for one row of colors at a time, after the
 /// rasterizer has decided how much of each pixel the shape covers; the brush never sees geometry.
 /// <para>
-/// Create brushes with <see cref="Solid"/>, <see cref="LinearGradient"/>, <see cref="RadialGradient"/>, <see cref="EllipticGradient"/>,
-/// <see cref="PathGradient"/>, <see cref="Pattern"/>, <see cref="Hatch"/>, <see cref="FromImage"/> and <see cref="Recolor"/>, or derive
+/// Create brushes with <see cref="Solid"/>, <see cref="LinearGradient(Vector2, Vector2, ReadOnlySpan{ColorStop}, GradientRepetition, bool)"/>, <see cref="RadialGradient(Vector2, float, ReadOnlySpan{ColorStop}, GradientRepetition, bool)"/>, <see cref="EllipticGradient"/>,
+/// <see cref="PathGradient"/>, <see cref="Pattern"/>, <see cref="Hatch"/>, <see cref="FromImage(Image, ImageRect?, int, int, Matrix3x2?, bool)"/> and <see cref="Recolor"/>, or derive
 /// your own by implementing <see cref="FillRow(int, int, Span{float})"/>.
 /// </para>
 /// <para>
@@ -50,6 +50,46 @@ public abstract class Brush
         new LinearGradientBrush(start, end, stops, repetition, premultiplied);
 
     /// <summary>
+    /// A linear gradient whose line is placed through an affine <paramref name="transform"/>: <paramref name="start"/> and <paramref name="end"/>
+    /// are in the gradient's own space, and a pixel's position is the projection of its center, taken back through the inverse of
+    /// <paramref name="transform"/>, on that line. Lines of equal color are therefore perpendicular to the line in gradient space
+    /// (skewed in the image if the transform skews). Positions are computed in double precision.
+    /// </summary>
+    /// <param name="start">Where the gradient is at 0, in gradient space.</param>
+    /// <param name="end">Where the gradient is at 1, in gradient space. Must differ from <paramref name="start"/>.</param>
+    /// <param name="stops">Color stops; see <see cref="ColorStop"/>. At least one is required.</param>
+    /// <param name="transform">Maps gradient space to pixel coordinates (row-vector convention of <see cref="Matrix3x2"/>).</param>
+    /// <param name="repetition">What happens outside 0..1. The default is <see cref="GradientRepetition.None"/>.</param>
+    /// <param name="premultiplied">Interpolate premultiplied colors (the default), or straight colors; see <see cref="ColorStop"/>.</param>
+    /// <returns>The brush.</returns>
+    /// <exception cref="ArgumentException">No stops, a non-finite value, <paramref name="start"/> equals <paramref name="end"/>, or the transform is not finite and invertible.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="repetition"/> is undefined.</exception>
+    public static Brush LinearGradient(Vector2 start, Vector2 end, ReadOnlySpan<ColorStop> stops, Matrix3x2 transform, GradientRepetition repetition = GradientRepetition.None, bool premultiplied = true) =>
+        new MatrixLinearGradientBrush(start, end, stops, transform, repetition, premultiplied);
+
+    /// <summary>
+    /// A radial gradient between two circles (a focal gradient, as SVG 2 defines it): the gradient is 0 on the circle of radius
+    /// <paramref name="focalRadius"/> around <paramref name="focalCenter"/> and 1 on the circle of radius <paramref name="radius"/>
+    /// around <paramref name="center"/>, and a pixel takes the position of the circle, of those growing linearly between the two, that
+    /// passes through its center, preferring the larger position and ignoring circles of negative radius. When the focal circle lies
+    /// inside the end circle every pixel is reached; otherwise the circles form a cone and pixels outside it are transparent. Equal,
+    /// concentric circles paint only their disc, in the first color. The gradient is placed through <paramref name="transform"/>.
+    /// </summary>
+    /// <param name="center">Center of the end circle, in gradient space.</param>
+    /// <param name="radius">Radius of the end circle, positive.</param>
+    /// <param name="focalCenter">Center of the start circle, in gradient space.</param>
+    /// <param name="focalRadius">Radius of the start circle, zero or more.</param>
+    /// <param name="stops">Color stops; see <see cref="ColorStop"/>. At least one is required.</param>
+    /// <param name="transform">Maps gradient space to pixel coordinates (row-vector convention). The default is none.</param>
+    /// <param name="repetition">What happens outside 0..1. The default is <see cref="GradientRepetition.None"/>.</param>
+    /// <param name="premultiplied">Interpolate premultiplied colors (the default), or straight colors; see <see cref="ColorStop"/>.</param>
+    /// <returns>The brush.</returns>
+    /// <exception cref="ArgumentException">No stops, a non-finite value, or a transform that is not finite and invertible.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="radius"/> is not positive, <paramref name="focalRadius"/> is negative, or <paramref name="repetition"/> is undefined.</exception>
+    public static Brush RadialGradient(Vector2 center, float radius, Vector2 focalCenter, float focalRadius, ReadOnlySpan<ColorStop> stops, Matrix3x2? transform = null, GradientRepetition repetition = GradientRepetition.None, bool premultiplied = true) =>
+        new ConicalGradientBrush(focalCenter, focalRadius, center, radius, stops, transform ?? Matrix3x2.Identity, repetition, premultiplied);
+
+    /// <summary>
     /// A gradient that is 0 at <paramref name="center"/> and 1 at distance <paramref name="radius"/>, changing linearly with distance.
     /// </summary>
     /// <param name="center">The center, in pixel coordinates.</param>
@@ -75,7 +115,7 @@ public abstract class Brush
     /// <param name="premultiplied">Interpolate premultiplied colors (the default), or straight colors; see <see cref="ColorStop"/>.</param>
     /// <param name="squaredDistance">
     /// Use the square of the normalized distance as the position, as ImageSharp.Drawing 2.1.7 does: colors then change slowly near
-    /// the center and quickly near the edge. The default is <see langword="false"/>, which changes linearly with distance like <see cref="RadialGradient"/>.
+    /// the center and quickly near the edge. The default is <see langword="false"/>, which changes linearly with distance like <see cref="RadialGradient(Vector2, float, ReadOnlySpan{ColorStop}, GradientRepetition, bool)"/>.
     /// </param>
     /// <returns>The brush.</returns>
     /// <exception cref="ArgumentException">No stops, a non-finite value, or <paramref name="axisEnd"/> equals <paramref name="center"/>.</exception>
@@ -137,6 +177,23 @@ public abstract class Brush
     /// <exception cref="ArgumentException">The transform is not finite and invertible.</exception>
     public static Brush FromImage(Image source, ImageRect? region = null, int offsetX = 0, int offsetY = 0, Matrix3x2? transform = null, bool tile = true) =>
         new ImageBrush(source, region, offsetX, offsetY, transform, tile);
+
+    /// <summary>
+    /// Like <see cref="FromImage(Image, ImageRect?, int, int, Matrix3x2?, bool)"/>, with a choice of how pixels between source pixel centers are read.
+    /// </summary>
+    /// <param name="source">The picture to paint with. Its pixels are not read until a tile is painted.</param>
+    /// <param name="sampling">How a pixel reads the source; see <see cref="ImageSampling"/>.</param>
+    /// <param name="region">The part of the source to use. The default is all of it.</param>
+    /// <param name="offsetX">Moves the tiling right by this many pixels. The default is 0.</param>
+    /// <param name="offsetY">Moves the tiling down. The default is 0.</param>
+    /// <param name="transform">Maps source space to image space (row-vector convention), applied before the offset. The default is none.</param>
+    /// <param name="tile">Repeat the source (the default); otherwise pixels outside the placed source are transparent, and with bilinear sampling the edge fades over half a source pixel.</param>
+    /// <returns>The brush.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="region"/> is empty or outside the source, or <paramref name="sampling"/> is undefined.</exception>
+    /// <exception cref="ArgumentException">The transform is not finite and invertible.</exception>
+    public static Brush FromImage(Image source, ImageSampling sampling, ImageRect? region = null, int offsetX = 0, int offsetY = 0, Matrix3x2? transform = null, bool tile = true) =>
+        new ImageBrush(source, region, offsetX, offsetY, transform, tile, sampling);
 
     /// <summary>
     /// Replaces a color in the existing pixels: pixels close to <paramref name="source"/> are painted toward <paramref name="target"/>,
