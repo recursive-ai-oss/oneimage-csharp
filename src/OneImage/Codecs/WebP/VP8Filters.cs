@@ -23,7 +23,7 @@ internal sealed class LoopFilter
     }
 
     /// <summary>Filters macroblock row <paramref name="mby"/>. Rows must be filtered in order, each after it is fully reconstructed.</summary>
-    public void FilterRow(int mby)
+    public void FilterRow(int mby, int slot)
     {
         VP8Decoder d = _d;
         int mbw = d.MbWidth;
@@ -44,14 +44,14 @@ internal sealed class LoopFilter
             }
 
             bool inner = d.FilterInner[mb] != 0;
-            int yo = (mby * 16 * ys) + (mbx * 16);
+            int yo = (slot * 16 * ys) + (mbx * 16);
             if (simple)
             {
                 Kernels.WebPLoopFilterKernel.FilterSimple(y, yo, ys, mbx > 0, mby > 0, inner, limit);
             }
             else
             {
-                int uvo = (mby * 8 * uvs) + (mbx * 8);
+                int uvo = (slot * 8 * uvs) + (mbx * 8);
                 Kernels.WebPLoopFilterKernel.FilterNormal(y, yo, ys, u, v, uvo, uvs, mbx > 0, mby > 0, inner, limit, _ilevels[idx], _hevs[idx]);
             }
         }
@@ -59,7 +59,7 @@ internal sealed class LoopFilter
 }
 
 /// <summary>YUV 4:2:0 to RGB conversion with libwebp-compatible "fancy" chroma upsampling and integer color math.</summary>
-internal static class Upsampler
+internal sealed class Upsampler : IDisposable
 {
     private const int Batch = 16;
 
@@ -68,63 +68,105 @@ internal static class Upsampler
 
     private static byte Clip8(int v) => (byte)((v & ~((256 << 6) - 1)) == 0 ? v >> 6 : v < 0 ? 0 : 255);
 
-    public static void Emit(byte[] yp, byte[] up, byte[] vp, int ys, int uvs, int width, int height, byte[]? alpha, IRowSink sink, CancellationToken token)
+    private readonly IRowSink _sink;
+    private readonly int _width;
+    private readonly int _height;
+    private readonly int _bpp;
+    private readonly int _rowBytes;
+    private readonly CancellationToken _token;
+    private readonly byte[] _batch;
+    private readonly byte[] _chroma;
+    private int _start;
+    private int _count;
+    private int _next = 1;
+    private bool _rowZero;
+
+    public Upsampler(IRowSink sink, int width, int height, CancellationToken token)
     {
-        int bpp = sink.Format.BytesPerPixel;
-        int rowBytes = width * bpp;
-        byte[] batch = ArrayPool<byte>.Shared.Rent(rowBytes * (Batch + 2));
-        byte[] chroma = ArrayPool<byte>.Shared.Rent(4 * width);
-        try
+        _sink = sink;
+        _width = width;
+        _height = height;
+        _bpp = sink.Format.BytesPerPixel;
+        _rowBytes = width * _bpp;
+        _token = token;
+        _batch = ArrayPool<byte>.Shared.Rent(_rowBytes * (Batch + 2));
+        _chroma = ArrayPool<byte>.Shared.Rent(4 * width);
+    }
+
+    public void Dispose()
+    {
+        ArrayPool<byte>.Shared.Return(_batch);
+        ArrayPool<byte>.Shared.Return(_chroma);
+    }
+
+    private void Flush()
+    {
+        if (_count > 0)
         {
-            int start = 0;
-            int count = 0;
-            void Flush()
-            {
-                if (count > 0)
-                {
-                    sink.WriteRows(start, batch.AsSpan(0, count * rowBytes), count);
-                    start += count;
-                    count = 0;
-                }
-            }
-
-            // Row 0 uses its own chroma row on both sides.
-            Pair(yp, 0, -1, up, vp, 0, 0, batch.AsSpan(0, rowBytes), default, width, bpp, chroma);
-            FillAlpha(batch.AsSpan(0, rowBytes), alpha, 0, width, bpp);
-            count = 1;
-            for (int r = 1; (2 * r) - 1 < height; r++)
-            {
-                if ((r & 7) == 0)
-                {
-                    token.ThrowIfCancellationRequested();
-                }
-
-                int top = (2 * r) - 1;
-                bool hasBottom = top + 1 < height;
-                int topUv = (r - 1) * uvs;
-                int curUv = hasBottom ? r * uvs : topUv;
-                Span<byte> dstTop = batch.AsSpan(count * rowBytes, rowBytes);
-                Span<byte> dstBot = hasBottom ? batch.AsSpan((count + 1) * rowBytes, rowBytes) : default;
-                Pair(yp, top * ys, hasBottom ? (top + 1) * ys : -1, up, vp, topUv, curUv, dstTop, dstBot, width, bpp, chroma);
-                FillAlpha(dstTop, alpha, top, width, bpp);
-                if (hasBottom)
-                {
-                    FillAlpha(dstBot, alpha, top + 1, width, bpp);
-                }
-
-                count += hasBottom ? 2 : 1;
-                if (count >= Batch)
-                {
-                    Flush();
-                }
-            }
-
-            Flush();
+            _sink.WriteRows(_start, _batch.AsSpan(0, _count * _rowBytes), _count);
+            _start += _count;
+            _count = 0;
         }
-        finally
+    }
+
+    /// <summary>
+    /// Converts every output row that only depends on chroma rows below <paramref name="finalChroma"/> (all of them when
+    /// <paramref name="last"/>). The planes hold luma lines from <paramref name="lumaBase"/> and chroma lines from
+    /// <paramref name="chromaBase"/> onward; lines before those are no longer needed.
+    /// </summary>
+    public void Advance(byte[] yp, byte[] up, byte[] vp, int ys, int uvs, int lumaBase, int chromaBase, int finalChroma, byte[]? alpha, bool last)
+    {
+        int width = _width;
+        if (!_rowZero && (finalChroma >= 1 || last))
         {
-            ArrayPool<byte>.Shared.Return(batch);
-            ArrayPool<byte>.Shared.Return(chroma);
+            // Row 0 uses its own chroma row on both sides.
+            Pair(yp, (0 - lumaBase) * ys, -1, up, vp, (0 - chromaBase) * uvs, (0 - chromaBase) * uvs, _batch.AsSpan(0, _rowBytes), default, width, _bpp, _chroma);
+            FillAlpha(_batch.AsSpan(0, _rowBytes), alpha, 0, width, _bpp);
+            _count = 1;
+            _rowZero = true;
+        }
+
+        if (!_rowZero)
+        {
+            return;
+        }
+
+        for (int r = _next; (2 * r) - 1 < _height; r++)
+        {
+            int top = (2 * r) - 1;
+            bool hasBottom = top + 1 < _height;
+            if (!last && r >= finalChroma)
+            {
+                break;
+            }
+
+            if ((r & 7) == 0)
+            {
+                _token.ThrowIfCancellationRequested();
+            }
+
+            int topUv = (r - 1 - chromaBase) * uvs;
+            int curUv = hasBottom ? (r - chromaBase) * uvs : topUv;
+            Span<byte> dstTop = _batch.AsSpan(_count * _rowBytes, _rowBytes);
+            Span<byte> dstBot = hasBottom ? _batch.AsSpan((_count + 1) * _rowBytes, _rowBytes) : default;
+            Pair(yp, (top - lumaBase) * ys, hasBottom ? (top + 1 - lumaBase) * ys : -1, up, vp, topUv, curUv, dstTop, dstBot, width, _bpp, _chroma);
+            FillAlpha(dstTop, alpha, top, width, _bpp);
+            if (hasBottom)
+            {
+                FillAlpha(dstBot, alpha, top + 1, width, _bpp);
+            }
+
+            _count += hasBottom ? 2 : 1;
+            _next = r + 1;
+            if (_count >= Batch)
+            {
+                Flush();
+            }
+        }
+
+        if (last)
+        {
+            Flush();
         }
     }
 
@@ -238,7 +280,8 @@ internal static class Upsampler
 /// <summary>Decodes the ALPH chunk of a lossy file (RFC 9649 section 2.7.1.2) into an 8-bit plane.</summary>
 internal static class AlphaDecoder
 {
-    public static void Decode(byte[] data, int length, int width, int height, byte[] plane, ImageLimits limits, CancellationToken token)
+    /// <summary>Decodes the alpha plane into a pooled array (width * height bytes at least) that the caller returns. A lossless-compressed plane grows with the rows decoded, so a short stream cannot force a header-sized allocation.</summary>
+    public static byte[] Decode(byte[] data, int length, int width, int height, ImageLimits limits, CancellationToken token)
     {
         if (length < 1)
         {
@@ -260,16 +303,28 @@ internal static class AlphaDecoder
                 throw new ImageFormatException("The alpha plane is truncated.");
             }
 
+            byte[] raw = ArrayPool<byte>.Shared.Rent((int)size);
             for (int y = 0; y < height; y++)
             {
-                Unfilter(filter, data.AsSpan(1 + (y * width), width), plane, y, width);
+                Unfilter(filter, data.AsSpan(1 + (y * width), width), raw, y, width);
             }
 
-            return;
+            return raw;
         }
 
         using var dec = new VP8LDecoder(data, 1, length - 1, limits, token);
-        dec.DecodeHeaderless(width, height, new GreenSink(plane, width, filter));
+        var sink = new GreenSink(width, height, filter);
+        try
+        {
+            dec.DecodeHeaderless(width, height, sink);
+        }
+        catch
+        {
+            sink.Release();
+            throw;
+        }
+
+        return sink.Plane;
     }
 
     private static void Unfilter(int filter, ReadOnlySpan<byte> input, byte[] plane, int y, int width)
@@ -325,27 +380,41 @@ internal static class AlphaDecoder
 
     private sealed class GreenSink : IArgbRowSink
     {
-        private readonly byte[] _plane;
+        private readonly long _total;
         private readonly int _width;
         private readonly int _filter;
         private readonly byte[] _row;
 
-        public GreenSink(byte[] plane, int width, int filter)
+        public GreenSink(int width, int height, int filter)
         {
-            _plane = plane;
             _width = width;
             _filter = filter;
+            _total = (long)width * height;
             _row = new byte[width];
+            Plane = ArrayPool<byte>.Shared.Rent((int)Math.Min(_total, 1 << 16));
         }
+
+        public byte[] Plane { get; private set; }
+
+        public void Release() => ArrayPool<byte>.Shared.Return(Plane);
 
         public void WriteRow(int y, ReadOnlySpan<uint> argb)
         {
+            long need = (y + 1L) * _width;
+            if (need > Plane.Length)
+            {
+                byte[] bigger = ArrayPool<byte>.Shared.Rent((int)Math.Min(Math.Max(need, Plane.Length * 2L), _total));
+                Plane.AsSpan(0, y * _width).CopyTo(bigger);
+                ArrayPool<byte>.Shared.Return(Plane);
+                Plane = bigger;
+            }
+
             for (int x = 0; x < _width; x++)
             {
                 _row[x] = (byte)(argb[x] >> 8);
             }
 
-            Unfilter(_filter, _row, _plane, y, _width);
+            Unfilter(_filter, _row, Plane, y, _width);
         }
     }
 }

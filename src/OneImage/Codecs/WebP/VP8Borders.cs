@@ -78,7 +78,7 @@ internal static class VP8Borders
 
     // The decoder variant of Prepare: the row above the macroblock comes from copies saved before the loop filter ran,
     // because intra prediction must see unfiltered pixels (RFC 6386 section 15).
-    public static void PrepareFiltered(byte[] w, byte[] py, byte[] pu, byte[] pv, byte[] topY, byte[] topU, byte[] topV, int yStride, int uvStride, int mbx, int mby, int mbw)
+    public static void PrepareFiltered(byte[] w, byte[] py, byte[] pu, byte[] pv, byte[] topY, byte[] topU, byte[] topV, int yStride, int uvStride, int mbx, int mby, int slot, int mbw)
     {
         if (mby > 0)
         {
@@ -107,12 +107,12 @@ internal static class VP8Borders
             // Left column = right column of the macroblock to the left, read back from the planes.
             for (int j = 0; j < 16; j++)
             {
-                w[VP8Decoder.YOff + (j * VP8Decoder.Bps) - 1] = py[((((mby * 16) + j) * yStride) + (mbx * 16)) - 1];
+                w[VP8Decoder.YOff + (j * VP8Decoder.Bps) - 1] = py[((((slot * 16) + j) * yStride) + (mbx * 16)) - 1];
             }
 
             for (int j = 0; j < 8; j++)
             {
-                int src = ((((mby * 8) + j) * uvStride) + (mbx * 8)) - 1;
+                int src = ((((slot * 8) + j) * uvStride) + (mbx * 8)) - 1;
                 w[VP8Decoder.UOff + (j * VP8Decoder.Bps) - 1] = pu[src];
                 w[VP8Decoder.VOff + (j * VP8Decoder.Bps) - 1] = pv[src];
             }

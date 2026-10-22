@@ -128,6 +128,9 @@ internal sealed class VP8Decoder
 
     private static byte Clip255(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
 
+    private Upsampler? _upsampler;
+    private byte[]? _alphaPlane;
+
     private void Run(byte[]? alpha, int alphaLength, IRowSink sink)
     {
         ParseHeaders();
@@ -141,10 +144,11 @@ internal sealed class VP8Decoder
         byte[]? alphaPlane = null;
         _yStride = _mbw * 16;
         _uvStride = _mbw * 8;
-        long ySize = (long)_yStride * _mbh * 16;
-        byte[] yBuf = ArrayPool<byte>.Shared.Rent((int)ySize);
-        byte[] uBuf = ArrayPool<byte>.Shared.Rent((int)(ySize / 4));
-        byte[] vBuf = ArrayPool<byte>.Shared.Rent((int)(ySize / 4));
+        // Only two macroblock rows of each plane are kept: the one being decoded and the one above it, which the loop filter
+        // and the chroma upsampler still read. Memory is independent of the image height.
+        byte[] yBuf = ArrayPool<byte>.Shared.Rent(2 * 16 * _yStride);
+        byte[] uBuf = ArrayPool<byte>.Shared.Rent(2 * 8 * _uvStride);
+        byte[] vBuf = ArrayPool<byte>.Shared.Rent(2 * 8 * _uvStride);
         try
         {
             _y = yBuf;
@@ -152,12 +156,13 @@ internal sealed class VP8Decoder
             _v = vBuf;
             if (wantAlpha && alpha != null && alphaLength > 0)
             {
-                alphaPlane = ArrayPool<byte>.Shared.Rent(checked(_width * _height));
-                AlphaDecoder.Decode(alpha, alphaLength, _width, _height, alphaPlane, _limits, _token);
+                alphaPlane = AlphaDecoder.Decode(alpha, alphaLength, _width, _height, _limits, _token);
             }
 
+            using var upsampler = new Upsampler(sink, _width, _height, _token);
+            _upsampler = upsampler;
+            _alphaPlane = alphaPlane;
             DecodeFrame();
-            Upsampler.Emit(_y, _u, _v, _yStride, _uvStride, _width, _height, alphaPlane, sink, _token);
         }
         finally
         {
@@ -436,10 +441,24 @@ internal sealed class VP8Decoder
             }
 
             // Prediction of the next row needs this row's unfiltered bottom pixels, so keep them before filtering.
-            _y.AsSpan((((mby * 16) + 15) * _yStride), mbw * 16).CopyTo(_topY);
-            _u.AsSpan((((mby * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topU);
-            _v.AsSpan((((mby * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topV);
-            filter?.FilterRow(mby);
+            int rowSlot = mby == 0 ? 0 : 1;
+            _y.AsSpan((((rowSlot * 16) + 15) * _yStride), mbw * 16).CopyTo(_topY);
+            _u.AsSpan((((rowSlot * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topU);
+            _v.AsSpan((((rowSlot * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topV);
+            int slot = mby == 0 ? 0 : 1;
+            filter?.FilterRow(mby, slot);
+
+            // Rows that no later macroblock row can change are converted and sent on: luma and chroma lines the next row's top
+            // edge filter cannot reach (it rewrites the last three lines of this row).
+            bool last = mby == _mbh - 1;
+            _upsampler!.Advance(_y, _u, _v, _yStride, _uvStride, 16 * (mby - slot), 8 * (mby - slot), (8 * mby) + 5, _alphaPlane, last);
+            if (mby > 0 && !last)
+            {
+                // The current row becomes the "row above" for the next one.
+                Buffer.BlockCopy(_y, 16 * _yStride, _y, 0, 16 * _yStride);
+                Buffer.BlockCopy(_u, 8 * _uvStride, _u, 0, 8 * _uvStride);
+                Buffer.BlockCopy(_v, 8 * _uvStride, _v, 0, 8 * _uvStride);
+            }
         }
     }
 
@@ -715,6 +734,7 @@ internal sealed class VP8Decoder
     private void Reconstruct(int mbx, int mby, bool i4, Span<short> coeffs, ReadOnlySpan<uint> blockBits)
     {
         byte[] w = _work;
+        int slot = mby == 0 ? 0 : 1;
         PrepareBorders(mbx, mby);
         if (!i4)
         {
@@ -755,19 +775,19 @@ internal sealed class VP8Decoder
         // Store the macroblock into the planes.
         for (int j = 0; j < 16; j++)
         {
-            w.AsSpan(YOff + (j * Bps), 16).CopyTo(_y.AsSpan((((mby * 16) + j) * _yStride) + (mbx * 16), 16));
+            w.AsSpan(YOff + (j * Bps), 16).CopyTo(_y.AsSpan((((slot * 16) + j) * _yStride) + (mbx * 16), 16));
         }
 
         for (int j = 0; j < 8; j++)
         {
-            int dst = (((mby * 8) + j) * _uvStride) + (mbx * 8);
+            int dst = (((slot * 8) + j) * _uvStride) + (mbx * 8);
             w.AsSpan(UOff + (j * Bps), 8).CopyTo(_u.AsSpan(dst, 8));
             w.AsSpan(VOff + (j * Bps), 8).CopyTo(_v.AsSpan(dst, 8));
         }
     }
 
     private void PrepareBorders(int mbx, int mby) =>
-        VP8Borders.PrepareFiltered(_work, _y, _u, _v, _topY, _topU, _topV, _yStride, _uvStride, mbx, mby, _mbw);
+        VP8Borders.PrepareFiltered(_work, _y, _u, _v, _topY, _topU, _topV, _yStride, _uvStride, mbx, mby, mby == 0 ? 0 : 1, _mbw);
 
     private static void AddBlock(byte[] dst, int off, ReadOnlySpan<short> coeffs, uint code)
     {
