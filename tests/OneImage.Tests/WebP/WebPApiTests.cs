@@ -158,7 +158,7 @@ public sealed class WebPApiTests
         Assert.Equal("ICCP", chunks[1].Id);
         Assert.Equal(icc, chunks[1].Data);
 
-        Image back = Image.Load(file);
+        Image back = Image.Load(file, new LoadOptions { AutoOrient = false });
         Assert.Equal(icc, back.Metadata.IccProfile.ToArray());
         Assert.Equal(xmp, back.Metadata.Xmp.ToArray());
         Assert.Equal(6, back.Metadata.Orientation);
@@ -185,19 +185,18 @@ public sealed class WebPApiTests
         byte[] exif = MetadataTests.BuildExif(false, 3);
         var meta = new ImageMetadata { Exif = exif, Orientation = 3 };
         Image img = WebPAnimationTests.AnimationOf([Photo(20, 10, 1, false)], [0], 0, meta);
-        Image back = Image.Load(Save(img, new WebPEncoderOptions { Lossless = true }));
+        Image back = Image.Load(Save(img, new WebPEncoderOptions { Lossless = true }), new LoadOptions { AutoOrient = false });
         Assert.Equal(3, back.Metadata.Orientation);
         Assert.Equal(meta.ExifForOutput(20, 10, 3).ToArray(), back.Metadata.Exif.ToArray());
     }
 
     [Fact]
-    public void MalformedExifIsCarriedVerbatim()
+    public void MalformedExifIsDroppedByTheCore()
     {
         byte[] junk = [1, 2, 3, 4, 5, 6, 7, 8, 9];
         Image img = WebPAnimationTests.AnimationOf([Photo(12, 12, 1, false)], [0], 0, new ImageMetadata { Exif = junk });
         Image back = Image.Load(Save(img));
-        Assert.Equal(junk, back.Metadata.Exif.ToArray());
-        Assert.Equal(1, back.Metadata.Orientation);
+        Assert.True(back.Metadata.Exif.IsEmpty);
     }
 
     [Fact]

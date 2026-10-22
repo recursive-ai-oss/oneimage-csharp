@@ -30,16 +30,8 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         }
 
         ImageMetadata meta = request.Metadata;
-        // EXIF carries pixel dimensions and orientation: correct them for this output. A malformed blob is written verbatim.
-        byte[] exifBlob;
-        try
-        {
-            exifBlob = meta.Exif.IsEmpty ? [] : meta.ExifForOutput(first.Width, first.Height, Math.Clamp(meta.Orientation, 1, 8)).ToArray();
-        }
-        catch (ImageFormatException)
-        {
-            exifBlob = meta.Exif.ToArray();
-        }
+        // The core has already corrected the EXIF dimension and orientation tags for this output.
+        byte[] exifBlob = meta.Exif.ToArray();
         bool animated = frames.Count > 1;
         var chunks = new List<(uint fourCc, byte[] data)>();
         bool anyAlpha = false;
