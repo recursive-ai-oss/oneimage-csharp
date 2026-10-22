@@ -73,39 +73,6 @@ internal abstract class Node
         return new ImageRect(x, y, Math.Min(Tile.Size, Width - x), Math.Min(Tile.Size, Height - y));
     }
 
-    /// <summary>Gets a value indicating whether a decoder with native blocks larger than a tile feeds this node, so renders should <see cref="Prefetch"/> first.</summary>
-    public virtual bool HasBlockedSource
-    {
-        get
-        {
-            foreach (Node input in Inputs)
-            {
-                if (input.HasBlockedSource)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Hint before a large render: lets sources decode their native blocks for <paramref name="region"/> (this node's
-    /// coordinates) in parallel, ahead of the per-tile requests. Never changes results.
-    /// </summary>
-    public virtual void Prefetch(ImageRect region, RenderContext context)
-    {
-        for (int i = 0; i < Inputs.Length; i++)
-        {
-            ImageRect need = RequiredInput(i, region).Intersect(new ImageRect(0, 0, Inputs[i].Width, Inputs[i].Height));
-            if (!need.IsEmpty)
-            {
-                Inputs[i].Prefetch(need, context);
-            }
-        }
-    }
-
     /// <summary>Gets a value indicating whether getting a tile is just a lookup of stored pixels (no computation), so small copies are not worth parallelizing.</summary>
     public virtual bool DirectStorage => false;
 
@@ -276,14 +243,6 @@ internal static class Render
         // runs in parallel and the bytes written never depend on scheduling. A streaming source keeps only a few tile rows, so
         // those are walked two tile rows at a time.
         int chunkRows = node.Streaming ? 2 : ty1 - ty0 + 1;
-        bool blocked = node.HasBlockedSource;
-        if (blocked)
-        {
-            // Decode native blocks ahead of the tile requests, a bounded band of tile rows at a time so the decoder's block cache
-            // is not asked to hold more than one band.
-            long bandBytes = Math.Max(1, (long)region.Width * Tile.Size * node.Format.BytesPerPixel);
-            chunkRows = (int)Math.Clamp((16L << 20) / bandBytes, 1, ty1 - ty0 + 1);
-        }
         RenderContext nested = context.Nested;
         var options = new ParallelOptions { MaxDegreeOfParallelism = context.Degree, CancellationToken = context.CancellationToken };
         try
@@ -294,13 +253,6 @@ internal static class Render
                 {
                     int first = cy;
                     int count = Math.Min(chunkRows, ty1 - cy + 1) * perRow;
-                    if (blocked)
-                    {
-                        int top = Math.Max(region.Y, cy << Tile.Shift);
-                        int bottom = Math.Min(region.Bottom, (cy + Math.Min(chunkRows, ty1 - cy + 1)) << Tile.Shift);
-                        node.Prefetch(new ImageRect(region.X, top, region.Width, bottom - top), context);
-                    }
-
                     Parallel.For(0, count, options, i =>
                     {
                         int tx = tx0 + (i % perRow);

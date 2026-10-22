@@ -85,46 +85,6 @@ internal sealed class DecodeSourceNode : Node
 
     public override bool Streaming => _streaming;
 
-    public override bool HasBlockedSource => _randomAccess && _scale == 1 && _session.Decoder is IBlockedDecoder;
-
-    public override void Prefetch(ImageRect region, RenderContext context)
-    {
-        if (!HasBlockedSource || context.Degree <= 1 || !((IBlockedDecoder)_session.Decoder).TryGetBlockSize(_session.Info, _frame, out int bw, out int bh) || bw <= 0 || bh <= 0)
-        {
-            return;
-        }
-
-        var decoder = (IBlockedDecoder)_session.Decoder;
-        ImageRect full = region.Offset(_region.X, _region.Y);
-        int cx0 = full.X / bw;
-        int cx1 = (full.Right - 1) / bw;
-        int cy0 = full.Y / bh;
-        int cy1 = (full.Bottom - 1) / bh;
-        int across = cx1 - cx0 + 1;
-        int cells = across * (cy1 - cy0 + 1);
-        if (cells <= 1)
-        {
-            return;
-        }
-
-        // Cells are whole native blocks clipped to the region; every block is decoded by exactly one worker.
-        var options = new ParallelOptions { MaxDegreeOfParallelism = context.Degree, CancellationToken = context.CancellationToken };
-        try
-        {
-            Parallel.For(0, cells, options, i =>
-            {
-                var cell = new ImageRect((cx0 + (i % across)) * bw, (cy0 + (i / across)) * bh, bw, bh).Intersect(full);
-                using Stream s = _session.Source.Open();
-                decoder.PrefetchBlocks(s, _session.Info, _frame, cell, _session.Limits, context.CancellationToken);
-            });
-        }
-        catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
-            throw;
-        }
-    }
-
     private bool SupportsRegion => (_session.Decoder.Capabilities & DecoderCapabilities.Region) != 0;
 
     private bool SupportsScale => (_session.Decoder.Capabilities & DecoderCapabilities.Scale) != 0;
