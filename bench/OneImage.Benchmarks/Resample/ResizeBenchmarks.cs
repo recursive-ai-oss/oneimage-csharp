@@ -138,6 +138,7 @@ public class UpscaleBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    [BenchmarkCategory("Gate", "upscale-2x")]
     [Benchmark(Description = "oneimage Catmull-Rom (linear)")]
     public OneImage.Rgba32[] OursLinear() =>
         _src.Ours.Resize(2000, 2000, Fit.Stretch, filter: ResamplingFilter.CatmullRom).ToArray<OneImage.Rgba32>();
@@ -154,6 +155,7 @@ public class UpscaleBenchmarks : IDisposable
     public OneImage.Rgba32[] OursEncoded() =>
         _src.Ours.Resize(2000, 2000, Fit.Stretch, filter: ResamplingFilter.CatmullRom, linear: false).ToArray<OneImage.Rgba32>();
 
+    [BenchmarkCategory("Gate", "upscale-2x")]
     [Benchmark(Description = "ImageSharp CatmullRom")]
     public int ImageSharp()
     {
@@ -161,6 +163,7 @@ public class UpscaleBenchmarks : IDisposable
         return r.Width;
     }
 
+    [BenchmarkCategory("Gate", "upscale-2x")]
     [Benchmark(Description = "SkiaSharp Catmull-Rom")]
     public int SkiaSharp()
     {
@@ -168,6 +171,7 @@ public class UpscaleBenchmarks : IDisposable
         return r!.Width;
     }
 
+    [BenchmarkCategory("Gate", "upscale-2x")]
     [Benchmark(Description = "NetVips resize bicubic")]
     public int NetVipsResize()
     {

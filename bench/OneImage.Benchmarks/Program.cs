@@ -124,6 +124,22 @@ public static class Program
             return Composite.PeakMemoryRunner.Run(args);
         }
 
+        if (args.Length > 1 && args[0] == "gate-peak" && args[1] == "info")
+        {
+            Console.WriteLine($"Runtime {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}; Avx2.IsSupported={System.Runtime.Intrinsics.X86.Avx2.IsSupported} Avx512F.IsSupported={System.Runtime.Intrinsics.X86.Avx512F.IsSupported} Vector256.IsHardwareAccelerated={System.Runtime.Intrinsics.Vector256.IsHardwareAccelerated} Vector512.IsHardwareAccelerated={System.Runtime.Intrinsics.Vector512.IsHardwareAccelerated}");
+            return 0;
+        }
+
+        if (args.Length > 0 && args[0] == "gate-peak")
+        {
+            return Gate.GatePeak.Run(args);
+        }
+
+        if (args.Length > 0 && args[0] == "gate-report")
+        {
+            return Gate.GateReport.Run(args);
+        }
+
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
         return 0;
     }

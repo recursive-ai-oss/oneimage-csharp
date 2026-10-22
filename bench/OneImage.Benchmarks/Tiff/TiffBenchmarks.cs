@@ -189,6 +189,7 @@ public class TiffMultiPageDecode : TiffBenchBase
     [GlobalSetup]
     public void Setup() => _path = TiffBenchData.MultiPage();
 
+    [BenchmarkCategory("Gate", "tiff-multipage-decode")]
     [Benchmark(Baseline = true, Description = "ImageSharp")]
     public long ImageSharp()
     {
@@ -202,6 +203,7 @@ public class TiffMultiPageDecode : TiffBenchBase
         return s + img.Frames.Count;
     }
 
+    [BenchmarkCategory("Gate", "tiff-multipage-decode")]
     [Benchmark(Description = "oneimage")]
     public long OneImage()
     {
@@ -216,6 +218,7 @@ public class TiffMultiPageDecode : TiffBenchBase
         return s + img.FrameCount;
     }
 
+    [BenchmarkCategory("Gate", "tiff-multipage-decode")]
     [Benchmark(Description = "Magick.NET")]
     public long Magick()
     {
@@ -230,6 +233,7 @@ public class TiffMultiPageDecode : TiffBenchBase
         return s + coll.Count;
     }
 
+    [BenchmarkCategory("Gate", "tiff-multipage-decode")]
     [Benchmark(Description = "NetVips")]
     public long NetVips()
     {
@@ -324,6 +328,7 @@ public class TiffLzwEncode : TiffBenchBase
         }
     }
 
+    [BenchmarkCategory("Gate", "tiff-encode")]
     [Benchmark(Baseline = true, Description = "ImageSharp")]
     public long ImageSharp()
     {
@@ -333,6 +338,7 @@ public class TiffLzwEncode : TiffBenchBase
         return ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "tiff-encode")]
     [Benchmark(Description = "oneimage (no predictor)")]
     public long OneImageNoPredictor()
     {
@@ -342,6 +348,7 @@ public class TiffLzwEncode : TiffBenchBase
         return ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "tiff-encode")]
     [Benchmark(Description = "oneimage (horizontal predictor)")]
     public long OneImagePredictor()
     {
@@ -351,6 +358,7 @@ public class TiffLzwEncode : TiffBenchBase
         return ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "tiff-encode")]
     [Benchmark(Description = "Magick.NET")]
     public long Magick()
     {
@@ -361,6 +369,7 @@ public class TiffLzwEncode : TiffBenchBase
         return ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "tiff-encode")]
     [Benchmark(Description = "NetVips")]
     public long NetVips()
     {

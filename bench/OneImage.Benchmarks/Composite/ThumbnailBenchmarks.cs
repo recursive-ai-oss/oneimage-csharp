@@ -24,6 +24,7 @@ public class ThumbnailBenchmarks
     [GlobalSetup]
     public void Setup() => _jpeg = JpegData.SkiaJpeg(JpegData.Pixels(), 90);
 
+    [BenchmarkCategory("Gate", "thumb-jpeg")]
     [Benchmark(Description = "OneImage Image.Thumbnail(bytes, 400) -> JPEG q90")]
     public int OneImage()
     {
@@ -32,6 +33,7 @@ public class ThumbnailBenchmarks
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "thumb-jpeg")]
     [Benchmark(Description = "SkiaSharp scaled decode + resize + encode", Baseline = true)]
     public int Skia()
     {
@@ -46,6 +48,7 @@ public class ThumbnailBenchmarks
         return (int)data.Size;
     }
 
+    [BenchmarkCategory("Gate", "thumb-jpeg")]
     [Benchmark(Description = "ImageSharp load(TargetSize) + Resize + JPEG q90")]
     public int ImageSharp()
     {
@@ -57,6 +60,7 @@ public class ThumbnailBenchmarks
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "thumb-jpeg")]
     [Benchmark(Description = "NetVips thumbnail_buffer + jpegsave_buffer q90")]
     public int NetVips()
     {
@@ -75,6 +79,7 @@ public class ThumbnailWebPBenchmarks
     [GlobalSetup]
     public void Setup() => _jpeg = JpegData.SkiaJpeg(JpegData.Pixels(), 90);
 
+    [BenchmarkCategory("Gate", "thumb-webp")]
     [Benchmark(Description = "OneImage Image.Thumbnail(bytes, 400) -> WebP q75")]
     public int OneImage()
     {
@@ -83,6 +88,7 @@ public class ThumbnailWebPBenchmarks
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "thumb-webp")]
     [Benchmark(Description = "SkiaSharp scaled decode + resize + WebP q75", Baseline = true)]
     public int Skia()
     {
@@ -97,6 +103,7 @@ public class ThumbnailWebPBenchmarks
         return (int)data.Size;
     }
 
+    [BenchmarkCategory("Gate", "thumb-webp")]
     [Benchmark(Description = "ImageSharp load(TargetSize) + Resize + WebP q75")]
     public int ImageSharp()
     {
@@ -108,6 +115,7 @@ public class ThumbnailWebPBenchmarks
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "thumb-webp")]
     [Benchmark(Description = "NetVips thumbnail_buffer + webpsave_buffer q75")]
     public int NetVips()
     {
@@ -198,6 +206,7 @@ public class WatermarkBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    [BenchmarkCategory("Gate", "watermark")]
     [Benchmark(Description = "OneImage Composite + CopyPixelsTo")]
     public int OneImage()
     {
@@ -227,6 +236,7 @@ public class WatermarkBenchmarks : IDisposable
         return px[0].R;
     }
 
+    [BenchmarkCategory("Gate", "watermark")]
     [Benchmark(Description = "SkiaSharp copy + DrawBitmap", Baseline = true)]
     public int Skia()
     {
@@ -240,6 +250,7 @@ public class WatermarkBenchmarks : IDisposable
         return copy.Width;
     }
 
+    [BenchmarkCategory("Gate", "watermark")]
     [Benchmark(Description = "ImageSharp Clone + DrawImage")]
     public int ImageSharp()
     {
@@ -247,6 +258,7 @@ public class WatermarkBenchmarks : IDisposable
         return copy.Width;
     }
 
+    [BenchmarkCategory("Gate", "watermark")]
     [Benchmark(Description = "ImageSharp Clone + DrawImage + CopyPixelDataTo (packed RGB out)")]
     public int ImageSharpPacked()
     {
@@ -255,6 +267,7 @@ public class WatermarkBenchmarks : IDisposable
         return _sharpOut[0];
     }
 
+    [BenchmarkCategory("Gate", "watermark")]
     [Benchmark(Description = "NetVips composite2 + write_to_memory")]
     public int NetVips()
     {

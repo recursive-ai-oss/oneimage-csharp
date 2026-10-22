@@ -21,6 +21,7 @@ public class GifDecodeBenchmarks
     [GlobalSetup]
     public void Setup() => _gif = GifBenchData.Animation();
 
+    [BenchmarkCategory("Gate", "gif-decode")]
     [Benchmark(Baseline = true, Description = "oneimage: decode 50 frames 500x500")]
     public long OneImageDecode()
     {
@@ -44,6 +45,7 @@ public class GifDecodeBenchmarks
         return sum;
     }
 
+    [BenchmarkCategory("Gate", "gif-decode")]
     [Benchmark(Description = "ImageSharp: decode")]
     public long ImageSharpDecode()
     {
@@ -51,6 +53,7 @@ public class GifDecodeBenchmarks
         return img.Frames.Count;
     }
 
+    [BenchmarkCategory("Gate", "gif-decode")]
     [Benchmark(Description = "SkiaSharp: decode all frames")]
     public long SkiaDecode()
     {
@@ -67,6 +70,7 @@ public class GifDecodeBenchmarks
         return sum;
     }
 
+    [BenchmarkCategory("Gate", "gif-decode")]
     [Benchmark(Description = "Magick.NET: decode + coalesce")]
     public long MagickDecode()
     {
@@ -111,6 +115,7 @@ public class GifEncodeBenchmarks : IDisposable
         }
     }
 
+    [BenchmarkCategory("Gate", "gif-encode")]
     [Benchmark(Baseline = true, Description = "oneimage: re-encode 50 frames")]
     public long OneImageEncode()
     {
@@ -119,6 +124,7 @@ public class GifEncodeBenchmarks : IDisposable
         return ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "gif-encode")]
     [Benchmark(Description = "ImageSharp: re-encode")]
     public long ImageSharpEncode()
     {
@@ -127,6 +133,7 @@ public class GifEncodeBenchmarks : IDisposable
         return ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "gif-encode")]
     [Benchmark(Description = "Magick.NET: re-encode")]
     public long MagickEncode()
     {

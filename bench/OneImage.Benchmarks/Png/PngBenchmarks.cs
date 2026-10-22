@@ -117,6 +117,7 @@ public class PngDecodeBenchmarks
         Console.WriteLine($"{Content}: PNG file {_file.Length} bytes");
     }
 
+    [BenchmarkCategory("Gate", "png-decode")]
     [Benchmark(Description = "OneImage")]
     public SharpRgb24 OneImageDecode()
     {
@@ -172,6 +173,7 @@ public class PngDecodeBenchmarks
         return written;
     }
 
+    [BenchmarkCategory("Gate", "png-decode")]
     [Benchmark(Description = "ImageSharp")]
     public SharpRgb24 ImageSharpDecode()
     {
@@ -180,6 +182,7 @@ public class PngDecodeBenchmarks
         return _sink[^1];
     }
 
+    [BenchmarkCategory("Gate", "png-decode")]
     [Benchmark(Description = "SkiaSharp")]
     public byte SkiaDecode()
     {
@@ -187,6 +190,7 @@ public class PngDecodeBenchmarks
         return bmp.GetPixelSpan()[^1];
     }
 
+    [BenchmarkCategory("Gate", "png-decode")]
     [Benchmark(Description = "NetVips")]
     public byte NetVipsDecode()
     {
@@ -238,6 +242,7 @@ public class PngEncodeBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    [BenchmarkCategory("Gate", "png-encode")]
     [Benchmark(Description = "OneImage")]
     public byte[] Ours()
     {
@@ -268,6 +273,7 @@ public class PngEncodeBenchmarks : IDisposable
     [Benchmark(Description = "OneImage level 0 (filter cost)")]
     public byte[] OursStored() => OursWith(new PngEncoderOptions { CompressionLevel = 0 });
 
+    [BenchmarkCategory("Gate", "png-encode")]
     [Benchmark(Description = "ImageSharp")]
     public byte[] Sharp()
     {
@@ -276,6 +282,7 @@ public class PngEncodeBenchmarks : IDisposable
         return ms.ToArray();
     }
 
+    [BenchmarkCategory("Gate", "png-encode")]
     [Benchmark(Description = "SkiaSharp")]
     public byte[] Skia()
     {
@@ -283,6 +290,7 @@ public class PngEncodeBenchmarks : IDisposable
         return data.ToArray();
     }
 
+    [BenchmarkCategory("Gate", "png-encode")]
     [Benchmark(Description = "NetVips")]
     public byte[] Vips() => _vips.PngsaveBuffer();
 }

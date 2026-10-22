@@ -79,12 +79,14 @@ public class JpegDecodeBenchmarks
     [GlobalSetup]
     public void Setup() => _jpeg = JpegData.SkiaJpeg(JpegData.Pixels(), 90);
 
+    [BenchmarkCategory("Gate", "jpeg-decode")]
     [Benchmark(Description = "OneImage Image.Load + ToArray<Rgb24>, 24 MP")]
     public int OneImageFull() => OneImage.Image.Load(_jpeg).ToArray<OneImage.Rgb24>().Length;
 
     [Benchmark(Description = "OneImage decoder only (rows into a reused buffer), 24 MP")]
     public long OneImageCodecFull() => JpegBenchHelpers.DecodeInto(_jpeg, 1);
 
+    [BenchmarkCategory("Gate", "jpeg-decode")]
     [Benchmark(Description = "SkiaSharp SKBitmap.Decode, 24 MP", Baseline = true)]
     public int SkiaFull()
     {
@@ -92,6 +94,7 @@ public class JpegDecodeBenchmarks
         return bmp.Width;
     }
 
+    [BenchmarkCategory("Gate", "jpeg-decode")]
     [Benchmark(Description = "ImageSharp Image.Load<Rgb24>, 24 MP")]
     public int ImageSharpFull()
     {
@@ -99,6 +102,7 @@ public class JpegDecodeBenchmarks
         return img.Width;
     }
 
+    [BenchmarkCategory("Gate", "jpeg-decode")]
     [Benchmark(Description = "NetVips new_from_buffer + write_to_memory, 24 MP")]
     public int NetVipsFull()
     {
@@ -184,6 +188,7 @@ public class JpegEncodeBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    [BenchmarkCategory("Gate", "jpeg-encode")]
     [Benchmark(Description = "OneImage q90 4:2:0 optimized tables (default)")]
     public int OneImageOptimized() => Save(new JpegEncoderOptions { Quality = 90 });
 
@@ -197,6 +202,7 @@ public class JpegEncodeBenchmarks : IDisposable
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "jpeg-encode")]
     [Benchmark(Description = "SkiaSharp q90 4:2:0", Baseline = true)]
     public int Skia()
     {
@@ -211,6 +217,7 @@ public class JpegEncodeBenchmarks : IDisposable
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "jpeg-encode")]
     [Benchmark(Description = "ImageSharp q90 4:2:0")]
     public int ImageSharp()
     {
@@ -219,6 +226,7 @@ public class JpegEncodeBenchmarks : IDisposable
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "jpeg-encode")]
     [Benchmark(Description = "NetVips q90 4:2:0")]
     public int Vips() => _vips.JpegsaveBuffer(q: 90, subsampleMode: global::NetVips.Enums.ForeignSubsample.On).Length;
 }

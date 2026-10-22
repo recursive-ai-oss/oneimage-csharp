@@ -109,6 +109,7 @@ public class WebPDecodeBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    [BenchmarkCategory("Gate", "webp-decode")]
     [Benchmark(Baseline = true)]
     public OneImage.Rgba32 OneImageLib()
     {
@@ -119,6 +120,7 @@ public class WebPDecodeBenchmarks : IDisposable
 
     // The files are opaque, so their natural in-memory form is 3 bytes per pixel. These two rows compare both libraries in it;
     // the first row also pays this library's Rgb8 -> Rgba32 conversion in Image.CopyPixelsTo.
+    [BenchmarkCategory("Gate", "webp-decode")]
     [Benchmark]
     public int OneImageNative()
     {
@@ -126,6 +128,7 @@ public class WebPDecodeBenchmarks : IDisposable
         return img.ToArray<OneImage.Rgb24>().Length;
     }
 
+    [BenchmarkCategory("Gate", "webp-decode")]
     [Benchmark]
     public int ImageSharpRgb24()
     {
@@ -133,6 +136,7 @@ public class WebPDecodeBenchmarks : IDisposable
         return img.Width;
     }
 
+    [BenchmarkCategory("Gate", "webp-decode")]
     [Benchmark]
     public byte SkiaSharp()
     {
@@ -142,6 +146,7 @@ public class WebPDecodeBenchmarks : IDisposable
         return 0;
     }
 
+    [BenchmarkCategory("Gate", "webp-decode")]
     [Benchmark]
     public int ImageSharp()
     {
@@ -149,6 +154,7 @@ public class WebPDecodeBenchmarks : IDisposable
         return img.Width;
     }
 
+    [BenchmarkCategory("Gate", "webp-decode")]
     [Benchmark]
     public int NetVips()
     {
@@ -188,6 +194,7 @@ public class WebPEncodeBenchmarks : IDisposable
 
     private bool Lossless => Case.StartsWith("lossless", StringComparison.Ordinal);
 
+    [BenchmarkCategory("Gate", "webp-encode")]
     [Benchmark(Baseline = true)]
     public int OneImageLib()
     {
@@ -196,9 +203,11 @@ public class WebPEncodeBenchmarks : IDisposable
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "webp-encode")]
     [Benchmark]
     public int SkiaSharp() => WebPInputs.SkiaEncode(Src.Skia, Lossless).Length;
 
+    [BenchmarkCategory("Gate", "webp-encode")]
     [Benchmark]
     public int ImageSharp()
     {
@@ -207,6 +216,7 @@ public class WebPEncodeBenchmarks : IDisposable
         return (int)ms.Length;
     }
 
+    [BenchmarkCategory("Gate", "webp-encode")]
     [Benchmark]
     public int NetVips() => Src.Vips.WebpsaveBuffer(q: 75, lossless: Lossless).Length;
 }
