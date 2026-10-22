@@ -4,7 +4,7 @@ namespace OneImage.Kernels;
 
 /// <summary>
 /// Integer fast paths for the common 8/16-bit conversions that <see cref="ConvertKernel"/> otherwise does through float32.
-/// Each path matches that float reference exactly except where noted (RGB to gray, un-premultiply: at most 1 LSB, from
+/// Each path matches that float reference exactly except where noted (un-premultiply: at most 1 LSB, from
 /// rounding at exact ties). Vector code uses <see cref="Vector128"/> shuffles (a single <c>pshufb</c>/<c>tbl</c>); rows
 /// shorter than a vector, and the row tails, run the scalar loops, which are the reference for the vector paths.
 /// </summary>
@@ -81,11 +81,7 @@ internal static class ConvertFast
             return true;
         }
 
-        if (sf.Model == ColorModel.Rgb && df.Model == ColorModel.Gray)
-        {
-            RgbToGray(src, dst, width, sf.HasAlpha, df.HasAlpha);
-            return true;
-        }
+        // RGB to gray stays on the float path: it must stay bit-identical to the fused tone conversion, which uses the same arithmetic.
 
         if (sf.Model == ColorModel.Gray && df.Model == ColorModel.Gray && sf.HasAlpha != df.HasAlpha)
         {
@@ -244,22 +240,6 @@ internal static class ConvertFast
             if (dstAlpha)
             {
                 dst[(x * db) + 3] = srcAlpha ? src[(x * sb) + 1] : (byte)255;
-            }
-        }
-    }
-
-    // Rec. 709 weights with 16-bit precision (0.2126, 0.7152, 0.0722 -> 13933, 46871, 4732; they sum to 65536), rounded half up.
-    private static void RgbToGray(ReadOnlySpan<byte> src, Span<byte> dst, int width, bool srcAlpha, bool dstAlpha)
-    {
-        int sb = srcAlpha ? 4 : 3;
-        int db = dstAlpha ? 2 : 1;
-        for (int x = 0; x < width; x++)
-        {
-            int o = x * sb;
-            dst[x * db] = (byte)(((src[o] * 13933) + (src[o + 1] * 46871) + (src[o + 2] * 4732) + 32768) >> 16);
-            if (dstAlpha)
-            {
-                dst[(x * db) + 1] = srcAlpha ? src[o + 3] : (byte)255;
             }
         }
     }
