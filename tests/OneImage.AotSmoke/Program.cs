@@ -553,6 +553,23 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Complex scripts: Devanagari (reph, pre-base matra) and Khmer (coeng, pre-base vowel) through the Indic and USE shapers.
+{
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily deva = fonts.Add(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSansDevanagari-Subset-Regular.ttf"));
+    OneImage.Text.FontFamily khmer = fonts.Add(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSansKhmer-Subset-Regular.ttf"));
+    var devaOptions = new OneImage.Text.TextOptions(deva.CreateFont(32));
+    var khmerOptions = new OneImage.Text.TextOptions(khmer.CreateFont(32));
+    using var complexCanvas = new Canvas(200, 70, PixelFormat.Rgba8);
+    complexCanvas.DrawText("\u0930\u094D\u0915\u093F \u0915\u094D\u0937", devaOptions, new Rgba32(255, 255, 255, 255));
+    var khmerBounds = OneImage.Text.TextMeasurer.GetCharacterBounds("\u1780\u17D2\u179A\u17C1", khmerOptions);
+    if (complexCanvas.Snapshot().ToArray<Rgba32>().All(p => p.A == 0) || khmerBounds.Count == 0 || OneImage.Text.TextMeasurer.MeasureAdvance("\u0915\u093F", devaOptions).Width <= 0)
+    {
+        Console.Error.WriteLine("complex script smoke failed");
+        return 1;
+    }
+}
+
 // Right-to-left text: joined Arabic, Hebrew and a mixed-direction line through the bidirectional algorithm and the Arabic shaper.
 {
     var fonts = new OneImage.Text.FontCollection();

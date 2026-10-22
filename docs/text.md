@@ -54,7 +54,7 @@ Measured on the 45 KB WOFF2 of the Noto Sans shaping subset (shared workstation,
 
 ## Shaping
 
-Text is shaped before it is laid out: code points go through the font's character map, then GSUB substitutions, then GPOS positioning, and the result is a run of glyphs with advances and offsets. Layout (wrapping, alignment, measuring, drawing) works on those glyphs only. The engine follows the OpenType specification and works for every script that needs no reordering, plus Arabic-style joining and Hebrew (see [Arabic and Hebrew](#arabic-and-hebrew)).
+Text is shaped before it is laid out: code points go through the font's character map, then GSUB substitutions, then GPOS positioning, and the result is a run of glyphs with advances and offsets. Layout (wrapping, alignment, measuring, drawing) works on those glyphs only. The engine follows the OpenType specification and works for every script that needs no reordering, plus Arabic-style joining and Hebrew (see [Arabic and Hebrew](#arabic-and-hebrew)) and the Indic, Southeast Asian and USE scripts (see [Complex scripts](#complex-scripts-indic-southeast-asian-and-the-universal-shaping-engine)).
 
 - **Tables.** `GDEF` glyph classes, mark attachment classes and mark glyph sets. `GSUB` lookup types 1 single, 2 multiple, 3 alternate, 4 ligature, 5 context, 6 chained context (all three formats of each context), 7 extension and 8 reverse chaining single. `GPOS` types 1 single, 2 pair (formats 1 and 2), 3 cursive, 4 mark-to-base, 5 mark-to-ligature, 6 mark-to-mark, 7 context, 8 chained context and 9 extension. All lookup flags apply: ignore base glyphs, ligatures and marks, mark attachment type, and mark filtering sets (a filtering set wins over an attachment type). Device and variation-index tables inside value records and anchors are skipped, since text is unhinted and a variable font draws its default instance.
 - **Lookup order.** Lookups of the enabled features run in lookup-list order, as the specification says, in two stages: `ccmp` and `locl` first, then everything else. So `smcp` on `fi` changes the letters to small capitals before `liga` looks for a ligature, and the ligature does not form; ImageSharp ligates first.
@@ -64,7 +64,7 @@ Text is shaped before it is laid out: code points go through the font's characte
 - **Clusters.** A glyph stands for the characters from its `Index` on; a ligature is one glyph for several characters, so `GetCharacterBounds` returns one box for `fi`, starting at the `f`. A zero width non-joiner (U+200C), a zero width space (U+200B) and a soft hyphen (U+00AD) end a shaping run, so nothing ligates or kerns across them (the last two are line break opportunities, which a ligature would otherwise swallow); the other zero width format characters are dropped. A base and its combining marks, and the glyphs of one character the font splits into several, share one box, so wrapping and `GetCharacterBounds` work on grapheme clusters whatever the glyph run looks like; a line never ends inside a ligature.
 - **Limits.** Fonts are untrusted. Every read is bounds-checked and a subtable that cannot be read is skipped. Contexts nest lookups at most 6 deep. A run may grow to eight glyphs per character plus 256, and may attempt at most 65,536 + 1,024 per character subtable applications (and 2^26 overall; a subtable that fails to read counts as 2,048); a run that exhausts the budget keeps what it has and applies no further lookups. A damaged GSUB/GPOS/GDEF header means the table is ignored, as if the font had none. Nothing here throws.
 
-What the engine does not do yet: vertical and Indic or Southeast Asian shaping, canonical reordering and composition of combining marks (a mark sequence is shaped as typed; the font's own `ccmp` handles the compositions it has), contour-point anchors, feature ranges inside a string, Apple `morx`/`kerx` layout, and the `GSUB`/`GPOS` FeatureVariations table. A script-specific shaper plugs in as a `ScriptShaper` (its feature stages and a hook on the glyph run) without touching the lookup engine.
+What the engine does not do yet: vertical layout, canonical reordering and composition of combining marks (a mark sequence is shaped as typed; the font's own `ccmp` handles the compositions it has), contour-point anchors, feature ranges inside a string, Apple `morx`/`kerx` layout, and the `GSUB`/`GPOS` FeatureVariations table. A script-specific shaper plugs in as a `ScriptShaper` (its feature stages and a hook on the glyph run) without touching the lookup engine.
 
 ## Direction and right-to-left text
 
@@ -96,6 +96,55 @@ Deliberate differences:
 - **(e) One direction per text or per paragraph.** SixLabors.Fonts takes one direction for the whole string; we take it per paragraph (UAX #9 rule P1), so a string with an English line and an Arabic line lays out each in its own direction.
 - **(f) Alignment of wrapped right-to-left paragraphs** that mix Latin words or numbers: SixLabors.Fonts left-aligns some lines of such a paragraph; every line of ours starts at the paragraph's start edge, the right.
 - **(g) Font fallback.** With a fallback face SixLabors.Fonts applies the primary font's GDEF and GPOS to fallback glyph ids, and digits after Hebrew in a Hebrew-primary font come out with zero advance. We shape each face with its own tables.
+
+## Complex scripts: Indic, Southeast Asian and the Universal Shaping Engine
+
+Three shapers sit on the `ScriptShaper` seam, chosen by the script of a run (tags come from generated Unicode tables, `tools/gen_unicode_tables.py`, which also derives Indic_Syllabic_Category, Indic_Positional_Category and the canonical two-part decompositions from the Unicode Character Database 17.0.0).
+
+- **Indic shaper:** Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam, following Microsoft's Indic script-development documents (the v2 tags `dev2`, `bng2`... first, then the v1 tags). Text is cut into syllables (consonant clusters with halants, ZWJ/ZWNJ, matras, nukta, modifiers, standalone vowels), split vowels are decomposed, the base consonant is found, a reph is moved, pre-base matras go to the front, and features run in the documented order: `locl`, `ccmp`, then `nukt`, `akhn`, `rphf`, `rkrf`, `pref`, `blwf`, `abvf`, `half`, `pstf`, `vatu`, `cjct`, then `init`, `pres`, `abvs`, `blws`, `psts`, `haln`, `dist`, `abvm`, `blwm` with the default positioning features. A mark with no base gets a dotted circle (U+25CC) as its base.
+- **Universal Shaping Engine shaper:** Khmer, Myanmar, Sinhala, Tibetan, Balinese, Javanese and the other scripts of the USE list, from the USE specification (syllable categories from the Indic_Syllabic_Category and Indic_Positional_Category properties) with Khmer and Myanmar specifics: coeng + ro, pre-base vowels and medials, the Khmer split vowels (U+17BE, 17BF, 17C0, 17C4, 17C5 become U+17C1 plus a sign), kinzi and stacked consonants.
+- **Thai and Lao:** SARA AM (U+0E33, U+0EB3) is split into NIKHAHIT and SARA AA, and the nikhahit moves in front of the tone mark that precedes it, as the Thai script document says. Marks are placed by the font's `mark`/`mkmk` lookups and contextual substitutions.
+- **Line breaking** for Thai, Lao, Khmer and Myanmar stays UAX #14 without dictionaries: their letters are class SA and are treated as letters, so there is a break opportunity only at spaces, punctuation and explicit zero width spaces, not inside a word. Text without spaces therefore wraps only where the author put a ZWSP. Grapheme clusters (UAX #29) keep a syllable's marks with their base.
+- **Limits.** A syllable is cut after 48 glyphs; runs over 4,096 glyphs are shaped in pieces of 2,048 glyphs cut at syllable boundaries, so the cost is linear (400,000 hostile characters shape in under 2 s). Reordering and dotted circle insertion are bounded by the syllable cut. Fonts with damaged tables behave as for any script (see Shaping).
+- **Choices that follow the documents, not the reference.** ZWJ and ZWNJ are never skipped by lookup flags; their glyphs are removed before positioning. ZWJ after a consonant and halant asks for the half form, ZWNJ denies it. A reph forms only when the font's `rphf` changes Ra + halant. Malayalam needs a ZWJ for a reph. The base consonant is found with probes of the font's `pref`, `blwf` and `pstf` lookups. A syllable's characters share one cluster value.
+
+### Agreement with SixLabors.Fonts
+
+Checked against SixLabors.Fonts 2.1.3 through its public API with 17 Noto subsets (`tests/testdata/fonts/Noto*-Subset-Regular.ttf`, SIL Open Font License, made by `tools/TextFonts/make-complex-fonts.py`) on 1,042 cases (`tests/testdata/complex/*.txt`: matras, reph, half forms, conjuncts, nukta, joiners, broken clusters, Tamil/Malayalam split vowels, Khmer coeng and pre-base vowels, Myanmar medials, Sinhala and Tibetan stacks, SARA AM). Glyph ids must be equal and glyph origins within 0.01 font units. The reference throws on 26 of the cases (NullReferenceException or IndexOutOfRangeException inside SixLabors.Fonts); those are not compared.
+
+| script | cases | exact match | reference throws | deliberate differences |
+|---|---|---|---|---|
+| Devanagari | 157 | 149 | 0 | 8 |
+| Bengali | 83 | 75 | 0 | 8 |
+| Gurmukhi | 57 | 43 | 11 | 3 |
+| Gujarati | 75 | 65 | 1 | 9 |
+| Oriya | 67 | 63 | 0 | 4 |
+| Tamil | 76 | 73 | 0 | 3 |
+| Telugu | 75 | 61 | 4 | 10 |
+| Kannada | 71 | 58 | 0 | 13 |
+| Malayalam | 89 | 76 | 5 | 8 |
+| Khmer | 54 | 43 | 5 | 6 |
+| Myanmar | 39 | 16 | 0 | 23 |
+| Sinhala | 32 | 26 | 0 | 6 |
+| Tibetan | 31 | 25 | 0 | 6 |
+| Thai | 45 | 41 | 0 | 4 |
+| Lao | 27 | 25 | 0 | 2 |
+| Balinese | 35 | 31 | 0 | 4 |
+| Javanese | 29 | 27 | 0 | 2 |
+| total | 1,042 | 897 | 26 | 119 |
+
+Every difference is listed in `tests/testdata/complex/known-differences.txt` with a reason; the test fails if a listed case starts to match or an unlisted one differs. The reasons, and the rule each follows:
+
+- **broken-cluster (61).** A mark without a base: we insert the dotted circle first, in logical order, and the mark follows it (a pre-base matra moves in front of the circle as it would in front of a consonant), as the Indic and USE documents describe. The reference puts the circle after the mark.
+- **myanmar-reorder (21).** The reference does no reordering for Myanmar. We follow USE: the pre-base vowel E (U+1031) and medial Ra (U+103C) move before the consonant, a virama joins two consonants into the font's stacked form, and a consonant + asat + virama before a consonant becomes the font's kinzi. Checked on the glyph runs: for U+1000 U+1039 U+1000 we draw the stacked glyph where the reference draws the base, a visible virama and the base again; for U+1000 U+1031 the vowel comes first; for U+1004 U+103A U+1039 U+1000 we draw the font's kinzi glyph where the reference draws raw letters. Medial ya + wa (U+103B U+103D) uses the font's own ligature for the pair.
+- **tibetan-extra-glyph (4).** For U+0F40 followed by U+0F73 or U+0F81 (and the sequence with U+0F71 U+0F72) we output the consonant with aa, then the vowel sign; the reference appends an extra dotted circle glyph (U+25CC), treating a valid stack as a broken one. We do not.
+- **joiner-kerning (4).** ZWJ/ZWNJ glyphs are removed after substitution, so pair adjustment sees the neighbours next to each other. The reference positions with the joiner in between.
+- **ignore-marks-pair (4), below-mark-offset (3).** Malayalam i/ii: a pair lookup with IgnoreMarks does not apply to a second glyph the GDEF table calls a mark (OpenType lookup flags); the reference applies it (5 font units). Gujarati u/uu/vocalic r: the font's contextual `dist`/`blwm` single positioning applies in ours and not in the reference.
+- **sara-am (5).** The nikhahit goes in front of the tone mark (Thai script document); the reference leaves the tone mark and nikhahit overlapping.
+- **kannada-conjunct (3).** We form the font's conjunct and conjunct + matra ligatures; the reference places the matra before the below-base consonant and breaks the ligature.
+- **bengali-form (4), contextual-form (8), prebase-reorder (2).** The font's contextual variants or the ordering follow the font's tables and the documents in ours; the reference skips them. Checked on the glyph runs for Bengali ka + hasant + ka (we form the font's conjunct, the reference draws ka, a visible hasant and ka), Sinhala ka + al-lakuna + ZWJ + ra + e (the left vowel comes first in ours) and Khmer coeng + ka. The remaining members (Balinese, Javanese, Thai tone-mark variants, Sinhala ra + al-lakuna + ZWJ alone) differ because ours applies the font's substitution; we did not derive each one from a rule in the documents, so treat those as unproven and not as known errors of the reference.
+
+Tolerances are exact for glyph ids and 0.01 font units for origins (lossless layout arithmetic). A font with the older v1 script tags only is shaped through the v1 tags; the v1-specific behaviors of the older engines (for example the pre-v2 reph handling) are not reproduced.
 
 ## Line breaking and segmentation
 
@@ -231,8 +280,8 @@ Differences you will meet, all deliberate or pending the later units:
 
 `Layout/TextLayout.cs` is the whole layout in four steps with narrow seams between them.
 
-- **Shaping** is `Shape` calling `Shaping/TextShaper`: code points in, `ShapedGlyph`s (glyph id, cluster, advance with kerning, offsets) out. A script-specific shaper (Arabic joining, Indic and Universal Shaping Engine reordering) is a `ScriptShaper` with its own feature stages; the lookup engine (`Shaping/Engine`) is shared.
-- **Line breaking** is `PrepareBreaks` and `CanBreakBefore`: the break opportunities and cluster starts of a paragraph are computed from its text (`Unicode/LineBreaker.cs`, `Unicode/Graphemes.cs`) and reach the glyphs only through each glyph's text offset, so a shaper that merges or reorders glyphs needs no change here. Hyphenation, language-tagged tailoring and dictionary breaking for Thai, Lao, Khmer and Burmese (their characters are treated as letters) would extend `LineBreaker`.
+- **Shaping** is `Shape` calling `Shaping/TextShaper`: code points in, `ShapedGlyph`s (glyph id, cluster, advance with kerning, offsets) out. Script-specific shapers (Arabic joining, Indic, Universal Shaping Engine and Thai/Lao) are `ScriptShaper`s with its own feature stages; the lookup engine (`Shaping/Engine`) is shared.
+- **Line breaking** is `PrepareBreaks` and `CanBreakBefore`: the break opportunities and cluster starts of a paragraph are computed from its text (`Unicode/LineBreaker.cs`, `Unicode/Graphemes.cs`) and reach the glyphs only through each glyph's text offset, so a shaper that merges or reorders glyphs needs no change here. Hyphenation, language-tagged tailoring and dictionary breaking for Thai, Lao, Khmer and Burmese (their characters are treated as letters, so there is no break inside a word) would extend `LineBreaker`.
 - **Color fonts** beyond COLR version 0 (version 1 paint graphs, SVG and bitmap glyphs) extend the color branch of `BuildParts`, which already turns the layers of a color glyph into one fill per layer index and color.
 - **Runs, fallback, decorations and paths** live in `Layout/TextLayout.cs`: `ResolveRuns` maps every offset to a run, `Shape` splits shaping runs by (run, face) and every `ShapedGlyph` carries a `GlyphStyle` (face, scale, shift, line and decoration measures); `BuildParts` writes outlines and decoration rectangles per paint, with `GlyphMatrix` giving the straight or on-path placement (`Layout/PathRoute.cs`).
 

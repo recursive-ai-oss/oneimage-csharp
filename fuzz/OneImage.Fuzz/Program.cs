@@ -32,6 +32,7 @@ internal static class Program
         ["font"] = FontTarget.Run,
         ["breaking"] = BreakingTarget.Run,
         ["bidi"] = BidiTarget.Run,
+        ["complex"] = ComplexTarget.Run,
         ["brotli"] = BrotliTarget.Run,
         ["richtext"] = RichTextTarget.Run,
         ["sysfont"] = SysFontTarget.Run,
@@ -48,6 +49,12 @@ internal static class Program
         if (args.Length == 3 && args[0] == "seeds-bidi")
         {
             BidiTarget.WriteSeeds(args[1], args[2]);
+            return 0;
+        }
+
+        if (args.Length == 3 && args[0] == "seeds-complex")
+        {
+            ComplexTarget.WriteSeeds(args[1], args[2]);
             return 0;
         }
 
