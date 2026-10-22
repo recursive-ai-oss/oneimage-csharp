@@ -245,7 +245,20 @@ OneImage:
 Image.Load(input).Composite(Image.Load(mark), x: 20, y: 20, opacity: 0.8f).Save(output);
 ```
 
-`Composite` is source-over with premultiplied alpha and color management; there are no other blend modes yet. The overlay can be negative-offset or partly outside the base. The overlay is itself an `Image`, so resize or fade it first with the normal ops.
+`Composite` is source-over with premultiplied alpha and color management by default. The overlay can be negative-offset or partly outside the base. The overlay is itself an `Image`, so resize or fade it first with the normal ops.
+
+ImageSharp's `DrawImage(image, point, PixelColorBlendingMode, opacity)` and `GraphicsOptions.AlphaCompositionMode` map to the `blend:` and `alpha:` parameters of `Composite`:
+
+```csharp
+// ImageSharp: img.Mutate(c => c.DrawImage(mark, new Point(20, 20), PixelColorBlendingMode.Multiply, 0.8f));
+Image.Load(input).Composite(Image.Load(mark), x: 20, y: 20, opacity: 0.8f, blend: BlendMode.Multiply).Save(output);
+```
+
+| ImageSharp | OneImage |
+|---|---|
+| `PixelColorBlendingMode` Normal, Multiply, Add, Subtract, Screen, Darken, Lighten, Overlay, HardLight | `BlendMode` with the same names. The values agree with ImageSharp within a few levels at 8 bits (ImageSharp rounds through 8-bit intermediates). |
+| `PixelAlphaCompositionMode` SrcOver, Clear, Src, SrcAtop, SrcIn, SrcOut, Dest, DestAtop, DestIn, DestOut, DestOver, Xor | `AlphaComposition` with the same names. Like `DrawImage`, only the pixels under the overlay change. A base without alpha accepts only the operators that keep it opaque (SrcOver, SrcAtop, Dest, DestOver). |
+| (not in ImageSharp) | Also ColorDodge, ColorBurn, SoftLight, Difference, Exclusion, LinearBurn, LinearDodge, VividLight, LinearLight, PinLight, HardMix, Divide, Hue, Saturation, Color and Luminosity. |
 
 ### Metadata
 
@@ -353,12 +366,10 @@ Drawing is SixLabors.ImageSharp.Drawing 2.1.7; text layout and fonts are SixLabo
 
 Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with "CFF2 Fonts are not currently supported") and a public API for variable-font axes (the package lists the `rvrn` feature tag but exposes no axis settings). Also not covered by the colour-font option: SVG, `sbix`, CBDT and other bitmap colour glyphs.
 
-### Blending: coming soon
+### Opacity: coming soon
 
 | ImageSharp | As of 1.0 | Closest workaround |
 |---|---|---|
-| `DrawImage(image, point, PixelColorBlendingMode, opacity)` with `Multiply`, `Add`, `Subtract`, `Screen`, `Darken`, `Lighten`, `Overlay`, `HardLight` | `Composite(overlay, x, y, opacity)` does normal source-over only. | Do the blend per pixel with `Canvas.Lock` on both images. |
-| `PixelAlphaCompositionMode` (`SrcAtop`, `SrcIn`, `SrcOut`, `Dest`, `DestOver`, `DestIn`, `DestOut`, `DestAtop`, `Clear`, `Xor`; `SrcOver` is the default) | Source-over only. | As above. |
 | `Opacity(amount)` (multiply every pixel's alpha) | No single call. `AddAlpha(alpha)` sets a constant alpha on an opaque image, and `Composite` takes an `opacity`. | `Composite` the image onto a transparent `Canvas` with the opacity you want. |
 
 ### Effects and filters: coming soon

@@ -2,56 +2,9 @@ using System.Runtime.Intrinsics;
 
 namespace OneImage.Kernels;
 
-/// <summary>
-/// A blend mode: how one overlay pixel combines with the pixel below it. Both inputs are premultiplied, in the same space.
-/// Only <see cref="Normal"/> (source-over) exists today; layers add the others by implementing this interface, and the row
-/// loop in <see cref="CompositeKernel.BlendRow{TMode}"/> specializes over each mode with no per-pixel dispatch.
-/// </summary>
-internal interface IBlendMode
-{
-    /// <summary>Combines one premultiplied color channel. <paramref name="s"/> and <paramref name="sa"/> are the overlay's channel and alpha (opacity already applied), <paramref name="d"/> and <paramref name="da"/> the backdrop's.</summary>
-    static abstract float Color(float s, float sa, float d, float da);
-
-    /// <summary>The alpha of the result.</summary>
-    static abstract float Alpha(float sa, float da);
-}
-
-/// <summary>Source-over (Porter-Duff "over"): the overlay covers the backdrop in proportion to its alpha.</summary>
-internal readonly struct Normal : IBlendMode
-{
-    public static float Color(float s, float sa, float d, float da) => s + (d * (1f - sa));
-
-    public static float Alpha(float sa, float da) => sa + (da * (1f - sa));
-}
-
 /// <summary>Row kernels that blend an overlay row onto a backdrop row.</summary>
 internal static class CompositeKernel
 {
-    /// <summary>
-    /// Blends rows of premultiplied float pixels with <c>colors</c> color channels followed by alpha: the overlay's values are
-    /// scaled by <paramref name="opacity"/> first. No fused multiply-add is used, so every hardware path gives the same bits.
-    /// </summary>
-    public static void BlendRow<TMode>(ReadOnlySpan<float> backdrop, ReadOnlySpan<float> overlay, Span<float> destination, int colors, float opacity)
-        where TMode : struct, IBlendMode
-    {
-        int channels = colors + 1;
-        int pixels = destination.Length / channels;
-        backdrop = backdrop[..(pixels * channels)];
-        overlay = overlay[..(pixels * channels)];
-        for (int p = 0; p < pixels; p++)
-        {
-            int i = p * channels;
-            float sa = overlay[i + colors] * opacity;
-            float da = backdrop[i + colors];
-            for (int c = 0; c < colors; c++)
-            {
-                destination[i + c] = TMode.Color(overlay[i + c] * opacity, sa, backdrop[i + c], da);
-            }
-
-            destination[i + colors] = TMode.Alpha(sa, da);
-        }
-    }
-
     /// <summary>The opacity as a 16.16 fixed-point factor (0..65536) used by the 8-bit kernels.</summary>
     public static uint OpacityFixed(float opacity) => (uint)Math.Clamp((int)MathF.Round(opacity * 65536f), 0, 65536);
 

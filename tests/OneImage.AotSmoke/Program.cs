@@ -243,6 +243,14 @@ foreach (bool lossless in new[] { true, false })
     Image bg = snapshot.ConvertTo(PixelFormat.Rgb8);
     Rgb24[] marked = bg.Composite(wm.Invert(), 10, 10, 0.5f).ToArray<Rgb24>();
     Rgb24[] lin = bg.Composite(wm, 5, 5, 0.25f, linear: true).ToArray<Rgb24>();
+    Rgb24[] mult = bg.Composite(wm.Invert(), 10, 10, 0.5f, blend: BlendMode.Multiply).ToArray<Rgb24>();
+    Rgb24[] hue = bg.Composite(wm.Invert(), 10, 10, 1f, blend: BlendMode.Hue, alpha: AlphaComposition.SrcAtop).ToArray<Rgb24>();
+    if (mult.Length != 300 * 200 || hue.Length != 300 * 200)
+    {
+        Console.Error.WriteLine("blend smoke failed");
+        return 1;
+    }
+
     using var enc = new MemoryStream();
     bg.Save(enc, JpegFormat.Instance);
     Image thumb = Image.Thumbnail(enc.ToArray(), 100);

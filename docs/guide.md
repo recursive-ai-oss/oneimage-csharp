@@ -176,6 +176,13 @@ Image marked = photo.Composite(mark, x: photo.Width - 90, y: photo.Height - 40, 
 
 The overlay is converted to the base image's profile. The blend happens on stored (encoded) values unless `linear: true`.
 
+`blend:` picks how colors combine (`BlendMode`: Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Add, Subtract, LinearBurn, LinearDodge, VividLight, LinearLight, PinLight, HardMix, Divide, Hue, Saturation, Color, Luminosity), following the W3C Compositing and Blending formulas. `alpha:` picks the Porter-Duff operator for coverage (`AlphaComposition`: SrcOver by default, then Clear, Src, Dest, DestOver, SrcIn, DestIn, SrcOut, DestOut, SrcAtop, DestAtop, Xor). Only pixels under the overlay change.
+
+```csharp
+Image shaded = photo.Composite(texture, opacity: 0.6f, blend: BlendMode.Multiply);
+Image cutout = photo.AddAlpha().Composite(mask, alpha: AlphaComposition.DestIn); // the base needs an alpha channel for DestIn
+```
+
 **Filters**
 
 ```csharp

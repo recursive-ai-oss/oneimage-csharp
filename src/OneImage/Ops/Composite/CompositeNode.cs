@@ -5,7 +5,7 @@ using OneImage.Kernels;
 namespace OneImage;
 
 /// <summary>
-/// Lays an overlay over the base (source-over, premultiplied). An output tile reads the base tile at the same position and
+/// Lays an overlay over the base with a blend mode and a Porter-Duff composition (premultiplied). An output tile reads the base tile at the same position and
 /// only the part of the overlay that lands on it; tiles the overlay does not touch are the base's tiles, shared.
 /// The overlay must already be in the base's color model and profile.
 /// </summary>
@@ -14,16 +14,19 @@ internal sealed class CompositeNode : Node
     private readonly int _x;
     private readonly int _y;
     private readonly float _opacity;
+    private readonly BlendMode _blend;
+    private readonly AlphaComposition _composition;
     private readonly PixelFormat _work;
 
-    public CompositeNode(Node baseNode, Node overlay, int x, int y, float opacity)
+    public CompositeNode(Node baseNode, Node overlay, int x, int y, float opacity, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver)
         : base(
             baseNode.Width,
             baseNode.Height,
             baseNode.Format,
             new OpDescriptor(
                 "composite",
-                new OpParameter("mode", "normal"),
+                new OpParameter("mode", BlendNames.Name(blend) ?? "normal"),
+                new OpParameter("alpha", BlendNames.Name(composition)),
                 new OpParameter("x", (long)x),
                 new OpParameter("y", (long)y),
                 new OpParameter("opacity", (double)opacity)),
@@ -38,6 +41,8 @@ internal sealed class CompositeNode : Node
         _x = x;
         _y = y;
         _opacity = opacity;
+        _blend = blend;
+        _composition = composition;
         _work = new PixelFormat(baseNode.Format.Model, SampleType.F32, AlphaMode.Premultiplied);
     }
 
@@ -53,7 +58,7 @@ internal sealed class CompositeNode : Node
     }
 
     public override ImageRect RequiredInput(int inputIndex, ImageRect output) =>
-        inputIndex == 0 ? output : _opacity <= 0f ? new ImageRect(0, 0, 0, 0) : Hit(output);
+        inputIndex == 0 ? output : _opacity <= 0f && BlendNames.EmptyOverlayKeepsBackdrop(_composition) ? new ImageRect(0, 0, 0, 0) : Hit(output);
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)
     {
@@ -80,7 +85,7 @@ internal sealed class CompositeNode : Node
             int tileStride = Tile.Size * bbpp;
             int col = (need.X + _x) - o.X; // first affected column inside the tile
             int row0 = (need.Y + _y) - o.Y;
-            bool fast = bf == PixelFormat.Rgb8 && of == PixelFormat.Rgba8;
+            bool fast = bf == PixelFormat.Rgb8 && of == PixelFormat.Rgba8 && _blend == BlendMode.Normal && _composition == AlphaComposition.SrcOver;
             uint fixedOpacity = CompositeKernel.OpacityFixed(_opacity);
             if (fast)
             {
@@ -129,7 +134,7 @@ internal sealed class CompositeNode : Node
                 int at = ((row0 + r) * tileStride) + (col * bbpp);
                 ConvertKernel.ConvertRow(back.Span.Slice(at, need.Width * bbpp), bf, AsBytes(fb, n), _work, need.Width);
                 ConvertKernel.ConvertRow(overlayBytes.AsSpan(r * ostride, ostride), of, AsBytes(fo, n), _work, need.Width);
-                CompositeKernel.BlendRow<Normal>(fb.AsSpan(0, n), fo.AsSpan(0, n), fd.AsSpan(0, n), _work.ColorChannels, _opacity);
+                BlendKernel.Row(_blend, fb.AsSpan(0, n), fo.AsSpan(0, n), fd.AsSpan(0, n), _work.ColorChannels, _opacity, _composition);
                 ConvertKernel.ConvertRow(AsBytes(fd, n), _work, result.Span.Slice(at, need.Width * bbpp), bf, need.Width);
             }
         }

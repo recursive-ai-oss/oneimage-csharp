@@ -416,6 +416,22 @@ public sealed class DocsExamples : IDisposable
     }
 
     [Fact]
+    public void BlendModeAndPorterDuff()
+    {
+        Image photo = Image.Load(MakePhoto(exif: false));
+        var texturePixels = new Rgba32[80 * 30];
+        Array.Fill(texturePixels, new Rgba32(200, 120, 60, 128));
+        Image texture = Image.FromPixels<Rgba32>(texturePixels, 80, 30);
+
+        Image shaded = photo.Composite(texture, opacity: 0.6f, blend: BlendMode.Multiply);
+        Image cutout = photo.AddAlpha().Composite(texture, alpha: AlphaComposition.DestIn);
+        Assert.Equal(photo.Width, shaded.Width);
+        Rgba32[] px = cutout.ToArray<Rgba32>();
+        Assert.InRange((int)px[(10 * photo.Width) + 10].A, 127, 129); // under the overlay: the base keeps the overlay's coverage
+        Assert.Equal(255, px[(100 * photo.Width) + 100].A);            // elsewhere: untouched
+    }
+
+    [Fact]
     public void LimitsAndConfiguration()
     {
         string photo = MakePhoto(exif: false);

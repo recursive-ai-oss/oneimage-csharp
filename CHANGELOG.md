@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `Image.Composite(..., blend:, alpha:)`: all 24 Photoshop/W3C blend modes (`BlendMode`: Multiply, Screen, Overlay, Darken, Lighten, Color Dodge/Burn, Hard/Soft/Vivid/Linear/Pin Light, Hard Mix, Difference, Exclusion, Add, Subtract, Linear Burn, Divide, Hue, Saturation, Color, Luminosity) and the twelve Porter-Duff operators (`AlphaComposition`). Normal source-over output is unchanged.
+
 ## [1.0.0] - 2026-10-22
 
 First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage`).

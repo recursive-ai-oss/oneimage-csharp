@@ -118,6 +118,14 @@ public sealed class MigrationExamples : IDisposable
     }
 
     [Fact]
+    public void WatermarkWithBlendMode()
+    {
+        Image.Load(_photo).Composite(Image.Load(_mark), x: 20, y: 20, opacity: 0.8f, blend: BlendMode.Multiply).Save(P("oi-multiply.png"));
+
+        Assert.Equal(Image.Load(_photo).Width, Image.Identify(P("oi-multiply.png")).Width);
+    }
+
+    [Fact]
     public void MetadataRead()
     {
         (string? make, bool has) = global::ImageSharpSide.Snippets.Metadata(_photo, P("is.jpg"));
