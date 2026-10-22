@@ -13,7 +13,7 @@ namespace OneImage.Tests.WebP;
 public sealed class WebPMemoryTests
 {
     private const long Budget = 16L * 1024 * 1024;
-    private static readonly WebPFormat Format = new();
+    private static readonly WebPFormat Format = WebPFormat.Instance;
 
     private sealed class NullSink(int w, int h, PixelFormat f) : IRowSink
     {

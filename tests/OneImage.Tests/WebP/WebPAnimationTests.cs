@@ -9,7 +9,7 @@ namespace OneImage.Tests.WebP;
 /// <summary>Animated WebP: decode compositing against libwebp's animation decoder (through ImageMagick) and encode round trips.</summary>
 public sealed class WebPAnimationTests
 {
-    private static readonly WebPFormat Format = new();
+    private static readonly WebPFormat Format = WebPFormat.Instance;
 
     internal static byte[] EncodeStill(byte[] rgba, int w, int h, bool lossless = true)
     {

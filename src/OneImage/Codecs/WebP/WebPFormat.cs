@@ -20,8 +20,10 @@ public sealed class WebPFormat : IImageFormat
     private readonly WebPDecoderImpl _decoder;
     private readonly WebPEncoderImpl _encoder;
 
-    /// <summary>Initializes the format.</summary>
-    public WebPFormat()
+    /// <summary>Gets the shared instance.</summary>
+    public static WebPFormat Instance { get; } = new();
+
+    private WebPFormat()
     {
         _decoder = new WebPDecoderImpl(this);
         _encoder = new WebPEncoderImpl();

@@ -272,6 +272,54 @@ image.StripMetadata().Save(output);                  // EXIF, XMP, IPTC and ICC 
 
 OneImage parses only the common EXIF tags. The raw `Exif`, `Xmp`, `Iptc` and `IccProfile` blobs are always available on `Image.Metadata` if you need others. Metadata is preserved by default and corrected for the saved size and orientation. System.Drawing exposes EXIF through `PropertyItems`; there is no direct equivalent API.
 
+### Blur, sharpen, median, edges, histogram
+
+ImageSharp:
+
+```csharp
+using Image image = Image.Load(input);
+image.Mutate(x => x.GaussianBlur(2f));
+image.Mutate(x => x.BoxBlur(3));
+image.Mutate(x => x.GaussianSharpen(1.2f));
+image.Mutate(x => x.MedianBlur(1, true));
+image.Mutate(x => x.DetectEdges());
+image.Save(output);
+
+// Histogram: count it yourself.
+var counts = new long[256];
+image.ProcessPixelRows(accessor =>
+{
+    for (int y = 0; y < accessor.Height; y++)
+    {
+        foreach (Rgba32 p in accessor.GetRowSpan(y)) counts[p.R]++;
+    }
+});
+```
+
+OneImage:
+
+```csharp
+Image.Load(input)
+    .GaussianBlur(2)
+    .BoxBlur(3)
+    .Sharpen(amount: 1, radius: 1.2)
+    .Median(1)
+    .Sobel()
+    .Save(output);
+
+long[] red = Image.Load(input).Histogram().Channel(0).ToArray();   // 256 bins; Statistics() gives min/max/mean/stddev
+```
+
+| ImageSharp | OneImage | Differences |
+|---|---|---|
+| `GaussianBlur(sigma)` | `GaussianBlur(sigma)` | Linear light by default (`linear: false` for stored values); edge mode defaults to clamp. |
+| `BoxBlur(radius)` | `BoxBlur(radius)` | Same window `2r+1`. |
+| `GaussianSharpen(sigma)` | `Sharpen(amount, radius, threshold)` | An unsharp mask with a Gaussian of sigma `radius`, so there is an `amount` and a `threshold`. The default is linear light; pass `linear: false` for the look most editors have. |
+| `MedianBlur(radius, preserveAlpha)` | `Median(radius)` | Alpha is filtered like a color channel; there is no `preserveAlpha`. |
+| `DetectEdges()` (Sobel by default) | `Sobel(scale)` | Returns a gray image without alpha. Other edge kernels: use `Convolve`. |
+| custom convolution | `Convolve(float[,] kernel, divisor, offset)` | Correlation (not flipped); divisor defaults to the sum of the weights. |
+| none built in | `Histogram(bins)`, `Statistics()` | Per channel, whole frame 0, computed in parallel. |
+
 ## Behavior to expect after porting
 
 - **Orientation is applied for you.** If your old code called `AutoOrient()` or rotated by the EXIF tag, remove that, or the picture will be turned twice.

@@ -226,7 +226,7 @@ if (decodedGif.Width != 64 || decodedGif.Height != 48 || distinct.Count > 16 || 
 foreach (bool lossless in new[] { true, false })
 {
     using var webp = new MemoryStream();
-    snapshot.Save(webp, new WebPFormat(), new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = lossless, Quality = 90 } });
+    snapshot.Save(webp, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = lossless, Quality = 90 } });
     Image wr = Image.Load(webp.ToArray());
     Rgba32[] wpx = wr.ToArray<Rgba32>();
     bool wexact = !lossless || wpx.AsSpan().SequenceEqual(original);
@@ -247,7 +247,7 @@ foreach (bool lossless in new[] { true, false })
     bg.Save(enc, JpegFormat.Instance);
     Image thumb = Image.Thumbnail(enc.ToArray(), 100);
     using var webp = new MemoryStream();
-    thumb.Save(webp, new WebPFormat());
+    thumb.Save(webp, WebPFormat.Instance);
     if (marked.Length != 300 * 200 || lin.Length != 300 * 200 || thumb.Width != 100 || thumb.Height != 67 || webp.Length == 0 || thumb.Metadata.IccProfile.IsEmpty)
     {
         Console.Error.WriteLine("composite/thumbnail smoke failed");

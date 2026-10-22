@@ -131,4 +131,26 @@ public sealed class MigrationExamples : IDisposable
         Assert.True(has && ourHas);
         Assert.True(Image.Identify(P("oi.jpg")).Metadata.Exif.IsEmpty);
     }
+
+    [Fact]
+    public void FiltersAndHistogram()
+    {
+        global::ImageSharpSide.Snippets.Filters(_photo, P("is.png"));
+        long[] isRed = global::ImageSharpSide.Snippets.RedHistogram(_photo);
+
+        Image.Load(_photo)
+            .GaussianBlur(2)
+            .BoxBlur(3)
+            .Sharpen(amount: 1, radius: 1.2)
+            .Median(1)
+            .Sobel()
+            .Save(P("oi.png"));
+
+        ImageHistogram hist = Image.Load(_photo).Histogram();
+        long[] ourRed = hist.Channel(0).ToArray();
+
+        Assert.Equal(Image.Identify(P("is.png")).Width, Image.Identify(P("oi.png")).Width);
+        Assert.Equal(256, ourRed.Length);
+        Assert.Equal(isRed.Sum(), ourRed.Sum()); // both count every pixel once; the two JPEG decoders may differ by a level
+    }
 }

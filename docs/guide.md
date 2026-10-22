@@ -97,7 +97,7 @@ Async variants exist for I/O: `LoadAsync`, `IdentifyAsync`, `SaveAsync`. Everyth
 
 ## Saving
 
-`Save(path)` picks the format from the extension. A stream or `IBufferWriter<byte>` needs the format: `PngFormat.Instance`, `JpegFormat.Instance`, `GifFormat.Instance`, `BmpFormat.Instance`, `IcoFormat.Instance`, `TiffFormat.Instance`, or `new WebPFormat()`.
+`Save(path)` picks the format from the extension. A stream or `IBufferWriter<byte>` needs the format: `PngFormat.Instance`, `JpegFormat.Instance`, `GifFormat.Instance`, `BmpFormat.Instance`, `IcoFormat.Instance`, `TiffFormat.Instance`, or `WebPFormat.Instance`.
 
 Codec settings go in `SaveOptions.EncoderOptions`:
 
@@ -139,7 +139,7 @@ img.Resize(width: 100, filter: ResamplingFilter.Mitchell);
 - `Fit`: `Contain` (default; fits inside the box), `Cover` (fills the box, crops), `Stretch`, `Pad`. `Anchor`: nine positions plus `Smart`, an entropy/edge heuristic that picks the crop window.
 - Default filter `Auto`: Lanczos3 on an axis that shrinks, Catmull-Rom on one that grows. Others: `Nearest`, `Box`, `Bilinear`, `CatmullRom`, `Mitchell`, `Lanczos2`, `Lanczos3`.
 - Resampling runs in linear light on premultiplied alpha and treats untagged RGB as sRGB. Pass `linear: false` to filter the stored values.
-- `Resize` enlarges by default (`upscale: true`); `Image.Thumbnail` does not.
+- **Upscale defaults differ on purpose.** `Resize` enlarges by default (`upscale: true`): you asked for that size. `Image.Thumbnail` never enlarges unless you pass `upscale: true`: a thumbnail is not bigger than the original. With `Resize(..., upscale: false)` Contain, Cover and Pad stop at scale 1.
 
 `Image.Thumbnail(path, width, height?, fit, anchor, upscale, filter, keepMetadata, ...)` is `Resize` plus the right defaults for a web-ready copy, in this order: apply EXIF orientation; resize (shrink-on-load for JPEG, never larger than the original unless `upscale: true`); convert RGB to sRGB and embed the compact sRGB profile; strip EXIF/XMP/IPTC. It also accepts a `Stream`, `ReadOnlyMemory<byte>` or an existing `Image`.
 
@@ -176,9 +176,38 @@ Image marked = photo.Composite(mark, x: photo.Width - 90, y: photo.Height - 40, 
 
 The overlay is converted to the base image's profile. The blend happens on stored (encoded) values unless `linear: true`.
 
-**Filters and analysis**
+**Filters**
 
-> Blur, sharpen, convolution, median, Sobel, histogram and channel statistics are being added and are not documented here yet. Their XML doc comments describe them once they are in the tree.
+```csharp
+img.GaussianBlur(sigma: 2);                       // sigmaY: for a different vertical sigma
+img.BoxBlur(radius: 3);
+img.Sharpen(amount: 1.5, radius: 1.2, threshold: 0.02, linear: false);   // unsharp mask
+img.Median(radius: 1);                            // 3x3 median, removes speckle noise
+img.Sobel();                                      // edge strength as a gray image
+img.Convolve(new float[,] { { 0, -1, 0 }, { -1, 5, -1 }, { 0, -1, 0 } });   // your own kernel
+```
+
+All are lazy, read only their tile plus a margin of the kernel radius (so they stream), and apply to every frame.
+
+- **Working space.** `GaussianBlur`, `BoxBlur`, `Sharpen` and `Convolve` work in linear light on premultiplied alpha by default (`linear: true`), so blurring on transparency leaves no dark halos. `Sharpen` in linear light gives stronger halos on the dark side of edges; pass `linear: false` for the conventional look. `Median` and `Sobel` use the stored values and have no `linear` parameter.
+- **Edges.** `edge:` is `EdgeMode.Clamp` (default, repeat the edge pixel), `Mirror`, or `Constant` (transparent black, so edges darken on opaque images). `Wrap` is not supported by filters.
+- **Parameters.** `GaussianBlur(sigma)` has kernel radius `ceil(3 sigma)`; sigma 0 on an axis leaves it unchanged. `BoxBlur` radius is 1 to 4096 (window `2r+1`). `Sharpen`: `out = in + amount * (in - blur)`; `radius` is the Gaussian sigma; differences below `threshold` (0 to 1, fraction of full scale) are left alone; alpha is not sharpened. `Median` radius is 1 to 127. `Sobel(scale)` returns a gray image without alpha (luminance by Rec. 709 weights, divided so a black-to-white step gives full scale at `scale: 1`); it refuses CMYK and Lab.
+- **`Convolve`** applies the kernel as written (correlation, not flipped), needs odd width and height, divides by the sum of the weights unless you pass `divisor:` (1 when the sum is 0), then adds `offset:` as a fraction of full scale. A rank-one kernel runs as two 1-D passes, with the same result.
+- **Large blurs are approximated.** Gaussian sigma above 16 and box radius above 48 are computed on a reduced-resolution copy and enlarged, to keep streaming memory bounded. The result stays within a few 8-bit levels of the exact blur on photographs; see the XML docs for the measured difference. Below those limits the result is exact.
+- Results do not depend on the thread count.
+
+**Analysis**
+
+```csharp
+ImageHistogram hist = img.Histogram();                    // 256 bins per channel
+long darkRed = hist[0, 0];                                // channel 0 (R), bin 0
+ReadOnlySpan<long> green = hist.Channel(1);
+
+ImageStatistics stats = img.Statistics();
+ChannelStatistics red = stats.Channels[0];                // Count, Min, Max, Mean, StdDev
+```
+
+Both compute the whole frame immediately, in parallel, and only read pixels (the image is not changed). They look at **frame 0**; use `img.Frames[i].Histogram()` / `.Statistics()` for another frame. Channels are in stored order with alpha last (gray; R, G, B; C, M, Y, K). Samples are the stored values: no color conversion, no un-premultiplying. `bins` is 1 to 65,536; 8-bit value `v` goes to bin `floor(v * bins / 256)`. `Statistics` values are in the channel's stored units (0..255, 0..65,535 or 0..1: see `FullScale`); `StdDev` is the population standard deviation. `skipTransparent: true` ignores pixels with alpha 0. Lab images are refused. Corrupt data throws `ImageFormatException` here, like any pixel pull.
 
 ## Pixel access and Canvas
 
@@ -212,6 +241,7 @@ Image before = canvas.Snapshot();                     // O(1), immutable
 canvas[0, 0] = new Rgba32(0, 255, 0, 255);            // the snapshot does not change
 ```
 
+- `Lock<T>` never converts. With a mismatched `T` it throws an `ArgumentException` that names the canvas format and the matching struct; to read in another pixel type use `canvas.CopyTo<T>(...)` or `canvas.Snapshot().ToArray<T>()`.
 - `Lock` access modes: `Read`, `Write` (you overwrite every pixel in the rectangle) and `ReadWrite`. Dispose the lock to commit.
 - `new Canvas(width, height, PixelFormat.Rgba8)` makes an empty (transparent black) canvas.
 - A canvas has one writer. Hand `Snapshot()` images to other threads. Snapshots share tiles and a tile is copied only when the canvas next writes it, so keeping many snapshots for undo is cheap.
@@ -266,7 +296,7 @@ Image still = anim.Frames[1].ToImage();                   // one frame as its ow
 anim.Save("first.jpg");                                   // JPEG cannot animate: frame 0 only
 ```
 
-Animations are exposed as fully composited frames of the canvas size (disposal and blending already applied). Members that read pixels (`ToArray`, `CopyPixelsTo`, `ToCanvas`) use frame 0; use `Frames[i]` for the others. Each TIFF page is a frame with its own size.
+Animations are exposed as fully composited frames of the canvas size (disposal and blending already applied). Members of `Image` that read pixels (`ToArray`, `CopyPixelsTo`, `ToCanvas`, `Histogram`, `Statistics`) use frame 0 only and ignore the rest, without warning; use `Frames[i]` (an `ImageFrame` has `ToArray`, `CopyPixelsTo`, `Histogram`, `Statistics` and `ToImage()`) for the others. Each TIFF page is a frame with its own size.
 
 ## Limits
 

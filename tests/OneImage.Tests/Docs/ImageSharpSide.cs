@@ -83,4 +83,32 @@ internal static class Snippets
         image.Save(output);
         return (make, has);
     }
+
+    public static void Filters(string input, string output)
+    {
+        using Image image = Image.Load(input);
+        image.Mutate(x => x.GaussianBlur(2f));
+        image.Mutate(x => x.BoxBlur(3));
+        image.Mutate(x => x.GaussianSharpen(1.2f));
+        image.Mutate(x => x.MedianBlur(1, true));
+        image.Mutate(x => x.DetectEdges());
+        image.Save(output);
+    }
+
+    public static long[] RedHistogram(string input)
+    {
+        using Image<Rgba32> image = Image.Load<Rgba32>(input);
+        var counts = new long[256];
+        image.ProcessPixelRows(accessor =>
+        {
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                foreach (Rgba32 p in accessor.GetRowSpan(y))
+                {
+                    counts[p.R]++;
+                }
+            }
+        });
+        return counts;
+    }
 }

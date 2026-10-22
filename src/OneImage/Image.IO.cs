@@ -158,7 +158,7 @@ public sealed partial class Image
         return LoadFrom(new MemoryImageSource(bytes.Memory, bytes), options, cancellationToken);
     }
 
-    /// <summary>Reads the headers of an image file without decoding pixels.</summary>
+    /// <summary>Reads the headers of an image file without decoding pixels. The size and orientation are those stored in the file: <see cref="LoadOptions.AutoOrient"/> is not applied, so a photo recorded with orientation 6 reports its sideways size. Nothing is validated beyond the headers and limits.</summary>
     /// <param name="path">The file.</param>
     /// <param name="options">Optional settings (<see cref="LoadOptions.Validate"/> is ignored).</param>
     /// <returns>Format, frames, metadata.</returns>
@@ -171,7 +171,7 @@ public sealed partial class Image
         return Probe(s, options).Info;
     }
 
-    /// <summary>Reads the headers of an image in a stream. A seekable stream at position 0 is read in place (and rewound); otherwise the remaining bytes are copied first.</summary>
+    /// <summary>Reads the headers of an image in a stream (stored size and orientation, as for the file overload). A seekable stream at position 0 is read in place (and rewound); otherwise the remaining bytes are copied first.</summary>
     /// <param name="stream">The stream.</param>
     /// <param name="options">Optional settings.</param>
     /// <returns>Format, frames, metadata.</returns>
@@ -197,7 +197,7 @@ public sealed partial class Image
         return info;
     }
 
-    /// <summary>Reads the headers of an image in memory.</summary>
+    /// <summary>Reads the headers of an image in memory (stored size and orientation, as for the file overload; pixels are not decoded).</summary>
     /// <param name="data">The encoded bytes.</param>
     /// <param name="options">Optional settings.</param>
     /// <returns>Format, frames, metadata.</returns>

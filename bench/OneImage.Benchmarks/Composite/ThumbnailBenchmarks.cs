@@ -84,7 +84,7 @@ public class ThumbnailWebPBenchmarks
     public int OneImage()
     {
         using var ms = new MemoryStream(64 << 10);
-        global::OneImage.Image.Thumbnail(_jpeg, 400).Save(ms, new global::OneImage.WebPFormat(), new SaveOptions { EncoderOptions = new global::OneImage.WebPEncoderOptions { Quality = 75 } });
+        global::OneImage.Image.Thumbnail(_jpeg, 400).Save(ms, global::OneImage.WebPFormat.Instance, new SaveOptions { EncoderOptions = new global::OneImage.WebPEncoderOptions { Quality = 75 } });
         return (int)ms.Length;
     }
 

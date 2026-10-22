@@ -45,7 +45,7 @@ internal static class CodecTargets
 
     public static void Gif(ReadOnlySpan<byte> data) => Run(GifFormat.Instance, data);
 
-    public static void WebP(ReadOnlySpan<byte> data) => Run(new WebPFormat(), data);
+    public static void WebP(ReadOnlySpan<byte> data) => Run(WebPFormat.Instance, data);
 
     private static void Run(IImageFormat format, ReadOnlySpan<byte> data)
     {

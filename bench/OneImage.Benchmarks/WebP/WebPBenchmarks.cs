@@ -199,7 +199,7 @@ public class WebPEncodeBenchmarks : IDisposable
     public int OneImageLib()
     {
         using var ms = new MemoryStream();
-        Src.Ours.Save(ms, new WebPFormat(), new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = Lossless } });
+        Src.Ours.Save(ms, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = Lossless } });
         return (int)ms.Length;
     }
 

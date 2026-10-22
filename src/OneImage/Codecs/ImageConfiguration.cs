@@ -120,7 +120,7 @@ internal static class DefaultCodecs
         configuration.Add(PngFormat.Instance);
         configuration.Add(BmpFormat.Instance);
         configuration.Add(IcoFormat.Instance);
-        configuration.Add(new WebPFormat());
+        configuration.Add(WebPFormat.Instance);
         configuration.Add(GifFormat.Instance);
     }
 }

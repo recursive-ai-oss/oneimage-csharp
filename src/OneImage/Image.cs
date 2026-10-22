@@ -132,11 +132,11 @@ public sealed partial class Image
             format);
     }
 
-    /// <summary>Copies frame 0 into a mutable <see cref="Canvas"/>. Tiles are computed lazily on first touch and cached under the global budget until written.</summary>
+    /// <summary>Copies frame 0 into a mutable <see cref="Canvas"/>; the other frames of an animated or multi-page image are ignored (use <c>Frames[i].ToImage().ToCanvas()</c> for those). Tiles are computed lazily on first touch and cached under the global budget until written.</summary>
     /// <returns>A canvas; dispose it when done.</returns>
     public Canvas ToCanvas() => new(_frames[0].Node);
 
-    /// <summary>Computes a rectangle of frame 0; see <see cref="ImageFrame.CopyPixelsTo{T}"/>.</summary>
+    /// <summary>Computes a rectangle of frame 0 only; for another frame use <c>Frames[i].CopyPixelsTo</c>. See <see cref="ImageFrame.CopyPixelsTo{T}"/>.</summary>
     /// <typeparam name="T">The pixel struct.</typeparam>
     /// <param name="destination">Receives the pixels.</param>
     /// <param name="rect">The rectangle.</param>
@@ -145,7 +145,7 @@ public sealed partial class Image
     public void CopyPixelsTo<T>(Span<T> destination, ImageRect rect, int maxDegree = 0, CancellationToken cancellationToken = default)
         where T : unmanaged, IPixel<T> => _frames[0].CopyPixelsTo(destination, rect, maxDegree, cancellationToken);
 
-    /// <summary>Computes frame 0 as an array; see <see cref="ImageFrame.ToArray{T}"/>.</summary>
+    /// <summary>Computes frame 0 only as an array; for another frame use <c>Frames[i].ToArray</c>. See <see cref="ImageFrame.ToArray{T}"/>.</summary>
     /// <typeparam name="T">The pixel struct.</typeparam>
     /// <param name="cancellationToken">Cancels the computation.</param>
     /// <param name="maxDegree">Most threads to use; 0 means the default.</param>

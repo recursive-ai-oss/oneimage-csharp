@@ -41,7 +41,7 @@ public sealed class WebPTiming
         Assert.SkipUnless(path != null, "report only");
         var lines = new List<string>();
         (string name, byte[] rgba, int w, int h) = WebPCorpus.Photos(large: true).First(p => p.Name == "plasma-large");
-        var fmt = new WebPFormat();
+        var fmt = WebPFormat.Instance;
         foreach (bool lossless in new[] { false, true })
         {
             byte[] file = WebPOracle.SkiaEncode(rgba, w, h, lossless, 75);
@@ -85,7 +85,7 @@ public sealed class WebPTiming
         string? mode = Environment.GetEnvironmentVariable("ONEIMAGE_WEBP_SPIN");
         Assert.SkipUnless(mode != null, "profiling only");
         (_, byte[] rgba, int w, int h) = WebPCorpus.Photos(large: true).First(p => p.Name == "plasma-large");
-        var fmt = new WebPFormat();
+        var fmt = WebPFormat.Instance;
         bool lossless = mode!.StartsWith("lossless", StringComparison.Ordinal);
         byte[] file = WebPOracle.SkiaEncode(rgba, w, h, lossless, 75);
         Image src = Image.FromPixels<Rgba32>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Rgba32>(rgba), w, h);

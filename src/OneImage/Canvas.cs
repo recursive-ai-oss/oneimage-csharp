@@ -100,7 +100,7 @@ public sealed class Canvas : IDisposable
     /// <param name="rect">The rectangle, inside the canvas.</param>
     /// <param name="access">The intended use.</param>
     /// <returns>The lock; dispose it to commit.</returns>
-    /// <exception cref="ArgumentException"><typeparamref name="T"/> is not the canvas format.</exception>
+    /// <exception cref="ArgumentException"><typeparamref name="T"/> is not the canvas format. The message names the canvas format, the matching pixel type, and the converting alternatives (<see cref="CopyTo{T}"/>, <see cref="Image.ToArray{T}"/>).</exception>
     /// <exception cref="ArgumentOutOfRangeException">The rectangle is outside the canvas.</exception>
     public PixelLock<T> Lock<T>(ImageRect rect, LockAccess access)
         where T : unmanaged, IPixel<T>
@@ -109,7 +109,10 @@ public sealed class Canvas : IDisposable
         CheckRect(rect);
         if (T.Format != Format)
         {
-            throw new ArgumentException($"{typeof(T).Name} is {T.Format} but the canvas is {Format}.", nameof(T));
+            throw new ArgumentException(
+                $"This canvas is {Format}, so Lock<T> needs {MatchingPixelType(Format)}, not {typeof(T).Name} ({T.Format}). "
+                + "Lock never converts; to read in another pixel type use CopyTo<T> on the canvas or Image.ToArray<T>() on a Snapshot().",
+                nameof(T));
         }
 
         int bpp = Format.BytesPerPixel;
@@ -324,5 +327,23 @@ public sealed class Canvas : IDisposable
                 }
             }
         }
+    }
+
+    private static string MatchingPixelType(PixelFormat f)
+    {
+        if (f == PixelFormat.Gray8) return nameof(Gray8);
+        if (f == PixelFormat.GrayAlpha8) return nameof(GrayAlpha8);
+        if (f == PixelFormat.Gray16) return nameof(Gray16);
+        if (f == PixelFormat.GrayF32) return nameof(GrayFloat);
+        if (f == PixelFormat.Rgb8) return nameof(Rgb24);
+        if (f == PixelFormat.Rgba8) return nameof(Rgba32);
+        if (f == PixelFormat.Rgb16) return nameof(Rgb48);
+        if (f == PixelFormat.Rgba16) return nameof(Rgba64);
+        if (f == PixelFormat.RgbaF16) return nameof(RgbaHalf);
+        if (f == PixelFormat.RgbF32) return nameof(RgbFloat);
+        if (f == PixelFormat.RgbaF32) return nameof(RgbaFloat);
+        if (f == PixelFormat.Cmyk8) return nameof(Cmyk32);
+        if (f == PixelFormat.LabF32) return nameof(LabFloat);
+        return "a pixel type of that format";
     }
 }

@@ -27,7 +27,7 @@ public class GifToWebPTests
 
         Image resized = Image.Load(gif).Resize(width: 60);
         using var ms = new MemoryStream();
-        resized.Save(ms, new WebPFormat(), new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = true } });
+        resized.Save(ms, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = true } });
 
         Image back = Image.Load(ms.ToArray());
         Assert.Equal(n, back.FrameCount);

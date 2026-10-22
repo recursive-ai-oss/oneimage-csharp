@@ -514,4 +514,70 @@ public sealed class DocsExamples : IDisposable
         Assert.Equal(PixelFormat.Rgb8, reduced.Format);
         reduced.Save(P("p16.png"), new SaveOptions { EncoderOptions = new PngEncoderOptions { ColorMode = PngColorMode.Indexed } });
     }
+
+    [Fact]
+    public void Filters()
+    {
+        Image img = Image.Load(MakePhoto(exif: false));
+
+        Assert.Equal(600, img.GaussianBlur(sigma: 2).Width);
+        Assert.Equal(600, img.GaussianBlur(sigma: 4, sigmaY: 0).Width);
+        Assert.Equal(600, img.BoxBlur(radius: 3).Width);
+        Assert.Equal(600, img.Sharpen(amount: 1.5, radius: 1.2, threshold: 0.02, linear: false).Width);
+        Assert.Equal(600, img.Median(radius: 1).Width);
+        Image edges = img.Sobel();
+        Assert.Equal(PixelFormat.Gray8, edges.Format);
+        Image kernel = img.Convolve(new float[,] { { 0, -1, 0 }, { -1, 5, -1 }, { 0, -1, 0 } });
+        Assert.Equal(400, kernel.Height);
+        edges.Save(P("edges.png"));
+
+        // A flat image has no edges and is unchanged by a blur.
+        var flat = new Rgb24[32 * 32];
+        Array.Fill(flat, new Rgb24(100, 150, 200));
+        Image f = Image.FromPixels<Rgb24>(flat, 32, 32);
+        Assert.All(f.GaussianBlur(3).ToArray<Rgb24>(), p => Assert.Equal(new Rgb24(100, 150, 200), p));
+        Assert.All(f.Sobel().ToArray<Gray8>(), p => Assert.Equal(0, p.V));
+
+        // Filters work on every frame.
+        Image anim = Image.Load(MakeAnimation("f.gif"));
+        Assert.Equal(5, anim.GaussianBlur(1).FrameCount);
+    }
+
+    [Fact]
+    public void Analysis()
+    {
+        var px = new Rgba32[10 * 10];
+        Array.Fill(px, new Rgba32(10, 20, 30, 255));
+        px[0] = new Rgba32(250, 0, 0, 0); // one fully transparent pixel
+        Image img = Image.FromPixels<Rgba32>(px, 10, 10);
+
+        ImageHistogram hist = img.Histogram();
+        Assert.Equal(4, hist.ChannelCount);
+        Assert.Equal(99, hist[0, 10]);
+        ReadOnlySpan<long> green = hist.Channel(1);
+        Assert.Equal(99, green[20]);
+        Assert.Equal(99, img.Histogram(skipTransparent: true)[0, 10]);
+        Assert.Equal(99, img.Histogram(skipTransparent: true).PixelCount);
+
+        ImageStatistics stats = img.Statistics();
+        ChannelStatistics red = stats.Channels[0];
+        Assert.Equal(250, red.Max);
+        Assert.Equal(10, red.Min);
+        Assert.Equal(100, red.Count);
+        Assert.Equal(10, img.Statistics(skipTransparent: true).Channels[0].Mean);
+
+        // Other frames through Frames[i].
+        Image anim = Image.Load(MakeAnimation("a2.gif"));
+        Assert.Equal(120 * 60, anim.Frames[2].Histogram().PixelCount);
+    }
+
+    [Fact]
+    public void LockMismatchMessage()
+    {
+        using var canvas = new Canvas(10, 10, PixelFormat.Rgb8);
+        var ex = Assert.Throws<ArgumentException>(() => canvas.Lock<Rgba32>(new ImageRect(0, 0, 4, 4), LockAccess.Read));
+        Assert.Contains("Rgb24", ex.Message);
+        Assert.Contains("CopyTo", ex.Message);
+        Assert.Contains("ToArray", ex.Message);
+    }
 }

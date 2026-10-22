@@ -206,7 +206,7 @@ public class PngGateBenchmarks : IDisposable
     public int PngToWebPOneImage()
     {
         using var ms = new MemoryStream();
-        OI.Image.Load(_png).Save(ms, new OI.WebPFormat(), new OI.SaveOptions { EncoderOptions = new OI.WebPEncoderOptions { Quality = 75 } });
+        OI.Image.Load(_png).Save(ms, OI.WebPFormat.Instance, new OI.SaveOptions { EncoderOptions = new OI.WebPEncoderOptions { Quality = 75 } });
         return (int)ms.Length;
     }
 

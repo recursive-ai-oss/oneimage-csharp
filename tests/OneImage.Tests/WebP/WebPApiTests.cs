@@ -9,7 +9,7 @@ namespace OneImage.Tests.WebP;
 /// <summary>WebP through the public Load/Save API: formats, metadata, determinism.</summary>
 public sealed class WebPApiTests
 {
-    private static readonly WebPFormat Format = new();
+    private static readonly WebPFormat Format = WebPFormat.Instance;
 
     private static Image Photo(int w, int h, int seed, bool alpha) =>
         Image.FromPixels<Rgba32>(MemoryMarshal.Cast<byte, Rgba32>(WebPOracle.MakeImage(w, h, seed, alpha)), w, h);
@@ -221,7 +221,7 @@ public sealed class WebPHiddenColorTests
         Image img = Image.FromPixels<Rgba32>(px, 2, 2);
         Assert.Equal(px, img.ToArray<Rgba32>());
         using var ms = new MemoryStream();
-        img.Save(ms, new WebPFormat(), new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = true } });
+        img.Save(ms, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = true } });
         Assert.Equal(px, Image.Load(ms.ToArray()).ToArray<Rgba32>());
     }
 }

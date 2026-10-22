@@ -7,7 +7,7 @@ namespace OneImage.Tests.WebP;
 /// <summary>Hostile input: every failure must be a typed exception, quickly, without large allocations.</summary>
 public sealed class WebPRobustnessTests
 {
-    private static readonly WebPFormat Format = new();
+    private static readonly WebPFormat Format = WebPFormat.Instance;
 
     private static byte[] Encode(byte[] rgba, int w, int h, bool lossless, int quality = 75)
     {

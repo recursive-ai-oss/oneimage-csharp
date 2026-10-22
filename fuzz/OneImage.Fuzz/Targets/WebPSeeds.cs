@@ -40,7 +40,7 @@ internal static class WebPSeeds
 
     private static void Save(Image image, string path, bool lossless, int quality)
     {
-        image.Save(path, new SaveOptions { Format = new WebPFormat(), EncoderOptions = new WebPEncoderOptions { Lossless = lossless, Quality = quality } });
+        image.Save(path, new SaveOptions { Format = WebPFormat.Instance, EncoderOptions = new WebPEncoderOptions { Lossless = lossless, Quality = quality } });
     }
 
     private static Image Picture(int w, int h, bool alpha, int seed)
