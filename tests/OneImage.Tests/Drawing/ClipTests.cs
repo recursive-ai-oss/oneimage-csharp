@@ -175,6 +175,26 @@ public class ClipTests
         Assert.Equal(expected, eight);
         c.Clip(path, ops);
         Assert.Equal(expected, c.Snapshot().ToArray<Rgba32>());
+        // Canvas.Clip takes its degree from the engine settings: one thread and eight must write identical bytes.
+        int callDegree = ImageEngine.DefaultCallDegree;
+        int maxDegree = ImageEngine.MaxDegree;
+        try
+        {
+            ImageEngine.MaxDegree = 8;
+            foreach (int degree in new[] { 1, 8 })
+            {
+                ImageEngine.DefaultCallDegree = degree;
+                using Canvas d = CanvasOf(opaque);
+                d.Clip(path, ops);
+                Assert.Equal(expected, d.Snapshot().ToArray<Rgba32>());
+            }
+        }
+        finally
+        {
+            ImageEngine.MaxDegree = maxDegree;
+            ImageEngine.DefaultCallDegree = callDegree;
+        }
+
         // The snapshot taken before still shows the old pixels.
         Assert.Equal(Pattern(opaque)[(5 * W) + 5], snapshot.ToArray<Rgba32>()[(5 * W) + 5]);
     }
