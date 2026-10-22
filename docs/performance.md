@@ -3,7 +3,9 @@
 OneImage is faster than ImageSharp 3.1.12 on every task in the benchmark
 set except one that is a tie, and one where ImageSharp does less work
 (CMYK, below). It is not faster than every native wrapper, and on peak
-memory it has one exception and several ties. This page prints all of
+memory it has one exception and several ties. Drawing and clipping
+against ImageSharp.Drawing have two exceptions of their own
+([below](#drawing-and-clipping-exceptions)). This page prints all of
 it: the table, the ties, the losses and the method.
 
 Every number here comes from the reports in
@@ -131,6 +133,35 @@ Notes:
 - **jpeg-encode** uses optimized Huffman tables by default (smaller
   files), which costs extra work. The gap to NetVips shrank from
   2.72× to 1.58× after the last fixes and is a goal, not a gate.
+
+## Drawing and clipping exceptions
+
+The drawing operations are compared with ImageSharp.Drawing 2.1.7 in
+`bench/OneImage.Benchmarks/Drawing` (BenchmarkDotNet with the memory
+diagnoser, 2000 x 2000 RGBA, .NET 10.0.11, X64 AVX-512). These were
+local smoke runs on a shared workstation with a load of 4.7 at the
+start, rising to about 10, so treat them as rough. Fills, strokes and
+brushes are faster with less allocation on every row; see
+[drawing.md](drawing.md). Clipping has two exceptions:
+
+| Row | OneImage | ImageSharp.Drawing | Allocated (OneImage vs ImageSharp) | |
+|---|--:|--:|---|---|
+| union of 200 circles | 7.2 ms | 11.1 ms | 3.2 MB vs 23 MB | faster, less |
+| star minus a 1000-point polygon | 158 µs | 134 µs | 33 KB vs 205 KB | **slower** (exception) |
+| blur clipped to a circle, lazy `Image` | 12.3 ms | 56 ms | 52 KB vs 423 KB | faster, less |
+| blur clipped to a circle, in place on a `Canvas` | 13.4 ms | 56 ms | 9.6 MB vs 423 KB | **more allocation** (exception) |
+
+- **Star minus a 1000-point polygon is 1.18× slower.** The time is
+  split evenly between finding crossings and the sweep. The boolean
+  engine works in exact integer arithmetic on a 1/256-pixel grid, and
+  for an input this small the candidate-pair search costs more than it
+  saves. It allocates a sixth as much.
+- **`Canvas.Clip` allocates 9.6 MB, where the `Image` path allocates
+  52 KB.** `Canvas.Clip` reads the canvas through a snapshot, so every
+  tile it rewrites is a fresh copy, and the replaced tiles go to the
+  garbage collector instead of back to the tile pool. The lazy `Image`
+  path shows the work itself needs little memory. This is on the list
+  for the next release.
 
 ## AVX-512 (information)
 
