@@ -30,6 +30,7 @@ internal static class Program
         ["svg-xml"] = SvgXmlTarget.Run,
         ["font"] = FontTarget.Run,
         ["breaking"] = BreakingTarget.Run,
+        ["bidi"] = BidiTarget.Run,
         ["brotli"] = BrotliTarget.Run,
         ["richtext"] = RichTextTarget.Run,
         ["sysfont"] = SysFontTarget.Run,
@@ -40,6 +41,12 @@ internal static class Program
         if (args.Length == 2 && args[0] == "seeds-webp")
         {
             WebPSeeds.Write(args[1]);
+            return 0;
+        }
+
+        if (args.Length == 3 && args[0] == "seeds-bidi")
+        {
+            BidiTarget.WriteSeeds(args[1], args[2]);
             return 0;
         }
 

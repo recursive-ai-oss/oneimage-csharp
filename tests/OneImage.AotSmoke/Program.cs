@@ -505,5 +505,25 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Right-to-left text: joined Arabic, Hebrew and a mixed-direction line through the bidirectional algorithm and the Arabic shaper.
+{
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily bidi = fonts.Add(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSans-Bidi-Subset.ttf"));
+    var rtl = new OneImage.Text.TextOptions(bidi.CreateFont(28)) { Origin = new System.Numerics.Vector2(6, 4), WrappingLength = 180 };
+    string mixed = "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645 abc 123 \u05E9\u05DC\u05D5\u05DD";
+    var arabicPixels = new Rgba32[200 * 120];
+    Array.Fill(arabicPixels, new Rgba32(255, 255, 255, 255));
+    Rgba32[] drawnRtl = Image.FromPixels<Rgba32>(arabicPixels, 200, 120)
+        .DrawText(mixed, rtl, OneImage.Drawing.Brush.Solid(new Rgba32(0, 0, 0, 255))).ToArray<Rgba32>();
+    OneImage.Text.TextMetrics m = OneImage.Text.TextMeasurer.Measure(mixed, rtl);
+    float joined = OneImage.Text.TextMeasurer.MeasureAdvance("\u0628\u0628\u0628", new OneImage.Text.TextOptions(bidi.CreateFont(28))).Width;
+    float isolated = OneImage.Text.TextMeasurer.MeasureAdvance("\u0628 \u0628 \u0628", new OneImage.Text.TextOptions(bidi.CreateFont(28))).Width;
+    if (!drawnRtl.Any(p => p.R < 100) || m.Lines.Count < 1 || joined <= 0 || joined >= isolated)
+    {
+        Console.Error.WriteLine("right-to-left text smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

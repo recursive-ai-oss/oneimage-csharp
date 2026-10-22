@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `OneImage.Text`: right-to-left text. The Unicode Bidirectional Algorithm (UAX #9, Unicode 17) runs per paragraph, lines are reordered after wrapping, and `TextOptions.TextDirection` (`Auto`, `LeftToRight`, `RightToLeft`) sets the base direction. `TextAlignment.Start` and `End` follow the paragraph direction. Left-to-right text without right-to-left characters skips the algorithm.
+- `OneImage.Text`: an Arabic joining shaper (also used for Syriac and N'Ko) with per-glyph form features, and Hebrew with points and cantillation marks.
+- Tests run the official `BidiTest.txt` and `BidiCharacterTest.txt` in full and compare glyphs and layout with SixLabors.Fonts 2.1.3; a `bidi` fuzz target covers mixed-direction text.
+
 ## [1.2.0] - 2026-10-22
 
 ### Added

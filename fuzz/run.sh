@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg font breaking brotli richtext sysfont svg-xml   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg font breaking bidi brotli richtext sysfont svg-xml   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -49,6 +49,7 @@ case "$target" in
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
   font)    seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc *.woff *.woff2'; maxlen=262144 ;;
   breaking) seeds='';         prefix='';     patterns='';      maxlen=2050 ;;
+  bidi)    seeds='';         prefix='';     patterns='';      maxlen=2050 ;;
   brotli)  seeds=brotli;      prefix='';     patterns='*.compressed'; maxlen=262144 ;;
   richtext) seeds='';         prefix='';     patterns='';      maxlen=2200 ;;
   svg-xml) seeds='';          prefix='';     patterns='';      maxlen=16384 ;;
@@ -60,6 +61,7 @@ bin="$work/bin/$target"
 mkdir -p "$bin"
 # The layout part of the breaking target needs a font with kana and ideographs.
 export ONEIMAGE_FUZZ_FONT="$root/tests/testdata/fonts/NotoSansCJK-Subset.otf"
+export ONEIMAGE_FUZZ_BIDI_FONT="$root/tests/testdata/fonts/NotoSans-Bidi-Subset.ttf"
 
 # Build once per run: release, then instrument only the library assembly (the harness itself needs no coverage).
 "$dotnet_bin" build "$root/fuzz/OneImage.Fuzz/OneImage.Fuzz.csproj" -c Release -v quiet -clp:NoSummary -o "$bin"
@@ -79,13 +81,16 @@ export DOTNET_ROOT="${DOTNET_ROOT:-$(dirname "$(readlink -f "$(command -v "$dotn
 if [[ "$target" == webp && -z "$(ls -A "$work/webp-seeds" 2>/dev/null)" ]]; then
   ONEIMAGE_FUZZ_TARGET=webp "$dotnet_bin" "$bin/OneImage.Fuzz.dll" seeds-webp "$work/webp-seeds" >/dev/null
 fi
+if [[ "$target" == bidi && -z "$(ls -A "$work/bidi-seeds" 2>/dev/null)" ]]; then
+  ONEIMAGE_FUZZ_TARGET=bidi "$dotnet_bin" "$bin/OneImage.Fuzz.dll" seeds-bidi "$root/tests/testdata/unicode/BidiCharacterTest.txt" "$work/bidi-seeds" >/dev/null
+fi
 if [[ "$target" == breaking && -z "$(ls -A "$work/breaking-seeds" 2>/dev/null)" ]]; then
   for f in LineBreakTest.txt GraphemeBreakTest.txt; do
     ONEIMAGE_FUZZ_TARGET=breaking "$dotnet_bin" "$bin/OneImage.Fuzz.dll" seeds-breaking "$root/tests/testdata/unicode/$f" "$work/breaking-seeds" >/dev/null
   done
 fi
 "$instrument" "$bin/OneImage.dll" >/dev/null
-[[ "$target" != font && "$target" != breaking && "$target" != brotli && "$target" != richtext && "$target" != sysfont ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
+[[ "$target" != font && "$target" != breaking && "$target" != bidi && "$target" != brotli && "$target" != richtext && "$target" != sysfont ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
 [[ "$target" != svg-xml ]] || "$instrument" "$bin/OneImage.Svg.dll" >/dev/null
 
 corpus="$work/corpus/$target"
@@ -111,6 +116,7 @@ if [[ "$target" == svg-xml ]]; then
   done < <(find "$root/tests/testdata/resvg" \( -name '*.svg' -o -name '*.svgz' \) -size -16k | sort)
 fi
 [[ "$target" != breaking ]] || cp -n "$work"/breaking-seeds/* "$corpus"/ 2>/dev/null || true
+[[ "$target" != bidi ]] || cp -n "$work"/bidi-seeds/* "$corpus"/ 2>/dev/null || true
 # Hand-written seeds for surfaces with no data files: a tiny LZW stream (GIF clear, 'A', end) and a minimal EXIF block.
 case "$target" in
   webp)

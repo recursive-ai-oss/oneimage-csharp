@@ -15,4 +15,4 @@ Image img = Image.Load("photo.jpg")
     .DrawText("Hello, world", new TextOptions(font) { Origin = new(40, 60) }, Brush.Solid(new Rgba32(255, 255, 255, 255)));
 ```
 
-Text is shaped with OpenType GSUB/GPOS (ligatures, kerning, marks) for Latin, Greek and Cyrillic and wrapped with the Unicode line breaking algorithm. Rich-text runs, decorations, font fallback, text on a path and installed fonts are included. The [text guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.2.0/docs/text.md) covers the API, units, defaults and the differences from SixLabors.Fonts.
+Text is shaped with OpenType GSUB/GPOS (ligatures, kerning, marks) for Latin, Greek, Cyrillic, Arabic and Hebrew (with the Unicode bidirectional algorithm, so mixed left-to-right and right-to-left paragraphs lay out correctly) and wrapped with the Unicode line breaking algorithm. Rich-text runs, decorations, font fallback, text on a path and installed fonts are included. The [text guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.2.0/docs/text.md) covers the API, units, defaults and the differences from SixLabors.Fonts.

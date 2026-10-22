@@ -1,7 +1,7 @@
-Copyright 2015 Google LLC (Noto Sans); Copyright 2014-2021 Adobe (Noto Sans CJK). All Rights Reserved.
+Copyright 2015 Google LLC (Noto Sans); Copyright 2014-2021 Adobe (Noto Sans CJK); Copyright 2015-2020 Google LLC (Noto Sans Arabic); Copyright 2019 Google Inc. (Noto Sans Hebrew). All Rights Reserved.
 
 These Font Software files are licensed under the SIL Open Font License, Version 1.1.
-They are subsets of the original fonts (fewer glyphs, hinting removed; NotoSans-Subset-Bold-kern also carries a synthetic kern table).
+They are subsets of the original fonts (fewer glyphs, hinting removed; NotoSans-Subset-Bold-kern also carries a synthetic kern table). NotoSans-Bidi-Subset.ttf merges the Noto Sans, Noto Sans Arabic and Noto Sans Hebrew subsets into one font so that tests can compare mixed-direction text without font fallback.
 
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
