@@ -10,10 +10,6 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
-  <PropertyGroup Condition="$(ImageSharpVersion.StartsWith('4'))">
-    <DefineConstants>$(DefineConstants);IMAGESHARP4</DefineConstants>
-  </PropertyGroup>
-
   <ItemGroup>
     <Using Include="System" />
   </ItemGroup>
