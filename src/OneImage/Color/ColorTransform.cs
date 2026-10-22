@@ -110,7 +110,12 @@ internal sealed class StagePipeline
 /// </summary>
 internal sealed class ColorTransform
 {
-    private static readonly ConcurrentDictionary<(ColorProfile, ColorProfile, RenderingIntent, bool), ColorTransform> s_cache = new();
+    /// <summary>Most transforms kept for reuse. Each holds lookup tables of up to a couple of megabytes, so the cache must not grow with the number of distinct profiles a long-running process meets.</summary>
+    internal const int MaxCachedTransforms = 32;
+
+    private static readonly object s_gate = new();
+    private static readonly Dictionary<(string, string, RenderingIntent, bool), LinkedListNode<(( string, string, RenderingIntent, bool) Key, ColorTransform Value)>> s_cache = new();
+    private static readonly LinkedList<((string, string, RenderingIntent, bool) Key, ColorTransform Value)> s_recent = new();
     private static readonly ConcurrentDictionary<(ColorModel, ColorModel), ColorTransform> s_defaults = new();
 
     private readonly StagePipeline _exact;
@@ -150,7 +155,37 @@ internal sealed class ColorTransform
             throw new ArgumentOutOfRangeException(nameof(intent));
         }
 
-        return s_cache.GetOrAdd((source, destination, intent, blackPointCompensation), static k => Build(k.Item1, k.Item2, k.Item3, k.Item4));
+        // Keyed by profile content, not instance: the same embedded profile met in many images shares one transform, and
+        // the least recently used transform is dropped once the cache is full.
+        (string, string, RenderingIntent, bool) key = (source.ContentKey, destination.ContentKey, intent, blackPointCompensation);
+        lock (s_gate)
+        {
+            if (s_cache.TryGetValue(key, out var node))
+            {
+                s_recent.Remove(node);
+                s_recent.AddFirst(node);
+                return node.Value.Value;
+            }
+        }
+
+        // Built outside the lock; two threads may build the same transform once, which is harmless.
+        ColorTransform built = Build(source, destination, intent, blackPointCompensation);
+        lock (s_gate)
+        {
+            if (s_cache.TryGetValue(key, out var existing))
+            {
+                return existing.Value.Value;
+            }
+
+            s_cache[key] = s_recent.AddFirst((key, built));
+            while (s_cache.Count > MaxCachedTransforms)
+            {
+                s_cache.Remove(s_recent.Last!.Value.Key);
+                s_recent.RemoveLast();
+            }
+        }
+
+        return built;
     }
 
     /// <summary>The conversion used when only color models are known: default profiles, relative colorimetric with black point compensation.</summary>

@@ -29,12 +29,14 @@ public sealed class ColorProfile
     private static readonly ConcurrentDictionary<string, ColorProfile> s_builtIn = new();
 
     private readonly Lazy<ColorProfile?> _linear;
+    private readonly Lazy<string> _contentKey;
 
     private ColorProfile(byte[] icc, IccData data, Func<ColorProfile?>? linear)
     {
         IccBytes = icc;
         Data = data;
         _linear = new Lazy<ColorProfile?>(linear ?? (() => LinearOf(this)));
+        _contentKey = new Lazy<string>(() => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(IccBytes.Span)));
     }
 
     /// <summary>Gets the sRGB profile (IEC 61966-2-1 primaries and transfer curve) in the smallest form that carries it: an ICC v4 profile of about 500 bytes. Use it to embed on thumbnails.</summary>
@@ -106,6 +108,9 @@ public sealed class ColorProfile
     /// or <see langword="null"/> for table-based, CMYK and Lab profiles, where "linear" has no single meaning.
     /// </summary>
     public ColorProfile? LinearVariant => _linear.Value;
+
+    /// <summary>Gets a key that is equal for profiles with identical bytes, so equal embedded profiles from different images share cached transforms.</summary>
+    internal string ContentKey => _contentKey.Value;
 
     internal IccData Data { get; }
 
