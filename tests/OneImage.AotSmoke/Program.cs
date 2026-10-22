@@ -438,5 +438,28 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// WOFF 2.0 (our own Brotli decoder, transformed glyf, a collection) and COLR color glyphs.
+{
+    string dir = Path.Combine(AppContext.BaseDirectory, "fonts");
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily w2 = fonts.Add(Path.Combine(dir, "NotoSans-Subset-Regular.woff2"));
+    int faces = new OneImage.Text.FontCollection().AddCollection(Path.Combine(dir, "NotoSans-Subset.woff2")).Count;
+    OneImage.Text.FontFamily color = fonts.Add(Path.Combine(dir, "OneImageColorTest-V0.ttf"));
+    var options = new OneImage.Text.TextOptions(color.CreateFont(60))
+    {
+        Origin = new System.Numerics.Vector2(4, 4),
+        ColorFontSupport = OneImage.Text.ColorFontSupport.MicrosoftColrFormat,
+    };
+    var layerPx = new Rgba32[200 * 100];
+    Array.Fill(layerPx, new Rgba32(255, 255, 255, 255));
+    Rgba32[] drawn = Image.FromPixels<Rgba32>(layerPx, 200, 100).DrawText("\u2600\u2601", options, new Rgba32(0, 0, 0, 255)).ToArray<Rgba32>();
+    float width = OneImage.Text.TextMeasurer.MeasureAdvance("Hag", new OneImage.Text.TextOptions(w2.CreateFont(30))).Width;
+    if (faces != 2 || width <= 0 || !drawn.Any(p => p.B > 200 && p.R < 60) || !drawn.Any(p => p.G > 130 && p.R < 60 && p.B < 80))
+    {
+        Console.Error.WriteLine("woff2 and color font smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

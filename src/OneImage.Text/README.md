@@ -1,6 +1,6 @@
 # OneImage.Text
 
-Fonts and text for [OneImage](https://github.com/recursive-ai-oss/oneimage-csharp): load TrueType, OpenType (CFF), TrueType Collection and WOFF fonts, measure and lay out text, and draw it on an `Image` or `Canvas` through the vector drawing layer. Pure C# with no dependency beyond OneImage and .NET.
+Fonts and text for [OneImage](https://github.com/recursive-ai-oss/oneimage-csharp): load TrueType, OpenType (CFF), TrueType Collection, WOFF and WOFF2 fonts, draw COLR color glyphs, measure and lay out text, and draw it on an `Image` or `Canvas` through the vector drawing layer. Pure C# with no dependency beyond OneImage and .NET.
 
 ```csharp
 using OneImage;

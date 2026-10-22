@@ -28,6 +28,8 @@ Adobe), made by `tools/TextFonts/make-test-fonts.py`: fewer glyphs, hinting remo
 table. The fonts are licensed under the SIL Open Font License 1.1; the license text is `tests/testdata/fonts/OFL.txt`. They are
 used only by the test and benchmark projects and are not part of the shipped package.
 
+The `.woff2` files next to them are the same subsets converted with the reference WOFF2 compressor (`tools/TextFonts/make-woff2-fonts.py`; one also carries the optional `hmtx` transform), under the same license. `OneImageColorTest-V0.ttf` and `-V1.ttf` are fonts of geometric shapes drawn by `tools/TextFonts/make-color-fonts.py` (COLR and CPAL tables); they contain no third-party glyphs and are covered by this project's licenses.
+
 `tests/testdata/fonts/NotoSans-Shaping-Subset.ttf` is a further Noto Sans subset (Copyright 2015 Google LLC, SIL Open Font License 1.1, same license text) made by `tools/TextFonts/make-shaping-fonts.py`: Latin, Greek, Cyrillic and the combining marks, hinting removed, with all of the font's GSUB, GPOS and GDEF layout kept. It is used only by the test and benchmark projects.
 
 ## Unicode Character Database (generated tables and test data)
@@ -76,3 +78,9 @@ files of the same release; only the test project reads them. The data files are 
     not be used in advertising or otherwise to promote the sale, use or other
     dealings in these Data Files or Software without prior written
     authorization of the copyright holder.
+
+## Brotli (static dictionary and test data)
+
+`src/OneImage.Text/Compression/brotli-dictionary.bin` is the static dictionary of RFC 7932 (Appendix A, 122,784 bytes), and `BrotliTables.cs` holds the word transforms of its Appendix B and the context lookup tables of its section 7.1, all extracted from the RFC text by `tools/BrotliTables/gen.py`. The RFC is published by the IETF Trust under its license for code components; the dictionary is also distributed by the Brotli project under the MIT license below. The decoder itself is written from the RFC.
+
+The files in `tests/testdata/brotli/` are test vectors from the Brotli project's `tests/testdata` (Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors), used under the MIT license whose text is in `tests/testdata/brotli/LICENSE`. They are used only by the test project.

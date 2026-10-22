@@ -138,8 +138,17 @@ public class ColorFontTests
         Rgba32[] a = Blank(900, 140).DrawText(Sample, off, Red).ToArray<Rgba32>();
         Rgba32[] b = Blank(900, 140).Fill(Red, TextBuilder.GeneratePath(Sample, off)).ToArray<Rgba32>();
         Assert.Equal(b, a);
-        Assert.Equal(ColorFontSupport.None, new TextOptions(Load(V0, 20)).ColorFontSupport);
+        Assert.Equal(ColorFontSupport.MicrosoftColrFormat, new TextOptions(Load(V0, 20)).ColorFontSupport);      // the default, as in SixLabors.Fonts
+        Assert.Equal(ColorFontSupport.None, new TextOptions(Load(V0, 20)) { ColorFontSupport = ColorFontSupport.None }.Clone().ColorFontSupport);
         Assert.All(a, p => Assert.Equal(p.G, p.B));   // red on white only: no layer colors
+    }
+
+    [Fact]
+    public void ColorIsOnByDefaultAsInTheReference()
+    {
+        var o = new TextOptions(Load(V0, 100)) { Origin = new Vector2(10, 10) };
+        Rgba32[] px = Blank(300, 140).DrawText("\u2600", o, Red).ToArray<Rgba32>();
+        Assert.Contains(px, p => p is { R: 26, G: 153, B: 51 });
     }
 
     [Fact]

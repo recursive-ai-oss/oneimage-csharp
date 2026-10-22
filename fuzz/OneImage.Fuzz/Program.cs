@@ -29,6 +29,7 @@ internal static class Program
         ["svg"] = DrawingTargets.Svg,
         ["font"] = FontTarget.Run,
         ["breaking"] = BreakingTarget.Run,
+        ["brotli"] = BrotliTarget.Run,
     };
 
     private static int Main(string[] args)

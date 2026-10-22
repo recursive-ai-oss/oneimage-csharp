@@ -172,12 +172,12 @@ public sealed class TextOptions
     public TextJustification TextJustification { get; set; }
 
     /// <summary>
-    /// Gets or sets which color glyph formats are painted. The default is <see cref="ColorFontSupport.None"/>: every glyph is a
-    /// plain outline filled with the brush, as in SixLabors.Fonts. With <see cref="ColorFontSupport.MicrosoftColrFormat"/>,
-    /// <c>DrawText</c> paints the layers of COLR glyphs; measuring and layout do not change. Text-as-path (<see cref="TextBuilder.GeneratePath"/>)
-    /// is always monochrome.
+    /// Gets or sets which color glyph formats are painted. The default is <see cref="ColorFontSupport.MicrosoftColrFormat"/>, as in
+    /// SixLabors.Fonts: <c>DrawText</c> paints the layers of COLR glyphs when the font has them, and does nothing different for fonts
+    /// without. <see cref="ColorFontSupport.None"/> draws every glyph as a plain outline filled with the brush. Measuring and layout do
+    /// not depend on it, and text as a path (<see cref="TextBuilder.GeneratePath"/>) is always monochrome.
     /// </summary>
-    public ColorFontSupport ColorFontSupport { get; set; }
+    public ColorFontSupport ColorFontSupport { get; set; } = ColorFontSupport.MicrosoftColrFormat;
 
     /// <summary>
     /// Gets or sets the CPAL palette used for color glyphs, counting from 0 (the default). A number past the font's last palette

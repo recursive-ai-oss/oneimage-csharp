@@ -16,7 +16,7 @@
 
   <ItemGroup>
     <!-- The text smoke loads these next to the executable. -->
-    <Content Include="../testdata/fonts/*.ttf;../testdata/fonts/*.otf;../testdata/fonts/*.ttc;../testdata/fonts/*.woff" Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../testdata/fonts/*.ttf;../testdata/fonts/*.otf;../testdata/fonts/*.ttc;../testdata/fonts/*.woff;../testdata/fonts/*.woff2" Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

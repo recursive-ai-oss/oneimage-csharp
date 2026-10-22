@@ -27,11 +27,19 @@ Path outline = TextBuilder.GeneratePath("Hello", options);  // fill, stroke, tra
 
 ## Fonts
 
-`FontCollection` loads TrueType (glyf, quadratic) and OpenType with CFF outlines (CFF1: name-keyed and CID-keyed, local and global subroutines, flex), TrueType Collections (`AddCollection` adds every face) and WOFF 1.0 (decompressed with the library's own inflate). WOFF2, CFF2 and TrueType/Type 1 hinting are not read; a variable font draws its default instance. Add from a path, a `Stream` or memory; faces with the same family name join one `FontFamily`, one face per `FontStyle`. `FontFamily.CreateFont(size, style)` picks the closest face when the style is missing and never synthesizes bold or slant.
+`FontCollection` loads TrueType (glyf, quadratic) and OpenType with CFF outlines (CFF1: name-keyed and CID-keyed, local and global subroutines, flex), TrueType Collections (`AddCollection` adds every face) WOFF 1.0 (decompressed with the library's own inflate) and WOFF 2.0 (see [WOFF2](#woff2)). CFF2 and TrueType/Type 1 hinting are not read; a variable font draws its default instance. Add from a path, a `Stream` or memory; faces with the same family name join one `FontFamily`, one face per `FontStyle`. `FontFamily.CreateFont(size, style)` picks the closest face when the style is missing and never synthesizes bold or slant.
 
-Tables read: `cmap` (formats 0, 4, 6, 12, 13; the best Unicode subtable), `head`, `hhea`, `hmtx`, `maxp`, `OS/2`, `name`, `post`, `loca`/`glyf`, `CFF `, `kern` (format 0, Microsoft and Apple headers), `GDEF`, `GSUB` and `GPOS` (see [Shaping](#shaping)). Fonts are untrusted input: parsing is bounds-checked safe code, counts are checked against table lengths before anything is allocated, composite glyphs are flattened with an explicit stack (depth 8, 512 components), and the charstring interpreter bounds its operand stack, subroutine depth and operator count. A malformed font throws `FontFormatException` (an `ImageFormatException`), at load for the header tables and lazily, when the glyph data is first used, for the rest. Damaged `GDEF`, `GSUB` and `GPOS` tables never throw: what cannot be read is ignored (see [Shaping](#shaping)). `fuzz/run.sh font` covers all of it.
+Tables read: `cmap` (formats 0, 4, 6, 12, 13; the best Unicode subtable), `head`, `hhea`, `hmtx`, `maxp`, `OS/2`, `name`, `post`, `loca`/`glyf`, `CFF `, `kern` (format 0, Microsoft and Apple headers), `GDEF`, `GSUB` and `GPOS` (see [Shaping](#shaping)), and `COLR` and `CPAL` (see [Color fonts](#color-fonts)). Fonts are untrusted input: parsing is bounds-checked safe code, counts are checked against table lengths before anything is allocated, composite glyphs are flattened with an explicit stack (depth 8, 512 components), and the charstring interpreter bounds its operand stack, subroutine depth and operator count. A malformed font throws `FontFormatException` (an `ImageFormatException`), at load for the header tables and lazily, when the glyph data is first used, for the rest. Damaged `GDEF`, `GSUB`, `GPOS`, `COLR` and `CPAL` tables never throw: what cannot be read is ignored (see [Shaping](#shaping)). `fuzz/run.sh font` covers all of it, and `fuzz/run.sh brotli` the decompressor under WOFF2.
 
 `FontMetrics` reports design units: `Ascender`, `Descender` (negative), `LineGap`, `LineHeight`, underline and strikeout, x-height and cap height. The vertical metrics are the OS/2 typographic ones when the font sets the `USE_TYPO_METRICS` flag, else `hhea`.
+
+## WOFF2
+
+`FontCollection.Add` and `AddCollection` read WOFF 2.0 files (W3C WOFF 2.0, 2018) from a path, a stream or memory, whether they hold one font or a collection (`AddCollection` adds every face; shared tables are decoded once). Everything the format defines is read: the table directory with known and custom tags, the Brotli-compressed table block, the transformed `glyf`/`loca` pair (the streams of contour counts, points, flags, coordinates, composites, boxes and instructions, with the overlap flags) and the transformed `hmtx` (side bearings rebuilt from the glyph boxes). The metadata and private blocks are skipped. A transformed `glyf` gets a plain `loca` back in the format the header names, and `head.indexToLocFormat` is corrected if the file disagrees with itself. Reconstructed glyphs are written with plain 16-bit coordinates, so the table can be larger than the original; the outlines are the same.
+
+The decompressor is the library's own Brotli (RFC 7932, decode only, safe managed code, with the static dictionary embedded as a resource); the BCL's `BrotliDecoder` wraps a native library and is not used. The Brotli stream is untrusted like everything else in the file: the output buffer grows with the data actually produced and never to a size read from the file, and it stops at the sum of the table sizes the directory declares (each at most 128 MiB, all at most 256 MiB) and at 2048 bytes of output per input byte (plus 64 KiB), so a tiny file that declares a huge table fails with a `FontFormatException` after allocating a few kilobytes. The window is the output itself, so there is no separate history buffer. Unknown table transforms, a missing composite box, a mismatched `glyf`/`loca` pair and extra or missing table bytes are rejected, as the specification says.
+
+Measured on the 45 KB WOFF2 of the Noto Sans shaping subset (shared workstation, load 6 to 12, .NET 10.0.11, BenchmarkDotNet, local smoke numbers): loading it takes 1.0 ms and 557 KB against SixLabors.Fonts 2.1.3's 1.35 ms and 2.5 MB. The Brotli decoder alone runs at roughly 330 MB/s on text and 0.9 GB/s on font-like binary data, about half the speed of the native decoder behind `System.IO.Compression`.
 
 ## Units and layout
 
@@ -72,6 +80,23 @@ Where a wrapped line may end is decided by the Unicode line breaking algorithm, 
 - **`TextOptions.TextJustification`** (needs a `WrappingLength`): `InterWord` adds the same width to every space inside a line (U+0020 and U+00A0, not tabs) and `InterCharacter` adds the same width after every cluster but the last, in both cases until the line is exactly the wrapping length. Like ImageSharp, every line is stretched, the last one and lines before a line break included; a line with nothing to widen, or one that is already too long, is left alone. Positions agree with SixLabors.Fonts 2.1.3 to 0.0001 px for both modes and all three text alignments.
 - **Cost.** Segmentation is linear, runs once per paragraph over pooled arrays and allocates nothing in steady state (tested). Table lookups are two-stage over 64-code-point blocks.
 
+## Color fonts
+
+Color glyphs are on by default, as in SixLabors.Fonts (whose `TextOptions.ColorFontSupport` defaults to its COLR format): `TextOptions.ColorFontSupport` is `ColorFontSupport.MicrosoftColrFormat`, so `DrawText` on `Image` and `Canvas` paints the layers of COLR glyphs when the font has them. Set `ColorFontSupport.None` to draw every glyph as a plain outline filled with the brush. Fonts without COLR are not affected:
+
+```csharp
+var options = new TextOptions(font) { ColorPaletteIndex = 1 };            // color on by default; palette 1 of the font
+img.DrawText("\u2600 sunny", options, Brush.Solid(new Rgba32(0, 0, 0, 255)));
+```
+
+- **What is read.** `COLR` version 0 (a base glyph is a stack of layer glyphs, painted bottom to top) with `CPAL` palettes (versions 0 and 1; the palette labels and types are ignored). A `COLR` version 1 table is accepted: the version 0 records in it are painted, and a glyph that only has a version 1 paint graph (gradients, transforms, compositing) draws as its plain outline. Version 1 painting is not implemented; SixLabors.Fonts 2.1.3 does not have it either.
+- **Palette.** `ColorPaletteIndex` (default 0) selects the `CPAL` palette; an index past the last palette selects palette 0, and `Font.ColorPaletteCount` tells how many there are. A layer whose entry does not exist is left out.
+- **Foreground layers.** Palette index 0xFFFF means the text color: those layers are filled with the brush you pass, and nothing is drawn for them when there is none. Layers with a palette color are painted with it whatever the brush is (also when you pass only a pen). `opacity`, `blend`, `composition`, `antialias` and `linear` apply to every layer.
+- **Pen.** The pen outlines the plain glyphs and the foreground layers, over all fills, as SixLabors.Fonts does; layers with their own color get no outline.
+- **Order.** Plain glyphs first, then layer 0 of every color glyph, then layer 1, and so on, with layers of equal index and color merged into one fill. Colors of glyphs that overlap each other can therefore stack differently from glyph-by-glyph painting.
+- **Layout is unchanged:** advances, wrapping and measuring use the base glyph. `TextBuilder.GeneratePath` and measuring never depend on `ColorFontSupport`; text as a path is the monochrome outline. `Font.HasColorGlyph(codePoint)` tells whether a code point has layers.
+- **Damaged tables** are ignored and the font then has no color glyphs. With `ColorFontSupport.None`, or in a font or a text without color glyphs, the output is byte for byte the monochrome path.
+
 ## Drawing
 
 `DrawText(text, options, brush, pen, ...)` exists for `Image` (lazy: layout happens at the call, pixels when the image is read) and `Canvas` (in place), plus overloads taking a color. The optional parameters are the fill ones: `antialias`, `opacity`, `blend`, `composition`, `linear`. With both a brush and a pen the outline is drawn over the fill. Glyph outlines are filled with the non-zero rule. `TextBuilder.GeneratePath` returns the same path as an ordinary `Path`, for filling, stroking or transforming yourself.
@@ -98,6 +123,9 @@ Differences you will meet, all deliberate or pending the later units:
   - `KeepAll` in ImageSharp stops wrapping after the first line that cannot be broken to fit, and its `BreakWord` starts a too-long word on the current line; ours moves it to a fresh line first.
 - **Tabs** advance `TabWidth` spaces. ImageSharp's `TabWidth` had no effect on the font we probed, which has no tab glyph.
 - **Empty lines.** Text that starts with a line break measures two lines of one pitch each; ImageSharp adds extra height for the leading empty line. A line of only spaces keeps its full width here; ImageSharp reported one space's width for two. Text with no ink has zero-size bounds, where ImageSharp reports a box.
+- **Color glyph advances.** We use the base glyph's advance, as the OpenType specification and the layout of every other glyph do. With color enabled SixLabors.Fonts 2.1.3 advances by the advance of the glyph's first layer instead; the two agree in fonts whose layers are as wide as their base glyph (the test font), and differ in others.
+- **Color rendering** on the test font (layered shapes, foreground color, a half-transparent layer, two palettes, a composite layer): brush only, mean 0.07 levels over the image and at most 28 at single edge pixels; with a pen, mean 1.9 to 2.7 levels, which is the half-pixel stroke placement difference described in [drawing.md](drawing.md). COLR version 1 paint graphs are not painted by either library.
+- **WOFF2** has no ImageSharp difference worth naming: faces, outlines (point for point), advances, side bearings, kerning and shaped text from the WOFF2 of each test font (TrueType, CFF, a collection, and a file using the `hmtx` transform) equal those of the source font.
 - **No text decorations, rich-text runs or text along a path yet.**
 
 ## Where the next pieces plug in
@@ -107,10 +135,9 @@ Differences you will meet, all deliberate or pending the later units:
 - **Shaping** is `Shape` calling `Shaping/TextShaper`: code points in, `ShapedGlyph`s (glyph id, cluster, advance with kerning, offsets) out. A script-specific shaper (Arabic joining, Indic and Universal Shaping Engine reordering) is a `ScriptShaper` with its own feature stages; the lookup engine (`Shaping/Engine`) is shared.
 - **Line breaking** is `PrepareBreaks` and `CanBreakBefore`: the break opportunities and cluster starts of a paragraph are computed from its text (`Unicode/LineBreaker.cs`, `Unicode/Graphemes.cs`) and reach the glyphs only through each glyph's text offset, so a shaper that merges or reorders glyphs needs no change here. Hyphenation, language-tagged tailoring and dictionary breaking for Thai, Lao, Khmer and Burmese (their characters are treated as letters) would extend `LineBreaker`.
 - **Fallback** and **runs** extend the paragraph step: a paragraph becomes runs, each with its own face, shaped separately; `ShapedGlyph` gains the face index and `TextOptions` the fallback families.
-- **Color fonts** swap the per-glyph outline lookup in `AppendTo` and the ink box for layers; `Font`'s outline access is already per glyph.
+- **Color fonts** beyond COLR version 0 (version 1 paint graphs, SVG and bitmap glyphs) extend `ColorText`, which already splits a laid-out text into plain glyphs and layer fills.
 - **Decorations** draw rectangles from `LineMetrics` (baseline, left, advance) and the font's underline and strikeout metrics.
 - **Text on a path** replaces the single matrix `AppendTo` builds per glyph (scale, translation) with one that follows the path.
-- **WOFF2** is one more case in `FontFile.Parse` (Brotli is in the BCL).
 
 ## ImageSharp names
 
@@ -123,5 +150,6 @@ Differences you will meet, all deliberate or pending the later units:
 | `TextMeasurer.MeasureAdvance` / `MeasureBounds` / `MeasureSize` / `CountLines` | `TextMeasurer.MeasureAdvance` / `MeasureBounds` / `Measure(...).Bounds.Size` / `CountLines` |
 | `TextMeasurer.TryMeasureCharacterBounds` | `TextMeasurer.GetCharacterBounds` (`Ink`) |
 | `ctx.DrawText(options, text, brush, pen)` | `img.DrawText(text, options, brush, pen)` / `canvas.DrawText(...)` |
+| `TextOptions.ColorFontSupport` (`MicrosoftColrFormat`) | `TextOptions.ColorFontSupport` (`MicrosoftColrFormat` by default; also `ColorPaletteIndex`) |
 | `TextBuilder.GenerateGlyphs` | `TextBuilder.GeneratePath` |
 | `TextRenderer` + `IGlyphRenderer` | `TextBuilder.GeneratePath`, then walk or transform the `Path` |
