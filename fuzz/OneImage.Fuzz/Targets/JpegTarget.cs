@@ -2,11 +2,10 @@ using System;
 using System.IO;
 using System.Threading;
 using OneImage;
-using SharpFuzz;
 
 // Fuzz target for the JPEG decoder: the first input byte picks the scale and whether to decode a sub-region, the rest is the file.
 // Only the library's own exception types may come out; anything else is a finding.
-internal static class Program
+internal static class JpegTarget
 {
     private sealed class DiscardSink : IRowSink
     {
@@ -43,12 +42,7 @@ internal static class Program
         MaxMetadataBytes = 1_000_000,
     };
 
-    private static void Main()
-    {
-        Fuzzer.LibFuzzer.Run(Target);
-    }
-
-    private static void Target(ReadOnlySpan<byte> data)
+    public static void Run(ReadOnlySpan<byte> data)
     {
         if (data.Length < 4)
         {

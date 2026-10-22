@@ -30,6 +30,7 @@
     <InternalsVisibleTo Include="$(LibName).Benchmarks" />
     <InternalsVisibleTo Include="$(LibName).AotSmoke" />
     <InternalsVisibleTo Include="$(LibName).Tools" />
+    <InternalsVisibleTo Include="$(LibName).Fuzz" />
   </ItemGroup>
 
   <ItemGroup>
