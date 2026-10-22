@@ -226,4 +226,17 @@ public class GifMalformedTests
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(60), $"{sw.Elapsed}");
         Assert.True(ok > 100 && typed > 100, $"ok {ok} typed {typed}");
     }
+
+    [Fact]
+    public void LargeSolidColorFrameIsNotMistakenForABomb()
+    {
+        // 16 million pixels compress to a few KB with LZW (a ratio well above 1100).
+        const int N = 4000;
+        byte[] gif = GifBuilder.Build(N, N, Pal, [new GifBuilder.Frame(0, 0, N, N, new byte[N * N])]);
+        Assert.True(gif.Length * 1100L < (long)N * N, $"file {gif.Length} bytes does not exceed the old ratio");
+        Image img = Load(gif);
+        Rgba32[] corner = new Rgba32[4];
+        img.CopyPixelsTo<Rgba32>(corner, new ImageRect(N - 2, N - 2, 2, 2));
+        Assert.All(corner, p => Assert.Equal(new Rgba32(255, 0, 0, 255), p));
+    }
 }

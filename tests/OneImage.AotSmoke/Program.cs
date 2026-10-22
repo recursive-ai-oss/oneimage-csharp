@@ -171,6 +171,9 @@ rasterOk &= PngFormat.Instance.Matches(tuned.ToArray()) && Image.Load(tuned.ToAr
 if (!rasterOk)
 {
     Console.Error.WriteLine("png/bmp/ico smoke failed");
+    return 1;
+}
+
 // GIF: encode a photo-like image (quantized, dithered), decode it, and decode a hand-assembled two-frame animation.
 var photo = new Rgba32[64 * 48];
 for (int i = 0; i < photo.Length; i++)

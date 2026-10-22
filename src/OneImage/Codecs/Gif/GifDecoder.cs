@@ -549,7 +549,10 @@ internal sealed class GifDecoder : IImageDecoder
         }
 
         reader.SeekTo(f.DataOffset);
-        var lzw = new LzwDecoder(LzwVariant.Gif, f.MinCodeSize, long.MaxValue, limits.MaxExpansionRatio);
+        // The ratio guard of the LZW decoder is tuned for deflate; LZW can legitimately shrink a solid color by more than 1000x. Output is
+        // capped by the frame's own size instead, and one 12-bit code expands to at most 4094 bytes, so input bounds the work.
+        _ = limits;
+        var lzw = new LzwDecoder(LzwVariant.Gif, f.MinCodeSize, (long)f.Width * f.Height, 0);
         byte[] rowBuf = ArrayPool<byte>.Shared.Rent(f.Width);
         byte[] inBuf = ArrayPool<byte>.Shared.Rent(4096);
         try
