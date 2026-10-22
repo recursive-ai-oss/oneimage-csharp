@@ -256,9 +256,20 @@ internal sealed class VP8LDecoder : IDisposable
             CheckEos();
         }
 
-        uint[] pixels = DecodeImageStream(xsize, height, isLevel0: true, out int decodedWidth);
+        _sink = sink;
+        _outRows = new uint[_transformCount + 1][];
+        _prevRows = new uint[_transformCount][];
+        for (int i = 0; i < _transformCount; i++)
+        {
+            _outRows[i] = Rent(_transforms[i].XSize);
+            if (_transforms[i].Kind == TransformKind.Predictor)
+            {
+                _prevRows[i] = Rent(_transforms[i].XSize);
+            }
+        }
+
+        DecodeImageStream(xsize, height, isLevel0: true, out _);
         CheckEos();
-        RunInverseTransforms(pixels, decodedWidth, width, height, sink);
     }
 
     // Reads (optionally) a color cache, meta prefix codes and the entropy-coded pixels of one image.
@@ -346,9 +357,7 @@ internal sealed class VP8LDecoder : IDisposable
         }
 
         _arenaUsed = arenaPos;
-        uint[] data = Rent(checked(xsize * ysize));
-        DecodePixels(data, xsize, ysize, cacheBits, bases, groupMap, entropyImage, prefixBits, prefixWidth);
-        return data;
+        return DecodePixels(xsize, ysize, cacheBits, bases, groupMap, entropyImage, prefixBits, prefixWidth, isLevel0);
     }
 
     private void ReadCodeLengths(Span<byte> lengths)
@@ -450,7 +459,7 @@ internal sealed class VP8LDecoder : IDisposable
         CheckEos();
     }
 
-    private void DecodePixels(uint[] data, int width, int height, int cacheBits, int[] bases, int[] groupMap, uint[]? entropy, int prefixBits, int prefixWidth)
+    private uint[] DecodePixels(int width, int height, int cacheBits, int[] bases, int[] groupMap, uint[]? entropy, int prefixBits, int prefixWidth, bool level0)
     {
         uint[] arena = _arena;
         ulong val = _val;
@@ -460,12 +469,22 @@ internal sealed class VP8LDecoder : IDisposable
         byte[] src = _data;
         int end = _end;
 
-        int total = width * height;
+        int total = checked(width * height);
+        // Memory follows the data actually decoded, not the header: the pixel buffer starts small and grows (sub-images), or
+        // slides over a window of the last 2^20 pixels while finished rows go through the inverse transforms (the main image).
+        uint[] data = Rent(Math.Min(total, 1 << 16));
+        int baseAbs = 0;
+        int emitted = 0;
+        _pWidth = width;
+        _pTotal = total;
+        _pLevel0 = level0;
+        int next = NextCheck(data.Length, 0, 0, 0, total, width, level0);
         int p = 0;
         int x = 0;
         int y = 0;
         int lastCached = 0;
         uint[]? cache = null;
+        int lim = total;
         if (cacheBits > 0)
         {
             cache = Rent(1 << cacheBits);
@@ -488,8 +507,28 @@ internal sealed class VP8LDecoder : IDisposable
             dBase = bases[4];
         }
 
-        while (p < total)
+        while (p < lim)
         {
+            if (p >= next)
+            {
+                _pData = data;
+                _pBase = baseAbs;
+                _pEmitted = emitted;
+                _pP = p;
+                _pLast = lastCached;
+                _pY = y;
+                _pCache = cache;
+                _pShift = cacheShift;
+                ServicePixels();
+                data = _pData;
+                baseAbs = _pBase;
+                emitted = _pEmitted;
+                p = _pP;
+                lastCached = _pLast;
+                lim = total - baseAbs;
+                next = NextCheck(data.Length, p, baseAbs, emitted, total, width, level0);
+            }
+
             if ((x & mask) == 0 && entropy != null)
             {
                 int g = groupMap[entropy[((y >> prefixBits) * prefixWidth) + (x >> prefixBits)]] * 5;
@@ -543,7 +582,7 @@ internal sealed class VP8LDecoder : IDisposable
                 int distSym = ReadSymbol(arena, dBase, ref val, ref nbits);
                 int distCode = PrefixValue(distSym, ref val, ref nbits, src, ref pos, end, ref overrun);
                 int dist = DistanceFromCode(distCode, width);
-                if (dist > p || length > total - p)
+                if (dist > baseAbs + p || length > lim - p)
                 {
                     throw new ImageFormatException("Invalid VP8L backward reference.");
                 }
@@ -577,7 +616,7 @@ internal sealed class VP8LDecoder : IDisposable
                     }
                 }
 
-                if (p < total && entropy != null && (x & mask) != 0)
+                if (p < lim && entropy != null && (x & mask) != 0)
                 {
                     // Landed in the middle of a block: the group of that block applies.
                     int g = groupMap[entropy[((y >> prefixBits) * prefixWidth) + (x >> prefixBits)]] * 5;
@@ -634,6 +673,112 @@ internal sealed class VP8LDecoder : IDisposable
         _pos = pos;
         _overrun = overrun;
         CheckEos();
+        if (level0)
+        {
+            _pData = data;
+            _pBase = baseAbs;
+            _pEmitted = emitted;
+            _pY = height;
+            EmitCompleted();
+            return data;
+        }
+
+        // A sub-image is read whole; the buffer may be larger than the image.
+        return data;
+    }
+
+    private const int MaxRun = 4096;
+    private const int MaxDistance = 1 << 20;
+
+    private IArgbRowSink _sink = null!;
+    private uint[][] _outRows = [];
+    private uint[][] _prevRows = [];
+    private uint[] _pData = [];
+    private uint[]? _pCache;
+    private int _pWidth;
+    private int _pTotal;
+    private int _pBase;
+    private int _pEmitted;
+    private int _pP;
+    private int _pLast;
+    private int _pY;
+    private int _pShift;
+    private bool _pLevel0;
+
+    // The next buffer position at which the decode loop must stop and call ServicePixels.
+    private static int NextCheck(int len, int p, int baseAbs, int emitted, int total, int width, bool level0)
+    {
+        int next = int.MaxValue;
+        if ((long)baseAbs + len < total)
+        {
+            next = len - MaxRun;
+        }
+
+        if (level0)
+        {
+            next = (int)Math.Min(next, ((long)emitted + 16) * width - baseAbs);
+        }
+
+        return Math.Max(next, p + 1);
+    }
+
+    private void EmitCompleted()
+    {
+        int width = _pWidth;
+        for (; _pEmitted < _pY; _pEmitted++)
+        {
+            if ((_pEmitted & 15) == 0)
+            {
+                _token.ThrowIfCancellationRequested();
+            }
+
+            ProcessRow(_pEmitted, _pData.AsSpan((int)((long)_pEmitted * width - _pBase), width));
+        }
+    }
+
+    // Emits finished rows, then makes room for at least MaxRun more pixels by sliding the window or growing the buffer.
+    private void ServicePixels()
+    {
+        if (_pLevel0)
+        {
+            EmitCompleted();
+        }
+
+        if (_pP + MaxRun <= _pData.Length || (long)_pBase + _pData.Length >= _pTotal)
+        {
+            return;
+        }
+
+        uint[] data = _pData;
+        if (_pLevel0)
+        {
+            long keepFrom = Math.Min((long)_pEmitted * _pWidth, (long)_pBase + _pP - MaxDistance);
+            int drop = (int)Math.Max(0, keepFrom - _pBase);
+            if (drop >= data.Length / 4)
+            {
+                if (_pCache != null)
+                {
+                    while (_pLast < _pP)
+                    {
+                        uint c = data[_pLast++];
+                        _pCache[(int)((c * ColorCacheMul) >> _pShift)] = c;
+                    }
+                }
+
+                Array.Copy(data, drop, data, 0, _pP - drop);
+                _pP -= drop;
+                _pLast -= drop;
+                _pBase += drop;
+                return;
+            }
+        }
+
+        int newLen = (int)Math.Min((long)data.Length * 2, _pTotal - (long)_pBase);
+        uint[] bigger = Rent(newLen);
+        Array.Copy(data, bigger, _pP);
+        _rented.Remove(data);
+        ArrayPool<uint>.Shared.Return(data);
+        _pData = bigger;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -672,62 +817,40 @@ internal sealed class VP8LDecoder : IDisposable
 
     // ---- inverse transforms ----
 
-    private void RunInverseTransforms(uint[] pixels, int srcWidth, int width, int height, IArgbRowSink sink)
+    // Runs one finished row through the inverse transforms, last transform first, and hands it to the sink.
+    private void ProcessRow(int y, ReadOnlySpan<uint> row)
     {
-        int n = _transformCount;
-        uint[][] outRows = new uint[n + 1][];
-        uint[][] prevRows = new uint[n][];
-        for (int i = 0; i < n; i++)
+        for (int i = _transformCount - 1; i >= 0; i--)
         {
-            outRows[i] = Rent(_transforms[i].XSize);
-            if (_transforms[i].Kind == TransformKind.Predictor)
+            Transform t = _transforms[i];
+            Span<uint> dst = _outRows[i].AsSpan(0, t.XSize);
+            switch (t.Kind)
             {
-                prevRows[i] = Rent(_transforms[i].XSize);
+                case TransformKind.Predictor:
+                    InversePredictor(t, row, dst, _prevRows[i].AsSpan(0, t.XSize), y);
+                    dst.CopyTo(_prevRows[i]);
+                    break;
+                case TransformKind.Color:
+                    InverseColor(t, row, dst, y);
+                    break;
+                case TransformKind.SubtractGreen:
+                    for (int x = 0; x < dst.Length; x++)
+                    {
+                        uint p = row[x];
+                        uint g = (p >> 8) & 0xff;
+                        dst[x] = (p & 0xff00ff00) | ((((p & 0xff0000) + (g << 16)) & 0xff0000) | (((p & 0xff) + g) & 0xff));
+                    }
+
+                    break;
+                default:
+                    InverseColorIndexing(t, row, dst);
+                    break;
             }
+
+            row = dst;
         }
 
-        for (int y = 0; y < height; y++)
-        {
-            if ((y & 15) == 0)
-            {
-                _token.ThrowIfCancellationRequested();
-            }
-
-            ReadOnlySpan<uint> row = pixels.AsSpan(y * srcWidth, srcWidth);
-            for (int i = n - 1; i >= 0; i--)
-            {
-                Transform t = _transforms[i];
-                Span<uint> dst = outRows[i].AsSpan(0, t.XSize);
-                switch (t.Kind)
-                {
-                    case TransformKind.Predictor:
-                        InversePredictor(t, row, dst, prevRows[i].AsSpan(0, t.XSize), y);
-                        dst.CopyTo(prevRows[i]);
-                        break;
-                    case TransformKind.Color:
-                        InverseColor(t, row, dst, y);
-                        break;
-                    case TransformKind.SubtractGreen:
-                        for (int x = 0; x < dst.Length; x++)
-                        {
-                            uint p = row[x];
-                            uint g = (p >> 8) & 0xff;
-                            dst[x] = (p & 0xff00ff00) | ((((p & 0xff0000) + (g << 16)) & 0xff0000) | (((p & 0xff) + g) & 0xff));
-                        }
-
-                        break;
-                    default:
-                        InverseColorIndexing(t, row, dst);
-                        break;
-                }
-
-                row = dst;
-            }
-
-            sink.WriteRow(y, row);
-        }
-
-        _ = width;
+        _sink.WriteRow(y, row);
     }
 
     private static void InverseColorIndexing(Transform t, ReadOnlySpan<uint> src, Span<uint> dst)
