@@ -112,6 +112,9 @@ internal static class TextShaper
         ShapeBuffer(face, buffer, GenericShaper.Instance, Tag.Latn, language, features, glyphs.Length, output, false);
     }
 
+    // How many glyphs a syllable shaper handles at a time.
+    private const int ChunkGlyphs = 2048;
+
     private static ScriptShaper ShaperFor(uint script)
     {
         if (script == Tag.Arab || script == Tag.Syrc || script == Tag.Nko)
@@ -142,6 +145,27 @@ internal static class TextShaper
 
     private static void ShapeBuffer(FontFace face, GlyphBuffer buffer, ScriptShaper shaper, uint script, uint language, FeatureSet features, int textLength, List<ShapedRunGlyph> output, bool rtl)
     {
+        if (shaper.Reorders && buffer.Count > 2 * ChunkGlyphs)
+        {
+            // A syllable shaper never looks across syllables, so a long run is shaped in pieces cut at syllable boundaries; this keeps the
+            // cost of every lookup pass (and of the insertions and removals a substitution makes) proportional to the piece, not the run.
+            for (int start = 0; start < buffer.Count;)
+            {
+                int end = Math.Min(start + ChunkGlyphs, buffer.Count);
+                end = end < buffer.Count ? SyllableSupport.SyllableEnd(buffer, end - 1) : end; // at most one syllable (48 glyphs) longer
+                var part = new GlyphBuffer(end - start + 8);
+                for (int i = start; i < end; i++)
+                {
+                    part.Add(buffer.Info[i]);
+                }
+
+                ShapeBuffer(face, part, shaper, script, language, features, part.Count, output, rtl);
+                start = end;
+            }
+
+            return;
+        }
+
         OtFace layout = face.Layout;
         ShapePlan plan = layout.GetPlan(shaper, script, language, features, rtl);
         if (rtl && !plan.HasRtlm)
