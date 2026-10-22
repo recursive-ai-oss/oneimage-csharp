@@ -4,7 +4,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
-First release, in preparation.
+## [1.0.0] - 2026-10-22
+
+First release.
 
 ### Added
 
@@ -14,6 +16,7 @@ First release, in preparation.
 - `Image.Thumbnail`, which applies EXIF orientation, converts to sRGB and strips EXIF, XMP and IPTC by default.
 - Size limits on by default, checked from headers before allocation; typed exceptions; a fuzz target for every decoder and parser.
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
-- Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/main/docs/performance.md) with the benchmark method and every loss.
+- Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/commits/main
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/recursive-ai-oss/oneimage-csharp/releases/tag/v1.0.0

@@ -11,17 +11,13 @@ files are read through bounds-checked managed code.
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](#install)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-> **Pre-release.** The version is `0.0.1-dev` and the package is not on
-> NuGet yet. Until it is, clone the repository and reference
-> `src/OneImage/OneImage.csproj`.
-
 How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (wall-clock time, log scale, higher is better; a task
 where OneImage is slower shows as a bar to the left, a tie in grey):
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/main/docs/img/oneimage-hero-dark.svg">
-  <img alt="Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower." src="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/main/docs/img/oneimage-hero-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.0.0/docs/img/oneimage-hero-dark.svg">
+  <img alt="Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower." src="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.0.0/docs/img/oneimage-hero-light.svg">
 </picture>
 
 [Full results, with memory, the losses and the method →](docs/performance.md)
