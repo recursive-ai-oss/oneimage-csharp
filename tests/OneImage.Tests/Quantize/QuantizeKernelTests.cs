@@ -38,4 +38,40 @@ public class QuantizeKernelTests
             }
         }
     }
+
+    [Fact]
+    public void NearestMatchesScalarIncludingTiesAndSkip()
+    {
+        Console.WriteLine($"Vector256.IsHardwareAccelerated={Vector256.IsHardwareAccelerated}");
+        var rng = new Random(21);
+        foreach (int count in new[] { 1, 2, 7, 8, 9, 16, 17, 33, 100, 255, 256 })
+        {
+            int padded = QuantizeKernels.PaddedLength(count);
+            for (int trial = 0; trial < 60; trial++)
+            {
+                int[] r = Ops.Quantize.QuantizedPalette.PaddedTable(padded);
+                int[] g = Ops.Quantize.QuantizedPalette.PaddedTable(padded);
+                int[] b = Ops.Quantize.QuantizedPalette.PaddedTable(padded);
+                int[] a = Ops.Quantize.QuantizedPalette.PaddedTable(padded);
+                // Few distinct values make equal distances (ties) common.
+                int range = trial % 3 == 0 ? 4 : 256;
+                for (int i = 0; i < count; i++)
+                {
+                    r[i] = rng.Next(range);
+                    g[i] = rng.Next(range);
+                    b[i] = rng.Next(range);
+                    a[i] = trial % 2 == 0 ? 255 : rng.Next(range);
+                }
+
+                for (int q = 0; q < 20; q++)
+                {
+                    int skip = q % 3 == 0 ? rng.Next(count) : -1;
+                    int cr = rng.Next(range), cg = rng.Next(range), cb = rng.Next(range), ca = rng.Next(256);
+                    Assert.Equal(
+                        QuantizeKernels.NearestScalar(r, g, b, a, count, skip, cr, cg, cb, ca),
+                        QuantizeKernels.Nearest(r, g, b, a, count, skip, cr, cg, cb, ca));
+                }
+            }
+        }
+    }
 }

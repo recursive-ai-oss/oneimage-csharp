@@ -18,6 +18,10 @@ namespace OneImage.Codecs.Gif;
 /// a single transparent pixel so its delay is kept. Animations that contain transparency (or whose frames differ in size) cannot be
 /// patched this way, because a transparent pixel cannot erase what is already shown; each of their frames is trimmed to its
 /// visible bounding box and removed after display ("restore to background").
+/// When frames need their own palettes, a palette made for one frame is reused for the following frames as long as it represents them
+/// about as well as it did its own frame (mean squared RGB error within twice the original, or under a small floor); otherwise the
+/// frame is quantized afresh. A first frame whose palette is reused becomes the global table and the frames that share it carry no table.
+/// Animation palettes always keep a transparent entry so that a palette can serve frames that patch over their predecessor.
 /// </remarks>
 internal sealed class GifEncoder : IImageEncoder
 {
@@ -133,9 +137,10 @@ internal sealed class GifEncoder : IImageEncoder
         Anchor? anchor = null;
         bool ok = false;
 
-        // While one frame is indexed, the next is read (decoded, resized, ...) on another thread into a third buffer. Frames are still
+        // While one frame is indexed, the next is read on another thread into a third buffer. This is for frames that cost real work
+        // to produce (resized, converted, ...); a plain decode is a copy, and a spare frame buffer plus a thread would only add memory. Frames are still
         // requested one at a time and in order, so what is read and what is written do not depend on timing.
-        bool prefetch = multi && uniform && frames[0].Degree > 1 && (long)frames[0].Width * frames[0].Height * 4 <= PrefetchMaxBytes;
+        bool prefetch = multi && uniform && frames[0].Degree > 1 && !frames[0].IsPlainDecode && (long)frames[0].Width * frames[0].Height * 4 <= PrefetchMaxBytes;
         byte[]? ahead = null;
         Task? pending = null;
         try

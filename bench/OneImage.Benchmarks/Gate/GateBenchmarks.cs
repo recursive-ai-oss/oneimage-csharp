@@ -380,6 +380,8 @@ public class BmpGateBenchmarks : IDisposable
             _bmp = ms.ToArray();
         }
 
+        // The caller's decode buffer is used and kept from one load to the next, so its pages are mapped before anything is measured.
+        _decoded.AsSpan().Fill(new OI.Rgb24(1, 2, 3));
         _ours = OI.Image.FromPixels<OI.Rgb24>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, OI.Rgb24>(rgb), PngBenchData.W, PngBenchData.H);
         _sharp = SharpImage.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgb24>(rgb, PngBenchData.W, PngBenchData.H);
     }

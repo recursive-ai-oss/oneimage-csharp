@@ -203,6 +203,9 @@ public sealed class ImageFrameReader
         }
     }
 
+    /// <summary>Gets whether the frame is a decoded frame as stored, with no operation applied on top, so reading it is little more than a copy.</summary>
+    internal bool IsPlainDecode => _node is DecodeSourceNode;
+
     /// <summary>Gets the parallel degree the caller allows (at least 1); encoders may use it for their own parallel stages.</summary>
     internal int Degree => Math.Max(1, _context.Degree);
 
