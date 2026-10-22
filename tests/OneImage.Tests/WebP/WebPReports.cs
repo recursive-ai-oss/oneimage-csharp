@@ -52,12 +52,6 @@ public sealed class WebPReports
     {
         Assert.SkipUnless(ReportPath != null, "report only");
         var lines = new List<string>();
-        string? lam = Environment.GetEnvironmentVariable("ONEIMAGE_LAMBDA");
-        if (lam != null)
-        {
-            VP8Encoder.LambdaScale = double.Parse(lam, System.Globalization.CultureInfo.InvariantCulture);
-        }
-
         int effort = int.Parse(Environment.GetEnvironmentVariable("ONEIMAGE_EFFORT") ?? "4", System.Globalization.CultureInfo.InvariantCulture);
         foreach ((string name, byte[] rgba, int w, int h) in WebPCorpus.Photos(large: Environment.GetEnvironmentVariable("ONEIMAGE_WEBP_LARGE") != null))
         {

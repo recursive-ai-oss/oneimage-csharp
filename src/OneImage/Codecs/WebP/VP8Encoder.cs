@@ -442,7 +442,7 @@ internal sealed class VP8Encoder
     }
 
     // Weight of one bit in squared-error units, relative to the squared quantizer step.
-    internal static double LambdaScale = 0.12;
+    private const double LambdaScale = 0.12;
 
     private void LoadSource(int mbx, int mby)
     {

@@ -828,7 +828,9 @@ internal sealed class VP8LDecoder : IDisposable
             {
                 case TransformKind.Predictor:
                     InversePredictor(t, row, dst, _prevRows[i].AsSpan(0, t.XSize), y);
-                    dst.CopyTo(_prevRows[i]);
+                    // This row is the next row's "row above": swap the buffers instead of copying. The swapped-out buffer is only
+                    // read through `dst` until the sink has the row, which happens before the next call.
+                    (_outRows[i], _prevRows[i]) = (_prevRows[i], _outRows[i]);
                     break;
                 case TransformKind.Color:
                     InverseColor(t, row, dst, y);
@@ -941,65 +943,87 @@ internal sealed class VP8LDecoder : IDisposable
 
     private static void PredictRun(int mode, ReadOnlySpan<uint> src, Span<uint> dst, ReadOnlySpan<uint> prev, int xs, int xe)
     {
-        int w = dst.Length;
         switch (mode)
         {
-            case 1:
-                for (int x = xs; x < xe; x++)
-                {
-                    dst[x] = AddPixels(src[x], dst[x - 1]);
-                }
-
-                break;
-            case 2:
-                for (int x = xs; x < xe; x++)
-                {
-                    dst[x] = AddPixels(src[x], prev[x]);
-                }
-
-                break;
-            case 3:
-                for (int x = xs; x < xe; x++)
-                {
-                    // TR of the rightmost pixel is the leftmost pixel of the current row.
-                    uint tr = x + 1 < w ? prev[x + 1] : dst[0];
-                    dst[x] = AddPixels(src[x], tr);
-                }
-
-                break;
-            case 4:
-                for (int x = xs; x < xe; x++)
-                {
-                    dst[x] = AddPixels(src[x], prev[x - 1]);
-                }
-
-                break;
-            default:
-                for (int x = xs; x < xe; x++)
-                {
-                    uint l = dst[x - 1];
-                    uint t = prev[x];
-                    uint tl = prev[x - 1];
-                    uint tr = x + 1 < w ? prev[x + 1] : dst[0];
-                    uint pred = mode switch
-                    {
-                        5 => Average2(Average2(l, tr), t),
-                        6 => Average2(l, tl),
-                        7 => Average2(l, t),
-                        8 => Average2(tl, t),
-                        9 => Average2(t, tr),
-                        10 => Average2(Average2(l, tl), Average2(t, tr)),
-                        11 => Select(l, t, tl),
-                        12 => ClampAddSubtractFull(l, t, tl),
-                        13 => ClampAddSubtractHalf(Average2(l, t), tl),
-                        _ => 0xff000000,
-                    };
-                    dst[x] = AddPixels(src[x], pred);
-                }
-
-                break;
+            case 1: Run<PLeft>(src, dst, prev, xs, xe); break;
+            case 2: Run<PTop>(src, dst, prev, xs, xe); break;
+            case 3: Run<PTopRight>(src, dst, prev, xs, xe); break;
+            case 4: Run<PTopLeft>(src, dst, prev, xs, xe); break;
+            case 5: Run<PAvg3>(src, dst, prev, xs, xe); break;
+            case 6: Run<PAvgLTl>(src, dst, prev, xs, xe); break;
+            case 7: Run<PAvgLT>(src, dst, prev, xs, xe); break;
+            case 8: Run<PAvgTlT>(src, dst, prev, xs, xe); break;
+            case 9: Run<PAvgTTr>(src, dst, prev, xs, xe); break;
+            case 10: Run<PAvg4>(src, dst, prev, xs, xe); break;
+            case 11: Run<PSelect>(src, dst, prev, xs, xe); break;
+            case 12: Run<PGradient>(src, dst, prev, xs, xe); break;
+            case 13: Run<PHalfGradient>(src, dst, prev, xs, xe); break;
+            default: Run<PBlack>(src, dst, prev, xs, xe); break;
         }
     }
+
+    // One predictor over pixels xs..xe-1 of a row (xs >= 1). The mode is a type argument so the loop has no per-pixel dispatch.
+    // The top-right neighbour of the last pixel in a row is the first pixel of the current row (RFC 9649 section 4.1).
+    private static void Run<TP>(ReadOnlySpan<uint> src, Span<uint> dst, ReadOnlySpan<uint> prev, int xs, int xe)
+        where TP : struct, IPredictor
+    {
+        int w = dst.Length;
+        int inner = xe == w ? xe - 1 : xe;
+        int n = inner - xs;
+        uint l = dst[xs - 1];
+        if (n > 0)
+        {
+            ReadOnlySpan<uint> s = src.Slice(xs, n);
+            Span<uint> d = dst.Slice(xs, n);
+            ReadOnlySpan<uint> pt = prev.Slice(xs, n);
+            ReadOnlySpan<uint> ptl = prev.Slice(xs - 1, n);
+            ReadOnlySpan<uint> ptr = prev.Slice(xs + 1, n);
+            for (int i = 0; i < d.Length; i++)
+            {
+                l = AddPixels(s[i], TP.Predict(l, pt[i], ptl[i], ptr[i]));
+                d[i] = l;
+            }
+        }
+
+        if (inner < xe)
+        {
+            int x = w - 1;
+            dst[x] = AddPixels(src[x], TP.Predict(l, prev[x], prev[x - 1], dst[0]));
+        }
+    }
+
+    internal interface IPredictor
+    {
+        static abstract uint Predict(uint l, uint t, uint tl, uint tr);
+    }
+
+    private struct PBlack : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => 0xff000000; }
+
+    private struct PLeft : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => l; }
+
+    private struct PTop : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => t; }
+
+    private struct PTopRight : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => tr; }
+
+    private struct PTopLeft : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => tl; }
+
+    private struct PAvg3 : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Average2(Average2(l, tr), t); }
+
+    private struct PAvgLTl : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Average2(l, tl); }
+
+    private struct PAvgLT : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Average2(l, t); }
+
+    private struct PAvgTlT : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Average2(tl, t); }
+
+    private struct PAvgTTr : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Average2(t, tr); }
+
+    private struct PAvg4 : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Average2(Average2(l, tl), Average2(t, tr)); }
+
+    private struct PSelect : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => Select(l, t, tl); }
+
+    private struct PGradient : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => ClampAddSubtractFull(l, t, tl); }
+
+    private struct PHalfGradient : IPredictor { [MethodImpl(MethodImplOptions.AggressiveInlining)] public static uint Predict(uint l, uint t, uint tl, uint tr) => ClampAddSubtractHalf(Average2(l, t), tl); }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static uint AddPixels(uint a, uint b)
