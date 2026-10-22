@@ -4,7 +4,7 @@ using System.Threading;
 using OneImage;
 
 /// <summary>
-/// Decoders for the container formats (PNG, BMP, ICO, WebP) fed through the decoder interface directly, with the first input byte
+/// Decoders for the container formats (PNG, BMP, ICO, GIF, WebP) fed through the decoder interface directly, with the first input byte
 /// choosing a sub-region (bit 2), a frame (bits 3-4), and then through the public load path.
 /// </summary>
 internal static class CodecTargets
@@ -42,6 +42,8 @@ internal static class CodecTargets
     public static void Bmp(ReadOnlySpan<byte> data) => Run(BmpFormat.Instance, data);
 
     public static void Ico(ReadOnlySpan<byte> data) => Run(IcoFormat.Instance, data);
+
+    public static void Gif(ReadOnlySpan<byte> data) => Run(GifFormat.Instance, data);
 
     public static void WebP(ReadOnlySpan<byte> data) => Run(new WebPFormat(), data);
 

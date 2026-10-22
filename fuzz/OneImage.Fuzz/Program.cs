@@ -23,6 +23,7 @@ internal static class Program
         ["png"] = CodecTargets.Png,
         ["bmp"] = CodecTargets.Bmp,
         ["ico"] = CodecTargets.Ico,
+        ["gif"] = CodecTargets.Gif,
         ["webp"] = CodecTargets.WebP,
     };
 
