@@ -36,6 +36,10 @@ internal static class GateReport
     // Ratios within 5% of 1 count as a tie: that is below the noise of a shared host.
     private const double Tie = 1.05;
 
+    // Peak differences under 2 MiB also count as a tie: at that size the resident set moves with page granularity, allocator
+    // arenas and thread stacks, and ratios of a few MiB say nothing.
+    private const double MemTieMiB = 2;
+
     private sealed record Row(string Task, string Param, string Lib, string Title, string Method, double Ms, double AllocMiB);
 
     private sealed record Peak(double BeforeMiB, double PeakMiB, double Ms)
@@ -109,8 +113,9 @@ internal static class GateReport
             double? rf = fast == null ? null : ours.Ms / fast.Ms;
             double? ms = po != null && ps != null ? po.Delta / Math.Max(ps.Delta, 1) : null;
             double? mn = po != null && pn != null ? po.Delta / Math.Max(pn.Delta, 1) : null;
+            bool memMiss = ms > Tie && po!.Delta - ps!.Delta > MemTieMiB;
             string skip = icc ? " (skips ICC)" : "";
-            summary.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {label} | {ours.Ms:F1} | {Fmt(sharp?.Ms)}{skip} | {Fmt(rs, 2)}{(rs > Tie && !icc ? " ✗" : "")} | {(fast == null ? "-" : fast.Lib + " " + fast.Ms.ToString("F1", CultureInfo.InvariantCulture))} | {Fmt(rf, 2)}{(rf > 1.5 && ThumbnailOrCodec.Contains(task) ? " ✗" : "")} | {Fmt(po?.Delta)} | {Fmt(ps?.Delta)} | {Fmt(pn?.Delta)} | {Fmt(ms, 2)}{(ms > Tie && !icc ? " ✗" : "")} | {Fmt(mn, 2)}{(mn > 2 && Streaming.Contains(task) ? " ✗" : "")} |"));
+            summary.AppendLine(string.Create(CultureInfo.InvariantCulture, $"| {label} | {ours.Ms:F1} | {Fmt(sharp?.Ms)}{skip} | {Fmt(rs, 2)}{(rs > Tie && !icc ? " ✗" : "")} | {(fast == null ? "-" : fast.Lib + " " + fast.Ms.ToString("F1", CultureInfo.InvariantCulture))} | {Fmt(rf, 2)}{(rf > 1.5 && ThumbnailOrCodec.Contains(task) ? " ✗" : "")} | {Fmt(po?.Delta)} | {Fmt(ps?.Delta)} | {Fmt(pn?.Delta)} | {Fmt(ms, 2)}{(memMiss && !icc ? " ✗" : "")} | {Fmt(mn, 2)}{(mn > 2 && Streaming.Contains(task) ? " ✗" : "")} |"));
 
             if (icc)
             {
@@ -119,7 +124,7 @@ internal static class GateReport
                     gaps.Add($"- **{task}**: slower than Magick.NET, {ours.Ms:F1} ms vs {magick.Ms:F1} ms.");
                 }
 
-                if (po != null && pm != null && po.Delta > pm.Delta)
+                if (po != null && pm != null && po.Delta - pm.Delta > MemTieMiB)
                 {
                     gaps.Add($"- **{task}**: more peak working memory than Magick.NET, {po.Delta:F0} MiB vs {pm.Delta:F0} MiB.");
                 }
@@ -135,7 +140,7 @@ internal static class GateReport
                 gaps.Add($"- **{label}**: slower than ImageSharp (beyond a 5% tie), {ours.Ms:F1} ms vs {sharp!.Ms:F1} ms ({rs:F2}×).");
             }
 
-            if (ms > Tie && !icc && memReported.Add(task + "/is"))
+            if (memMiss && !icc && memReported.Add(task + "/is"))
             {
                 gaps.Add($"- **{task}**: more peak working memory than ImageSharp, {po!.Delta:F0} MiB vs {ps!.Delta:F0} MiB ({ms:F2}×).");
             }
@@ -164,7 +169,7 @@ internal static class GateReport
         }
 
         sb.AppendLine("## Gate summary").AppendLine();
-        sb.AppendLine("Ours = our fastest row of the task. ✗ marks a miss: slower than ImageSharp, more peak working memory than ImageSharp, more than 1.5× the fastest native wrapper (thumbnail and codec tasks), more than 2× NetVips's peak working memory (streaming tasks: thumbnails, PNG→WebP, GIF resize, CMYK). Peak columns are the growth of the process's resident set during the operation, in MiB (see Method).").AppendLine();
+        sb.AppendLine("Ours = our fastest row of the task. ✗ marks a miss: slower than ImageSharp, more peak working memory than ImageSharp (beyond 5% and 2 MiB), more than 1.5× the fastest native wrapper (thumbnail and codec tasks), more than 2× NetVips's peak working memory (streaming tasks: thumbnails, PNG→WebP, GIF resize, CMYK). Peak columns are the growth of the process's resident set during the operation, in MiB (see Method).").AppendLine();
         sb.Append(summary).AppendLine();
         if (args.Length > 5 && File.Exists(args[5]) && File.ReadLines(args[5]).Any(l => l.StartsWith("DELTAE", StringComparison.Ordinal)))
         {

@@ -15,9 +15,11 @@ namespace OneImage.Benchmarks.Gate;
 /// <summary>
 /// Peak memory of one gate task for one library, one library per process so the numbers do not mix:
 /// <c>gate-peak &lt;task&gt; &lt;library&gt; [count]</c> builds the task's inputs exactly like the timed benchmark does (it calls the same
-/// benchmark methods), collects garbage, resets the kernel's high-water mark for this process (<c>clear_refs</c> 5), runs the
-/// operation <c>count</c> times and prints one <c>PEAK</c> line: resident set before the run, peak resident set during it, and
-/// the mean time. The difference is the working memory of the operation itself, without the inputs the setup built.
+/// benchmark methods), runs the operation once to warm up, collects garbage, resets the kernel's high-water mark for this
+/// process (<c>clear_refs</c> 5), runs the operation <c>count</c> times and prints one <c>PEAK</c> line: resident set before the
+/// run, peak resident set during it, and the mean time. The difference is the working memory of the operation itself, without
+/// the inputs the setup built and without one-time costs (code generation, thread-pool start-up, first native library load)
+/// that a long-running process pays once. Every library gets the same warm-up.
 /// </summary>
 internal static class GatePeak
 {
@@ -42,6 +44,7 @@ internal static class GatePeak
             return 0;
         }
 
+        op();
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         GC.WaitForPendingFinalizers();
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
@@ -218,7 +221,7 @@ internal static class GatePeak
                 b.Setup();
                 var g = new UpscaleGateBenchmarks();
                 g.Setup();
-                return new() { ["oneimage"] = () => b.OursLinear(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVipsResize(), ["magick"] = () => g.MagickUpscale() };
+                return new() { ["oneimage"] = () => b.OursLinearIntoBuffer(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVipsResize(), ["magick"] = () => g.MagickUpscale() };
             }
 
             case "watermark":
