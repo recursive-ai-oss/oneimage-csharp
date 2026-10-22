@@ -1,5 +1,6 @@
 using System.Numerics;
 using OneImage.Text.Fonts;
+using OneImage.Text.Shaping;
 
 namespace OneImage.Text.Layout;
 
@@ -11,6 +12,10 @@ internal struct ShapedGlyph
     public int Cluster;
     public int Length;
     public float Advance;
+
+    /// <summary>Where the glyph is drawn relative to its pen position, in font units, y up (marks, cursive joins).</summary>
+    public float XOffset;
+    public float YOffset;
     public bool IsSpace;
 }
 
@@ -44,7 +49,8 @@ internal sealed class TextLayout
     private readonly FontFace _face;
     private readonly float _scale;
     private readonly float _wrap;
-    private readonly bool _kern;
+    private readonly FeatureSet _features;
+    private readonly uint _language;
     private readonly float _tabUnits;
 
     private TextLayout(TextOptions o)
@@ -55,7 +61,22 @@ internal sealed class TextLayout
         float px = o.Font.Size * o.Dpi / 72f;
         _scale = px / _face.UnitsPerEm;
         _wrap = o.WrappingLength;
-        _kern = o.Kerning == KerningMode.Normal;
+        _language = Languages.ToTag(o.Language);
+        var settings = new List<(uint, int)>();
+        if (o.Kerning != KerningMode.Normal)
+        {
+            settings.Add((Tag.Kern, 0));
+        }
+
+        foreach (FontFeature f in o.Features)
+        {
+            if (f.Tag is not null)
+            {
+                settings.Add((Fonts.Be.Tag(f.Tag), f.Value));
+            }
+        }
+
+        _features = FeatureSet.Create(settings);
         _tabUnits = o.TabWidth * _face.GetAdvance(_face.GetGlyphIndex(' '));
         LineHeight = px * o.LineSpacing;
         float natural = m.LineHeight * _scale;
@@ -138,10 +159,11 @@ internal sealed class TextLayout
         return text.Length;
     }
 
-    // Shaping: one glyph per code point from the character map, kerning folded into the first glyph's advance.
+    // Shaping: code points go to the OpenType shaper (character map, GSUB substitutions, GPOS positioning). Tabs and zero width
+    // non-joiners end a shaping run: nothing substitutes or kerns across them.
     private void Shape(string text, int start, int end)
     {
-        int first = Glyphs.Count;
+        _pending = 0;
         int i = start;
         while (i < end)
         {
@@ -158,49 +180,66 @@ internal sealed class TextLayout
                 len = 1;
             }
 
-            if (IsIgnorable(cp))
+            if (cp == '	')
             {
-                // Zero-width format characters take no space and draw nothing.
-                i += len;
-                continue;
+                FlushRun(end);
+                int gid = _face.GetGlyphIndex(' ');
+                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = _tabUnits, IsSpace = true });
+            }
+            else if (cp == 0x200C)
+            {
+                FlushRun(end);
+            }
+            else if (!IsIgnorable(cp))
+            {
+                if (_pending == _cps.Length)
+                {
+                    Array.Resize(ref _cps, _pending * 2);
+                    Array.Resize(ref _clusters, _pending * 2);
+                }
+
+                _cps[_pending] = cp;
+                _clusters[_pending++] = i;
             }
 
-            int gid = _face.GetGlyphIndex(cp);
-            float adv;
-            bool space = IsBreakingSpace(cp);
-            if (cp == '\t')
-            {
-                gid = _face.GetGlyphIndex(' ');
-                adv = _tabUnits;
-                space = true;
-            }
-            else
-            {
-                adv = _face.GetAdvance(gid);
-            }
-
-            Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = adv, IsSpace = space });
             i += len;
         }
 
-        if (_kern)
-        {
-            for (int g = first; g + 1 < Glyphs.Count; g++)
-            {
-                ShapedGlyph a = Glyphs[g];
-                if (a.GlyphId == 0 || a.CodePoint == '\t')
-                {
-                    continue;
-                }
+        FlushRun(end);
+    }
 
-                int k = _face.GetKerning(a.GlyphId, Glyphs[g + 1].GlyphId);
-                if (k != 0)
-                {
-                    a.Advance += k;
-                    Glyphs[g] = a;
-                }
-            }
+    private readonly List<ShapedRunGlyph> _run = [];
+    private int[] _cps = new int[64];
+    private int[] _clusters = new int[64];
+    private int _pending;
+
+    private void FlushRun(int paragraphEnd)
+    {
+        if (_pending == 0)
+        {
+            return;
         }
+
+        _run.Clear();
+        TextShaper.Shape(_face, _cps.AsSpan(0, _pending), _clusters.AsSpan(0, _pending), _language, _features, _run);
+        for (int k = 0; k < _run.Count; k++)
+        {
+            ShapedRunGlyph r = _run[k];
+            int nextCluster = k + 1 < _run.Count ? _run[k + 1].Cluster : paragraphEnd;
+            Glyphs.Add(new ShapedGlyph
+            {
+                GlyphId = r.GlyphId,
+                CodePoint = r.CodePoint,
+                Cluster = r.Cluster,
+                Length = Math.Max(nextCluster - r.Cluster, 1),
+                Advance = r.XAdvance,
+                XOffset = r.XOffset,
+                YOffset = r.YOffset,
+                IsSpace = IsBreakingSpace(r.CodePoint),
+            });
+        }
+
+        _pending = 0;
     }
 
     private static bool IsIgnorable(int cp) =>
@@ -375,11 +414,12 @@ internal sealed class TextLayout
                 }
 
                 (float ax, float ay, float bx, float by) = o.TightBox();
-                float gx = l.Left + (PenX[k] * _scale);
+                float gx = l.Left + ((PenX[k] + g.XOffset) * _scale);
                 x0 = Math.Min(x0, gx + (ax * _scale));
                 x1 = Math.Max(x1, gx + (bx * _scale));
-                y0 = Math.Min(y0, l.Baseline - (by * _scale));
-                y1 = Math.Max(y1, l.Baseline - (ay * _scale));
+                float gy = l.Baseline - (g.YOffset * _scale);
+                y0 = Math.Min(y0, gy - (by * _scale));
+                y1 = Math.Max(y1, gy - (ay * _scale));
             }
         }
 
@@ -399,13 +439,14 @@ internal sealed class TextLayout
             for (int k = l.GlyphStart; k < l.GlyphEnd; k++)
             {
                 ShapedGlyph g = Glyphs[k];
-                float gx = l.Left + (PenX[k] * _scale);
+                float gx = l.Left + ((PenX[k] + g.XOffset) * _scale);
+                float gy = l.Baseline - (g.YOffset * _scale);
                 System.Drawing.RectangleF ink = default;
                 Outline outline = g.IsSpace ? Outline.Empty : _face.GetOutline(g.GlyphId);
                 if (!outline.IsEmpty)
                 {
                     (float ax, float ay, float bx, float by) = outline.TightBox();
-                    ink = new System.Drawing.RectangleF(gx + (ax * _scale), l.Baseline - (by * _scale), (bx - ax) * _scale, (by - ay) * _scale);
+                    ink = new System.Drawing.RectangleF(gx + (ax * _scale), gy - (by * _scale), (bx - ax) * _scale, (by - ay) * _scale);
                 }
 
                 list.Add(new GlyphBounds
@@ -439,7 +480,7 @@ internal sealed class TextLayout
                 Outline o = _face.GetOutline(g.GlyphId);
                 if (!o.IsEmpty)
                 {
-                    GlyphPaths.Append(builder, o, new Matrix3x2(_scale, 0, 0, -_scale, l.Left + (PenX[k] * _scale), l.Baseline));
+                    GlyphPaths.Append(builder, o, new Matrix3x2(_scale, 0, 0, -_scale, l.Left + ((PenX[k] + g.XOffset) * _scale), l.Baseline - (g.YOffset * _scale)));
                 }
             }
         }

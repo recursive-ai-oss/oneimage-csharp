@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using OneImage.Text.Shaping;
 
 namespace OneImage.Text.Fonts;
 
@@ -15,7 +16,6 @@ internal sealed class FontFace
     private readonly TrueTypeGlyphs? _glyf;
     private readonly CffGlyphs? _cff;
     private readonly KernTable? _kern;
-    private readonly GposKerning? _gpos;
     private readonly ConcurrentDictionary<int, Outline> _outlines = new();
     private readonly ConcurrentDictionary<uint, int> _kerning = new();
 
@@ -123,12 +123,9 @@ internal sealed class FontFace
         FamilyName = family ?? FullName ?? PostScriptName ?? "Unknown";
         SubfamilyName = sub ?? (IsBold ? (IsItalic ? "Bold Italic" : "Bold") : (IsItalic ? "Italic" : "Regular"));
 
-        if (_tables.TryGetValue(Be.Tag("GPOS"), out ReadOnlyMemory<byte> gpos))
-        {
-            _gpos = GposKerning.Create(gpos);
-        }
-
-        if (_gpos is null && _tables.TryGetValue(Be.Tag("kern"), out ReadOnlyMemory<byte> kern))
+        // GSUB, GPOS and GDEF with an unusable header are ignored: the font then shapes with plain advances.
+        Layout = new OtFace(_tables, NumGlyphs);
+        if (_tables.TryGetValue(Be.Tag("kern"), out ReadOnlyMemory<byte> kern))
         {
             _kern = KernTable.Create(kern);
         }
@@ -194,6 +191,15 @@ internal sealed class FontFace
 
     public bool IsCff => _cff is not null;
 
+    /// <summary>GSUB, GPOS and GDEF, with the shape plans built from them.</summary>
+    public OtFace Layout { get; }
+
+    /// <summary>Whether the font has a legacy <c>kern</c> table. It is used only where GPOS has no kern feature.</summary>
+    public bool HasLegacyKerning => _kern is not null;
+
+    /// <summary>The legacy <c>kern</c> table's adjustment for a pair, in font units.</summary>
+    public int GetLegacyKerning(int left, int right) => _kern is null ? 0 : _kern.Get(left, right);
+
     public static FontFace Create(Dictionary<uint, ReadOnlyMemory<byte>> tables) => new(tables);
 
     /// <summary>The glyph for a code point; 0 (.notdef) when the font lacks it.</summary>
@@ -237,14 +243,9 @@ internal sealed class FontFace
         return o;
     }
 
-    /// <summary>Kerning between two glyphs: the change to the first glyph's advance, in font units.</summary>
+    /// <summary>Kerning between two glyphs for Latin text: the change to the first glyph's advance, in font units (GPOS kern, else the legacy table).</summary>
     public int GetKerning(int left, int right)
     {
-        if (_gpos is null && _kern is null)
-        {
-            return 0;
-        }
-
         // Pair lookups walk coverage tables and class definitions; text repeats the same pairs, so remember them.
         uint key = ((uint)left << 16) | (uint)(right & 0xFFFF);
         if (_kerning.TryGetValue(key, out int cached))
@@ -252,7 +253,7 @@ internal sealed class FontFace
             return cached;
         }
 
-        int value = _gpos is not null ? _gpos.Get(left, right) : _kern!.Get(left, right);
+        int value = TextShaper.PairKerning(this, left, right);
         if (_kerning.Count >= MaxCachedKerningPairs)
         {
             _kerning.Clear();

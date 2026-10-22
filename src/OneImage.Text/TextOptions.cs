@@ -142,10 +142,37 @@ public sealed class TextOptions
     /// <summary>Gets or sets whether the font's kerning is applied. The default is <see cref="KerningMode.Normal"/>.</summary>
     public KerningMode Kerning { get; set; }
 
+    /// <summary>
+    /// Gets or sets the language of the text as a BCP 47 tag (<c>"sr"</c>, <c>"bg"</c>, <c>"tr"</c>, <c>"ro-RO"</c>), used to choose the font's
+    /// language-specific forms (the <c>locl</c> feature: Serbian or Bulgarian Cyrillic letters, Romanian comma accents, Turkish dotless i
+    /// and so on). The default, null, uses the font's default forms. A language the font does not know also uses them. An OpenType
+    /// language tag written in capitals (<c>"SRB"</c>) is accepted as is.
+    /// </summary>
+    public string? Language { get; set; }
+
+    /// <summary>
+    /// Gets the OpenType feature settings applied on top of the defaults. For horizontal Latin, Greek and Cyrillic text the defaults are
+    /// <c>ccmp</c>, <c>locl</c>, <c>rlig</c>, <c>liga</c>, <c>clig</c>, <c>calt</c>, <c>rclt</c>, <c>kern</c>, <c>mark</c>, <c>mkmk</c> and <c>curs</c>.
+    /// Settings are read in order and a later setting for the same tag wins; one for <c>kern</c> overrides <see cref="Kerning"/>.
+    /// </summary>
+    public IList<FontFeature> Features { get; } = [];
+
     /// <summary>Makes a copy of these options.</summary>
     /// <returns>A new, independent object with the same settings.</returns>
-    public TextOptions Clone() => new(_font)
+    public TextOptions Clone()
     {
+        var copy = CloneCore();
+        foreach (FontFeature f in Features)
+        {
+            copy.Features.Add(f);
+        }
+
+        return copy;
+    }
+
+    private TextOptions CloneCore() => new(_font)
+    {
+        Language = Language,
         _origin = _origin,
         _wrappingLength = _wrappingLength,
         _lineSpacing = _lineSpacing,

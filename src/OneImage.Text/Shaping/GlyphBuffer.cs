@@ -1,0 +1,94 @@
+namespace OneImage.Text.Shaping;
+
+/// <summary>One glyph of a run while it is being shaped.</summary>
+internal struct GlyphInfo
+{
+    public int Glyph;
+
+    /// <summary>The UTF-16 index of the first character this glyph stands for.</summary>
+    public int Cluster;
+
+    /// <summary>The first code point this glyph stands for.</summary>
+    public int CodePoint;
+
+    /// <summary>The GDEF class (1 base, 2 ligature, 3 mark, 4 component), or one derived from the character when the font has none.</summary>
+    public byte Class;
+
+    /// <summary>Nonzero for a ligature and for the marks that sat between its components; shared by all of them.</summary>
+    public ushort LigId;
+
+    /// <summary>For a mark inside a ligature: the 1-based component it belongs to; 0 otherwise.</summary>
+    public byte LigComp;
+}
+
+/// <summary>The placement of one glyph in font units: how far it advances the pen and where it is drawn relative to the pen.</summary>
+internal struct GlyphPos
+{
+    public int XAdvance;
+    public int YAdvance;
+    public int XOffset;
+    public int YOffset;
+
+    /// <summary>The glyph this one is attached to (a mark's base, a cursive predecessor), or -1.</summary>
+    public int AttachTo;
+
+    /// <summary>Anchor difference (target anchor minus own anchor) used to place an attached glyph.</summary>
+    public int AttachX;
+    public int AttachY;
+
+    /// <summary>True for a cursive link, whose horizontal part is already folded into the advances.</summary>
+    public bool Cursive;
+}
+
+/// <summary>The glyph run a shaper works on: glyph records that substitutions edit in place, and parallel positions once positioning starts.</summary>
+internal sealed class GlyphBuffer
+{
+    public GlyphInfo[] Info;
+    public GlyphPos[] Pos = [];
+    private int _count;
+
+    public GlyphBuffer(int capacity)
+    {
+        Info = new GlyphInfo[Math.Max(capacity, 4)];
+    }
+
+    public int Count => _count;
+
+    public void Add(in GlyphInfo g)
+    {
+        if (_count == Info.Length)
+        {
+            Array.Resize(ref Info, Info.Length * 2);
+        }
+
+        Info[_count++] = g;
+    }
+
+    /// <summary>Opens <paramref name="n"/> empty slots at <paramref name="index"/>.</summary>
+    public void Insert(int index, int n)
+    {
+        if (_count + n > Info.Length)
+        {
+            Array.Resize(ref Info, Math.Max(Info.Length * 2, _count + n));
+        }
+
+        Array.Copy(Info, index, Info, index + n, _count - index);
+        _count += n;
+    }
+
+    public void RemoveAt(int index)
+    {
+        Array.Copy(Info, index + 1, Info, index, _count - index - 1);
+        _count--;
+    }
+
+    /// <summary>Allocates the position records once substitution is finished; every glyph starts unattached.</summary>
+    public void AllocatePositions()
+    {
+        Pos = new GlyphPos[_count];
+        for (int i = 0; i < _count; i++)
+        {
+            Pos[i].AttachTo = -1;
+        }
+    }
+}

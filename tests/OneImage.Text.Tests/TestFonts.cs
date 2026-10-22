@@ -10,6 +10,14 @@ internal static class TestFonts
     public const string Collection = "NotoSans-Subset.ttc";
     public const string Woff = "NotoSans-Subset-Regular.woff";
     public const string Cff = "NotoSansCJK-Subset.otf";
+    public const string Shaping = "NotoSans-Shaping-Subset.ttf";
+
+    private static readonly Lazy<FontCollection> ShapingShared = new(() =>
+    {
+        var c = new FontCollection();
+        c.Add(PathOf(Shaping));
+        return c;
+    });
 
     private static readonly Lazy<FontCollection> Shared = new(() =>
     {
@@ -25,6 +33,9 @@ internal static class TestFonts
     public static byte[] Bytes(string file) => File.ReadAllBytes(PathOf(file));
 
     public static FontCollection Fonts => Shared.Value;
+
+    /// <summary>Noto Sans with the full Latin, Greek and Cyrillic layout tables and the combining marks.</summary>
+    public static FontCollection ShapingFonts => ShapingShared.Value;
 
     public static Font Noto(float size, FontStyle style = FontStyle.Regular) => Fonts.Get("Noto Sans").CreateFont(size, style);
 
