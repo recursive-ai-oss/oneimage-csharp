@@ -9,8 +9,11 @@ internal static class TiffBlockDecoder
 {
     private const int InputChunk = 1 << 16;
 
-    /// <summary>Decodes block number <paramref name="index"/> (planes laid out one after another).</summary>
-    public static byte[] Decode(TiffFile file, TiffFrame f, int index, ImageLimits limits, CancellationToken cancellationToken)
+    /// <summary>Decodes block <paramref name="index"/> (planes laid out one after another). The result comes from <see cref="ArrayPool{T}"/> and is longer than the block; the caller returns it.</summary>
+    public static byte[] DecodePooled(TiffFile file, TiffFrame f, int index, ImageLimits limits, CancellationToken cancellationToken)
+        => DecodeCore(file, f, index, limits, pooled: true, cancellationToken);
+
+    private static byte[] DecodeCore(TiffFile file, TiffFrame f, int index, ImageLimits limits, bool pooled, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if ((uint)index >= (uint)f.Offsets.Length || (uint)index >= (uint)f.Counts.Length)
@@ -44,9 +47,32 @@ internal static class TiffBlockDecoder
                 TiffKernels.ReverseBits(compressed);
             }
 
-            byte[] raw = new byte[expected];
-            Decompress(f, compressed, raw, rows, rowBytes, limits, cancellationToken);
-            Undo(f, raw, rowBytes, file.BigEndian);
+            byte[] raw;
+            if (pooled)
+            {
+                raw = ArrayPool<byte>.Shared.Rent(expected);
+                raw.AsSpan(0, expected).Clear();
+            }
+            else
+            {
+                raw = new byte[expected];
+            }
+
+            try
+            {
+                Decompress(f, compressed, raw.AsSpan(0, expected), rows, rowBytes, limits, cancellationToken);
+                Undo(f, raw.AsSpan(0, expected), rowBytes, file.BigEndian);
+            }
+            catch
+            {
+                if (pooled)
+                {
+                    ArrayPool<byte>.Shared.Return(raw);
+                }
+
+                throw;
+            }
+
             return raw;
         }
         finally

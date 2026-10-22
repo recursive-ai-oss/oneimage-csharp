@@ -22,6 +22,13 @@ internal sealed class DecodeSession
     public ImageLimits Limits { get; }
 }
 
+/// <summary>Decoder state that holds reusable scratch (decoded blocks) which a finished one-shot read can give back.</summary>
+internal interface IReleasableDecoderState
+{
+    /// <summary>Drops the scratch; it is rebuilt on demand.</summary>
+    void ReleaseCached();
+}
+
 /// <summary>
 /// A frame decoded on demand, in one of three modes picked from the decoder's capabilities and the frame size:
 /// <list type="bullet">
@@ -174,8 +181,17 @@ internal sealed class DecodeSourceNode : Node
     /// <summary>A shrunk or cropped decode exists for one pipeline; a full-size decode may be shared by several.</summary>
     protected override bool PipelinePrivate => _scale > 1 || !IsFull;
 
+    protected override void ReleaseShared()
+    {
+        if (_randomAccess)
+        {
+            (_session.Info.DecoderState as IReleasableDecoderState)?.ReleaseCached();
+        }
+    }
+
     protected override void ReleaseMaterialized()
     {
+        ReleaseShared();
         TileGrid? grid;
         lock (_gate)
         {

@@ -82,6 +82,11 @@ internal abstract class Node
     /// </summary>
     protected virtual bool PipelinePrivate => true;
 
+    /// <summary>Gives back scratch memory a node keeps for random access even when other pipelines share it (decoder block caches); it is rebuilt on demand.</summary>
+    protected virtual void ReleaseShared()
+    {
+    }
+
     /// <summary>Gives back memory only this pipeline could have wanted again (materialized tiles). Everything is recomputed if the image is used again.</summary>
     protected virtual void ReleaseMaterialized()
     {
@@ -107,6 +112,10 @@ internal abstract class Node
             {
                 ids.Add(n.Id);
                 n.ReleaseMaterialized();
+            }
+            else
+            {
+                n.ReleaseShared();
             }
 
             foreach (Node input in n.Inputs)

@@ -4,7 +4,7 @@ using OneImage.Kernels;
 namespace OneImage.Codecs.Tiff;
 
 /// <summary>Everything ReadInfo learned that the frame decodes need, so they never re-parse the directories.</summary>
-internal sealed class TiffImageState
+internal sealed class TiffImageState : IReleasableDecoderState
 {
     /// <summary>Budget for decoded strips and tiles kept between 128x128 requests.</summary>
     public const long CacheBudget = 128L << 20;
@@ -23,6 +23,9 @@ internal sealed class TiffImageState
 
     /// <summary>Counts strips and tiles that were actually read and decompressed (cache hits do not count).</summary>
     public long BlocksDecoded;
+
+    /// <summary>Returns every cached block to the pool; later reads decode again.</summary>
+    public void ReleaseCached() => Cache.Clear();
 }
 
 /// <summary>
@@ -33,6 +36,10 @@ internal sealed class TiffDecoder : IImageDecoder
 {
     // Offset tables, palettes and JPEG tables of all pages stay in memory; many pages pointing at the same big table must not multiply it.
     private const long MaxRetainedBytes = 128L << 20;
+
+    // Reads of at least this many pixels (and block rows up to this many raw bytes) bypass the block cache.
+    private const long DirectReadPixels = 1 << 20;
+    private const long MaxDirectRowBytes = 64L << 20;
 
     private readonly TiffFormat _format;
 
@@ -136,48 +143,86 @@ internal sealed class TiffDecoder : IImageDecoder
             int lastBy = (r.Bottom - 1) / f.BlockHeight;
             int firstBx = r.X / f.BlockWidth;
             int lastBx = (r.Right - 1) / f.BlockWidth;
-            for (int by = firstBy; by <= lastBy; by++)
+
+            // A large read touches every block of the region once, so keeping them in the shared cache would only copy and retain
+            // the whole frame. Such reads decode each block row into pooled buffers that are returned as soon as the row is done.
+            int perRow = checked((lastBx - firstBx + 1) * f.Planes);
+            long rowRaw = (long)perRow * f.BlockHeight * rowBytes;
+            bool direct = (long)r.Width * r.Height >= DirectReadPixels && rowRaw <= MaxDirectRowBytes;
+            byte[]?[] held = direct ? new byte[]?[perRow] : [];
+            try
             {
-                int blockTop = by * f.BlockHeight;
-                int y0 = Math.Max(r.Y, blockTop);
-                int y1 = Math.Min(r.Bottom, Math.Min(blockTop + f.BlockHeight, f.Height));
-                for (int cy = y0; cy < y1; cy += chunkRows)
+                for (int by = firstBy; by <= lastBy; by++)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    int rows = Math.Min(chunkRows, y1 - cy);
-                    for (int bx = firstBx; bx <= lastBx; bx++)
+                    int blockTop = by * f.BlockHeight;
+                    int y0 = Math.Max(r.Y, blockTop);
+                    int y1 = Math.Min(r.Bottom, Math.Min(blockTop + f.BlockHeight, f.Height));
+                    if (direct)
                     {
-                        int blockLeft = bx * f.BlockWidth;
-                        int x0 = Math.Max(r.X, blockLeft);
-                        int x1 = Math.Min(r.Right, Math.Min(blockLeft + f.BlockWidth, f.Width));
-                        for (int plane = 0; plane < f.Planes; plane++)
+                        ReleaseHeld(held);
+                    }
+
+                    for (int cy = y0; cy < y1; cy += chunkRows)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        int rows = Math.Min(chunkRows, y1 - cy);
+                        for (int bx = firstBx; bx <= lastBx; bx++)
                         {
-                            int index = (plane * f.BlocksPerPlane) + (by * f.BlocksAcross) + bx;
-                            byte[] block = GetBlock(state, file, f, frameIndex, index, limits, cancellationToken);
-                            for (int row = 0; row < rows; row++)
+                            int blockLeft = bx * f.BlockWidth;
+                            int x0 = Math.Max(r.X, blockLeft);
+                            int x1 = Math.Min(r.Right, Math.Min(blockLeft + f.BlockWidth, f.Width));
+                            for (int plane = 0; plane < f.Planes; plane++)
                             {
-                                ReadOnlySpan<byte> src = block.AsSpan((cy + row - blockTop) * rowBytes, rowBytes);
-                                Span<byte> dst = band.AsSpan((row * outRowBytes) + ((x0 - r.X) * bpp));
-                                f.Converter.ConvertRow(src, plane, x0 - blockLeft, x1 - x0, dst);
+                                int index = (plane * f.BlocksPerPlane) + (by * f.BlocksAcross) + bx;
+                                byte[] block;
+                                TiffBlock? lease = null;
+                                if (direct)
+                                {
+                                    int slot = ((bx - firstBx) * f.Planes) + plane;
+                                    block = held[slot] ??= DecodeDirect(state, file, f, index, limits, cancellationToken);
+                                }
+                                else
+                                {
+                                    lease = GetBlock(state, file, f, frameIndex, index, limits, cancellationToken);
+                                    block = lease.Data;
+                                }
+
+                                try
+                                {
+                                    for (int row = 0; row < rows; row++)
+                                    {
+                                        ReadOnlySpan<byte> src = block.AsSpan((cy + row - blockTop) * rowBytes, rowBytes);
+                                        Span<byte> dst = band.AsSpan((row * outRowBytes) + ((x0 - r.X) * bpp));
+                                        f.Converter.ConvertRow(src, plane, x0 - blockLeft, x1 - x0, dst);
+                                    }
+                                }
+                                finally
+                                {
+                                    lease?.Release();
+                                }
                             }
                         }
-                    }
 
-                    if (f.UnpremultiplyOnRead)
-                    {
-                        Span<byte> pix = band.AsSpan(0, rows * outRowBytes);
-                        if (f.Format.Sample == SampleType.U16)
+                        if (f.UnpremultiplyOnRead)
                         {
-                            TiffKernels.Unpremultiply16(pix, f.Format.ChannelCount);
+                            Span<byte> pix = band.AsSpan(0, rows * outRowBytes);
+                            if (f.Format.Sample == SampleType.U16)
+                            {
+                                TiffKernels.Unpremultiply16(pix, f.Format.ChannelCount);
+                            }
+                            else
+                            {
+                                TiffKernels.Unpremultiply8(pix, f.Format.ChannelCount);
+                            }
                         }
-                        else
-                        {
-                            TiffKernels.Unpremultiply8(pix, f.Format.ChannelCount);
-                        }
-                    }
 
-                    sink.WriteRows(cy - r.Y, band.AsSpan(0, rows * outRowBytes), rows);
+                        sink.WriteRows(cy - r.Y, band.AsSpan(0, rows * outRowBytes), rows);
+                    }
                 }
+            }
+            finally
+            {
+                ReleaseHeld(held);
             }
         }
         finally
@@ -186,13 +231,35 @@ internal sealed class TiffDecoder : IImageDecoder
         }
     }
 
-    private static byte[] GetBlock(TiffImageState state, TiffFile file, TiffFrame f, int frameIndex, int index, ImageLimits limits, CancellationToken ct)
+    private static void ReleaseHeld(byte[]?[] held)
+    {
+        for (int i = 0; i < held.Length; i++)
+        {
+            if (held[i] is { } b)
+            {
+                ArrayPool<byte>.Shared.Return(b);
+                held[i] = null;
+            }
+        }
+    }
+
+    private static byte[] DecodeDirect(TiffImageState state, TiffFile file, TiffFrame f, int index, ImageLimits limits, CancellationToken ct)
+    {
+        Interlocked.Increment(ref state.BlocksDecoded);
+        return TiffBlockDecoder.DecodePooled(file, f, index, limits, ct);
+    }
+
+    private static TiffBlock GetBlock(TiffImageState state, TiffFile file, TiffFrame f, int frameIndex, int index, ImageLimits limits, CancellationToken ct)
     {
         long key = ((long)frameIndex << 32) | (uint)index;
-        return state.Cache.GetOrCompute(key, (state, file, f, index, limits, ct), static s =>
-        {
-            Interlocked.Increment(ref s.state.BlocksDecoded);
-            return TiffBlockDecoder.Decode(s.file, s.f, s.index, s.limits, s.ct);
-        });
+        return state.Cache.GetOrCompute(
+            key,
+            (state, file, f, index, limits, ct),
+            static s =>
+            {
+                Interlocked.Increment(ref s.state.BlocksDecoded);
+                return TiffBlockDecoder.DecodePooled(s.file, s.f, s.index, s.limits, s.ct);
+            },
+            static s => s.f.RowsInBlock(s.index % s.f.BlocksPerPlane) * (int)s.f.BlockRowBytes);
     }
 }

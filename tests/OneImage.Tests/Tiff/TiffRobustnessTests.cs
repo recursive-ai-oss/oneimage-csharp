@@ -87,6 +87,43 @@ public sealed class TiffRobustnessTests
     }
 
     [Fact]
+    public void ReadsStayCorrectWhileTheBlockCacheIsCleared()
+    {
+        // Cleared blocks go back to a pool while readers may still copy from them; a reader must keep its block alive.
+        var b = new TiffBuilder { Width = 512, Height = 512, Bits = 8, Spp = 3, Photometric = 2, TileW = 128, TileH = 128, Compression = 5, Predictor = 2 };
+        b.MakeSamples(5);
+        byte[] file = b.Build();
+        byte[] want = TiffTestUtil.Decode(file);
+        ImageInfo info = TiffTestUtil.Info(file);
+        var state = (TiffImageState)info.DecoderState!;
+        using var stop = new CancellationTokenSource();
+        Task clearer = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                state.ReleaseCached();
+            }
+        });
+        try
+        {
+            Parallel.For(0, 400, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i =>
+            {
+                var r = new ImageRect((i % 4) * 128, ((i / 4) % 4) * 128, 128, 128);
+                byte[] t = TiffTestUtil.Decode(file, region: r, info: info);
+                for (int y = 0; y < 128; y++)
+                {
+                    Assert.True(t.AsSpan(y * 384, 384).SequenceEqual(want.AsSpan((((r.Y + y) * 512) + r.X) * 3, 384)));
+                }
+            });
+        }
+        finally
+        {
+            stop.Cancel();
+            clearer.Wait();
+        }
+    }
+
+    [Fact]
     public void LoadedImageCropMatchesFullDecode()
     {
         var b = new TiffBuilder { Width = 700, Height = 500, Bits = 16, Spp = 3, Photometric = 2, TileW = 128, TileH = 64, Compression = 8, Predictor = 2 };
