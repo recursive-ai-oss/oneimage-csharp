@@ -243,33 +243,5 @@ internal static class Idct
 
     private static byte Clip(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
 
-    public static void Add(ReadOnlySpan<short> input, byte[] dst, int off)
-    {
-        Span<int> c = stackalloc int[16];
-        for (int i = 0; i < 4; i++)
-        {
-            int a = input[i] + input[8 + i];
-            int b = input[i] - input[8 + i];
-            int cc = Mul2(input[4 + i]) - Mul1(input[12 + i]);
-            int d = Mul1(input[4 + i]) + Mul2(input[12 + i]);
-            c[(i * 4) + 0] = a + d;
-            c[(i * 4) + 1] = b + cc;
-            c[(i * 4) + 2] = b - cc;
-            c[(i * 4) + 3] = a - d;
-        }
-
-        for (int i = 0; i < 4; i++)
-        {
-            int dc = c[i] + 4;
-            int a = dc + c[8 + i];
-            int b = dc - c[8 + i];
-            int cc = Mul2(c[4 + i]) - Mul1(c[12 + i]);
-            int d = Mul1(c[4 + i]) + Mul2(c[12 + i]);
-            int o = off + (i * Bps);
-            dst[o] = Clip(dst[o] + ((a + d) >> 3));
-            dst[o + 1] = Clip(dst[o + 1] + ((b + cc) >> 3));
-            dst[o + 2] = Clip(dst[o + 2] + ((b - cc) >> 3));
-            dst[o + 3] = Clip(dst[o + 3] + ((a - d) >> 3));
-        }
-    }
+    public static void Add(ReadOnlySpan<short> input, byte[] dst, int off) => Kernels.WebPIdctKernel.Add(input, dst, off, Bps);
 }

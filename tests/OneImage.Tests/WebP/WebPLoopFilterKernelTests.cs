@@ -178,3 +178,30 @@ public sealed class WebPPredictKernelTests
         Assert.Throws<ArgumentException>(() => WebPPredictKernels.ScoreTile(a, w, h, 0, 0, w, h, 14, new int[1024]));
     }
 }
+
+public sealed class WebPIdctKernelTests
+{
+    [Fact]
+    public void VectorMatchesScalarReference()
+    {
+        var rnd = new Random(77);
+        for (int iter = 0; iter < 20000; iter++)
+        {
+            short[] coef = new short[16];
+            int range = iter % 3 == 0 ? 40 : iter % 3 == 1 ? 2000 : 32767;
+            for (int i = 0; i < 16; i++)
+            {
+                coef[i] = rnd.Next(4) == 0 ? (short)0 : (short)rnd.Next(-range, range + 1);
+            }
+
+            byte[] a = new byte[(4 * 32) + 8];
+            rnd.NextBytes(a);
+            byte[] b = (byte[])a.Clone();
+            WebPIdctKernel.AddScalar(coef, a, 5, 32);
+            WebPIdctKernel.Add(coef, b, 5, 32);
+            Assert.True(a.AsSpan().SequenceEqual(b), $"iteration {iter}");
+        }
+
+        Assert.Throws<ArgumentException>(() => WebPIdctKernel.Add(new short[16], new byte[10], 0, 32));
+    }
+}
