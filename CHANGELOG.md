@@ -6,7 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [1.0.0] - 2026-10-22
 
-First release.
+First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage`).
 
 ### Added
 

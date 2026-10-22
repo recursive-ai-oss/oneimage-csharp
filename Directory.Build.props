@@ -3,6 +3,8 @@
   <PropertyGroup Label="Name">
     <!-- The one place the project name lives. Renaming = change this value plus the folder/file names. -->
     <LibName>OneImage</LibName>
+    <!-- NuGet package IDs carry the publisher prefix; assembly and namespace names stay $(LibName). -->
+    <PackagePrefix>RecursiveAI.</PackagePrefix>
   </PropertyGroup>
 
   <PropertyGroup Label="Output">

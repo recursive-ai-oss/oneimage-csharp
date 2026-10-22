@@ -74,7 +74,7 @@ publishes the AOT smoke app.
 - **A changelog line** under `[Unreleased]` in
   [CHANGELOG.md](CHANGELOG.md) for anything a user can see. Mark
   breaking changes.
-- **No new dependency** for the `OneImage` package: it depends on the
+- **No new dependency** for the `RecursiveAI.OneImage` package: it depends on the
   .NET base class library only.
 - **No `unsafe` code outside `src/OneImage/Kernels/`,** and nothing that
   parses untrusted bytes in the kernel layer.

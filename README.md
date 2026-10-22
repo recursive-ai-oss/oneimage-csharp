@@ -6,7 +6,7 @@ same engine.** PNG, JPEG, WebP, GIF, TIFF, BMP and ICO, with ICC color
 management. Pure C# with no dependency beyond .NET itself; untrusted
 files are read through bounds-checked managed code.
 
-[![NuGet](https://img.shields.io/nuget/v/OneImage)](https://www.nuget.org/packages/OneImage)
+[![NuGet](https://img.shields.io/nuget/v/RecursiveAI.OneImage)](https://www.nuget.org/packages/RecursiveAI.OneImage)
 [![CI](https://github.com/recursive-ai-oss/oneimage-csharp/actions/workflows/ci.yml/badge.svg)](https://github.com/recursive-ai-oss/oneimage-csharp/actions/workflows/ci.yml)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](#install)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
@@ -58,8 +58,11 @@ choice.
 ## Install
 
 ```sh
-dotnet add package OneImage
+dotnet add package RecursiveAI.OneImage
 ```
+
+The package is `RecursiveAI.OneImage`; the namespace is `OneImage`
+(`using OneImage;`).
 
 Target framework `net10.0`. Moving from ImageSharp or System.Drawing?
 See the [migration guide](docs/migrating.md).

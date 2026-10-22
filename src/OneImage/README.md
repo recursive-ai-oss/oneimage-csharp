@@ -17,8 +17,11 @@ marked):
 ## Install
 
 ```sh
-dotnet add package OneImage
+dotnet add package RecursiveAI.OneImage
 ```
+
+The package is `RecursiveAI.OneImage`; the namespace is `OneImage`
+(`using OneImage;`).
 
 Target framework `net10.0`.
 
