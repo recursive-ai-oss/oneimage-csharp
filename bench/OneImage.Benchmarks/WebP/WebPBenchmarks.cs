@@ -117,6 +117,22 @@ public class WebPDecodeBenchmarks : IDisposable
         return _out[0];
     }
 
+    // The files are opaque, so their natural in-memory form is 3 bytes per pixel. These two rows compare both libraries in it;
+    // the first row also pays this library's Rgb8 -> Rgba32 conversion in Image.CopyPixelsTo.
+    [Benchmark]
+    public int OneImageNative()
+    {
+        OneImage.Image img = OneImage.Image.Load(File);
+        return img.ToArray<OneImage.Rgb24>().Length;
+    }
+
+    [Benchmark]
+    public int ImageSharpRgb24()
+    {
+        using SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgb24> img = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(File);
+        return img.Width;
+    }
+
     [Benchmark]
     public byte SkiaSharp()
     {
