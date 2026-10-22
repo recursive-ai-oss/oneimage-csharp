@@ -107,11 +107,37 @@ internal sealed class WeightTable
     /// <returns>The table.</returns>
     public static WeightTable Build(int sourceSize, int outputSize, double scale, ResamplingFilter filter)
     {
+        // Tables are immutable and depend only on these four values; a service making many thumbnails of the same few sizes
+        // would otherwise rebuild (and throw away) the same tables for every image.
+        var key = (sourceSize, outputSize, BitConverter.DoubleToInt64Bits(scale), filter);
+        if (s_cache.TryGetValue(key, out WeightTable? cached))
+        {
+            return cached;
+        }
+
+        WeightTable table = BuildCore(sourceSize, outputSize, scale, filter);
+        if (s_cache.Count >= MaxCached)
+        {
+            s_cache.Clear();
+        }
+
+        s_cache[key] = table;
+        return table;
+    }
+
+    private const int MaxCached = 64;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int, long, ResamplingFilter), WeightTable> s_cache = new();
+
+    private static WeightTable BuildCore(int sourceSize, int outputSize, double scale, ResamplingFilter filter)
+    {
         var start = new int[outputSize];
         var count = new int[outputSize];
         var offset = new int[outputSize];
-        var weights = new List<float>(outputSize * 4);
         bool identity = sourceSize == outputSize && Math.Abs(scale - 1) < 1e-12;
+        // Sized for the expected taps per output so the list does not grow by doubling (each doubling leaves a dead array behind).
+        double tapsPerOutput = identity || filter == ResamplingFilter.Nearest ? 1 : filter == ResamplingFilter.Box ? Math.Ceiling(scale) + 1 : (2 * FilterFunctions.Support(filter) * Math.Max(1, scale)) + 2;
+        var weights = new List<float>((int)Math.Min(1 << 24, outputSize * tapsPerOutput));
         double[] tmp = new double[8];
         double[] folded = [];
         for (int o = 0; o < outputSize; o++)

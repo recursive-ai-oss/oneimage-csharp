@@ -10,6 +10,7 @@ namespace OneImage;
 internal abstract class Node
 {
     private static long s_nextId;
+    private CacheReaper? _reaper;
 
     protected Node(int width, int height, PixelFormat format, OpDescriptor descriptor, params Node[] inputs)
     {
@@ -75,6 +76,52 @@ internal abstract class Node
     /// <summary>Gets a value indicating whether getting a tile is just a lookup of stored pixels (no computation), so small copies are not worth parallelizing.</summary>
     public virtual bool DirectStorage => false;
 
+    /// <summary>
+    /// Gets a value indicating whether this node's cached or materialized tiles belong to the pipeline it is part of, so a finished
+    /// one-shot save may give them back. False for nodes another pipeline can share, such as a full-size decode.
+    /// </summary>
+    protected virtual bool PipelinePrivate => true;
+
+    /// <summary>Gives back memory only this pipeline could have wanted again (materialized tiles). Everything is recomputed if the image is used again.</summary>
+    protected virtual void ReleaseMaterialized()
+    {
+    }
+
+    /// <summary>
+    /// Called when a save has consumed an image's graph: drops the cached tiles of the pipeline's own nodes and releases memory they
+    /// hold, instead of leaving it for the garbage collector to find. A caller that saves the same image again just recomputes.
+    /// </summary>
+    public static void ReleaseAfterSave(IEnumerable<Node> roots)
+    {
+        var seen = new HashSet<Node>(ReferenceEqualityComparer.Instance);
+        var ids = new HashSet<long>();
+        var stack = new Stack<Node>(roots);
+        while (stack.TryPop(out Node? n))
+        {
+            if (!seen.Add(n))
+            {
+                continue;
+            }
+
+            if (n.PipelinePrivate)
+            {
+                ids.Add(n.Id);
+                n.ReleaseMaterialized();
+            }
+
+            foreach (Node input in n.Inputs)
+            {
+                stack.Push(input);
+            }
+        }
+
+        if (ids.Count > 0)
+        {
+            TileCache.Global.RemoveNodes(-1, ids);
+            TileCache.Streaming.RemoveNodes(-1, ids);
+        }
+    }
+
     /// <summary>Returns a tile with one reference for the caller, who must release it.</summary>
     public Tile GetTile(int tx, int ty, RenderContext context) => GetTile(tx, ty, context, useCache: true);
 
@@ -102,11 +149,33 @@ internal abstract class Node
             return hit ?? ComputeTile(tx, ty, context);
         }
 
-        return context.CacheFor(this).GetOrCompute(Id, tx, ty, (Node: this, tx, ty, context), static s => s.Node.ComputeTile(s.tx, s.ty, s.context), context.CancellationToken);
+        TileCache cache = context.CacheFor(this);
+        if (_reaper == null)
+        {
+            // Created on first use only: cached tiles are keyed by node id and hold no reference to the node, so without this
+            // they would outlive a dropped image until budget pressure evicts them.
+            Interlocked.CompareExchange(ref _reaper, new CacheReaper(Id, cache), null);
+        }
+
+        return cache.GetOrCompute(Id, tx, ty, (Node: this, tx, ty, context), static s => s.Node.ComputeTile(s.tx, s.ty, s.context), context.CancellationToken);
     }
 
     /// <summary>Computes a tile. The result carries one reference owned by the caller. Must be deterministic.</summary>
     protected abstract Tile ComputeTile(int tx, int ty, RenderContext context);
+}
+
+/// <summary>Held only by its node; when the node is collected this is too, and it releases the node's cached tiles.</summary>
+internal sealed class CacheReaper(long nodeId, TileCache cache)
+{
+    ~CacheReaper()
+    {
+        TileCache.Global.RemoveNode(nodeId);
+        TileCache.Streaming.RemoveNode(nodeId);
+        if (cache != TileCache.Global && cache != TileCache.Streaming)
+        {
+            cache.RemoveNode(nodeId);
+        }
+    }
 }
 
 internal static class Render

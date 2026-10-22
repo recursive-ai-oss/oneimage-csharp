@@ -530,6 +530,8 @@ public sealed partial class Image
             {
                 r.ReleaseBuffers();
             }
+
+            Node.ReleaseAfterSave(Array.ConvertAll(_frames, f => f.Node));
         }
     }
 

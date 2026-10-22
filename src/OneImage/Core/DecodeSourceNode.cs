@@ -141,8 +141,43 @@ internal sealed class DecodeSourceNode : Node
             return StreamTile(tx, ty, context.CancellationToken);
         }
 
-        TileGrid grid = EnsureGrid(context.CancellationToken);
-        return grid.Tiles[(ty * grid.TilesX) + tx]!.Retain();
+        return GridTile(tx, ty, context.CancellationToken);
+    }
+
+    /// <summary>A shrunk or cropped decode exists for one pipeline; a full-size decode may be shared by several.</summary>
+    protected override bool PipelinePrivate => _scale > 1 || !IsFull;
+
+    protected override void ReleaseMaterialized()
+    {
+        TileGrid? grid;
+        lock (_gate)
+        {
+            grid = _grid;
+            _grid = null;
+        }
+
+        if (grid == null)
+        {
+            return;
+        }
+
+        // Readers that already hold a tile keep it; new readers decode again.
+        foreach (Tile? t in grid.Tiles)
+        {
+            t?.Release();
+        }
+    }
+
+    private Tile GridTile(int tx, int ty, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            TileGrid grid = EnsureGrid(cancellationToken);
+            if (grid.Tiles[(ty * grid.TilesX) + tx]!.TryRetain())
+            {
+                return grid.Tiles[(ty * grid.TilesX) + tx]!;
+            }
+        }
     }
 
     private static ImageRect FullRegion(DecodeSession session, int frame, int scale)
@@ -188,7 +223,7 @@ internal sealed class DecodeSourceNode : Node
             TileGrid? grid = Volatile.Read(ref _grid);
             if (grid != null)
             {
-                return grid.Tiles[(ty * grid.TilesX) + tx]!.Retain();
+                return GridTile(tx, ty, cancellationToken);
             }
 
             StreamingSessionHandle? handle = CurrentSession(ty);

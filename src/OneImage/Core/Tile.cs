@@ -76,6 +76,24 @@ internal sealed class Tile
         return this;
     }
 
+    /// <summary>Takes a reference only if the tile is still alive; false when its last reference is already gone (the buffer is back in the pool).</summary>
+    public bool TryRetain()
+    {
+        int r = Volatile.Read(ref _refs);
+        while (r > 0)
+        {
+            int seen = Interlocked.CompareExchange(ref _refs, r + 1, r);
+            if (seen == r)
+            {
+                return true;
+            }
+
+            r = seen;
+        }
+
+        return false;
+    }
+
     public void Release()
     {
         if (Interlocked.Decrement(ref _refs) == 0 && _store != null)
@@ -128,6 +146,24 @@ internal sealed class TileCache
     public long Misses => Interlocked.Read(ref _misses);
 
     public int Count { get { lock (_gate) { return _map.Count; } } }
+
+    /// <summary>Gets how many tiles of one node are cached (test statistic).</summary>
+    public int CountFor(long node)
+    {
+        lock (_gate)
+        {
+            int n = 0;
+            for (Entry? e = _head; e != null; e = e.Next)
+            {
+                if (e.Key.Node == node)
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+    }
 
     /// <summary>Returns a retained tile or null. The caller must release it.</summary>
     public Tile? TryGet(long node, int tx, int ty)
@@ -230,6 +266,31 @@ internal sealed class TileCache
             PushFront(e);
             _bytes += tile.Length;
             Evict();
+        }
+    }
+
+    /// <summary>Drops every cached tile of one node (the node is gone, so nobody can ask for them again).</summary>
+    public void RemoveNode(long node) => RemoveNodes(node, null);
+
+    /// <summary>Drops every cached tile of the given nodes in one pass. Tiles still held by a render stay valid; they just leave the cache.</summary>
+    public void RemoveNodes(long single, HashSet<long>? many)
+    {
+        lock (_gate)
+        {
+            Entry? e = _head;
+            while (e != null)
+            {
+                Entry? next = e.Next;
+                if (e.Key.Node == single || many?.Contains(e.Key.Node) == true)
+                {
+                    Unlink(e);
+                    _map.Remove(e.Key);
+                    _bytes -= e.Tile.Length;
+                    e.Tile.Release();
+                }
+
+                e = next;
+            }
         }
     }
 
