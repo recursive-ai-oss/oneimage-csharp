@@ -493,18 +493,24 @@ internal sealed class JpegEncodeSession : IDisposable
         int rowsPerMcu = 8 * _vmax;
         int fw = _mcusX * 8 * _hmax;
         int channels = _frame.Format.ChannelCount;
+        // MCU rows are transformed a few at a time (a power of two, so it divides the read chunk below); each worker takes one row of
+        // a batch. Memory grows with the batch, so it is no larger than the degree.
         int workers = Math.Max(1, Math.Min(_degree, _mcusY));
-        int batch = workers == 1 ? 1 : workers * 2;
+        workers = 1 << (31 - System.Numerics.BitOperations.LeadingZeroCount((uint)workers));
+        int batch = workers;
+
+        // Pixels are read a tile row or more at a time straight into the input buffer: the source renders whole tile rows once
+        // and nothing is copied through a band.
+        int chunkMcus = Math.Max(Tile.Size / rowsPerMcu, batch);
         int inputBytes = Math.Max(1, _width * channels * rowsPerMcu);
-        var inputs = new byte[batch][];
+        byte[]? input = null;
+        int chunkStart = 0;
+        int chunkEnd = 0;
         var scratch = new RowScratch[workers];
         short[][] streamBlocks = new short[_comps.Length][];
         try
         {
-            for (int i = 0; i < batch; i++)
-            {
-                inputs[i] = ArrayPool<byte>.Shared.Rent(inputBytes);
-            }
+            input = ArrayPool<byte>.Shared.Rent(checked(inputBytes * chunkMcus));
 
             for (int w = 0; w < workers; w++)
             {
@@ -531,10 +537,12 @@ internal sealed class JpegEncodeSession : IDisposable
             {
                 _ct.ThrowIfCancellationRequested();
                 int count = Math.Min(batch, _mcusY - first);
-                for (int k = 0; k < count; k++)
+                if (first >= chunkEnd)
                 {
-                    int y0 = (first + k) * rowsPerMcu;
-                    _frame.ReadRows(y0, Math.Min(rowsPerMcu, _height - y0), inputs[k]);
+                    chunkStart = first;
+                    chunkEnd = Math.Min(first + chunkMcus, _mcusY);
+                    int y0 = chunkStart * rowsPerMcu;
+                    _frame.ReadRegion(new ImageRect(0, y0, _width, Math.Min(chunkEnd * rowsPerMcu, _height) - y0), input, 0);
                 }
 
                 void DoRow(int k, RowScratch sc)
@@ -543,7 +551,7 @@ internal sealed class JpegEncodeSession : IDisposable
                     int avail = Math.Min(rowsPerMcu, _height - (my * rowsPerMcu));
                     int groups = (avail + _vmax - 1) / _vmax;
                     int usable = groups * _vmax;
-                    ConvertRows(inputs[k], avail, usable, sc.Full, fw);
+                    ConvertRows(input.AsSpan((first - chunkStart + k) * inputBytes, inputBytes), avail, usable, sc.Full, fw);
                     for (int ci = 0; ci < _comps.Length; ci++)
                     {
                         Downsample(sc.Full[ci], fw, usable, _comps[ci], sc.Planes[ci], groups);
@@ -600,12 +608,9 @@ internal sealed class JpegEncodeSession : IDisposable
         }
         finally
         {
-            foreach (byte[]? b in inputs)
+            if (input is not null)
             {
-                if (b is not null)
-                {
-                    ArrayPool<byte>.Shared.Return(b);
-                }
+                ArrayPool<byte>.Shared.Return(input);
             }
 
             foreach (RowScratch? sc in scratch)
@@ -650,12 +655,12 @@ internal sealed class JpegEncodeSession : IDisposable
     }
 
     /// <summary>Converts input pixels to full-resolution component rows, replicating the last pixel to the padded width and the last row to a whole row group.</summary>
-    private void ConvertRows(byte[] input, int avail, int usable, byte[][] full, int fw)
+    private void ConvertRows(ReadOnlySpan<byte> input, int avail, int usable, byte[][] full, int fw)
     {
         int ch = _frame.Format.ChannelCount;
         for (int y = 0; y < usable; y++)
         {
-            ReadOnlySpan<byte> src = input.AsSpan(Math.Min(y, avail - 1) * _width * ch, _width * ch);
+            ReadOnlySpan<byte> src = input.Slice(Math.Min(y, avail - 1) * _width * ch, _width * ch);
             if (_color)
             {
                 Span<byte> yy = full[0].AsSpan(y * fw, fw);
