@@ -63,7 +63,7 @@ internal sealed class PngPalette
 
 /// <summary>
 /// Where a shared palette quantizer plugs in. <see cref="TryQuantize"/> is called when a PNG is requested as indexed
-/// (<see cref="PngColorMode.Indexed"/>) but has more than 256 colors. It currently reports that no quantizer is available.
+/// (<see cref="PngColorMode.Indexed"/>) but has more than 256 colors. The shared quantizer reduces it without dithering and keeps alpha.
 /// </summary>
 internal static class PngQuantizerHook
 {
@@ -73,11 +73,103 @@ internal static class PngQuantizerHook
     /// </summary>
     public static PngPalette? TryQuantize(PngRowReader rows, int width, int height, PixelFormat format)
     {
-        _ = rows;
-        _ = width;
-        _ = height;
-        _ = format;
-        return null;
+        int bpp = format.BytesPerPixel;
+        if (format.Sample != SampleType.U8 || bpp is not (3 or 4) || (long)width * height > Array.MaxLength)
+        {
+            return null;
+        }
+
+        int stride = width * bpp;
+        int stripRows = Math.Max(1, Math.Min(height, (1 << 18) / stride));
+        byte[] strip = ArrayPool<byte>.Shared.Rent(stripRows * stride);
+        byte[] rgba = ArrayPool<byte>.Shared.Rent(stripRows * width * 4);
+        try
+        {
+            // Two forward passes over the rows: statistics, then mapping. Opaque input uses the cheaper binary-alpha statistics.
+            var quantizer = new Ops.Quantize.ColorQuantizer(256, format.HasAlpha ? QuantizeAlpha.Full : QuantizeAlpha.Binary);
+            for (int y0 = 0; y0 < height; y0 += stripRows)
+            {
+                int n = Math.Min(stripRows, height - y0);
+                rows(y0, n, strip);
+                ToRgba(strip, rgba, n * width, bpp);
+                quantizer.AddRows(rgba.AsSpan(0, n * width * 4));
+            }
+
+            Ops.Quantize.QuantizedPalette q = quantizer.BuildPalette();
+            var mapper = new Ops.Quantize.PaletteMapper(q, width, Dither.None);
+            var indices = new byte[width * height];
+            for (int y0 = 0; y0 < height; y0 += stripRows)
+            {
+                int n = Math.Min(stripRows, height - y0);
+                rows(y0, n, strip);
+                ToRgba(strip, rgba, n * width, bpp);
+                for (int r = 0; r < n; r++)
+                {
+                    mapper.MapRow(y0 + r, rgba.AsSpan(r * width * 4, width * 4), indices.AsSpan((y0 + r) * width, width));
+                }
+            }
+
+            // PNG wants the entries that carry alpha first (they get tRNS values); renumber the palette and the indices.
+            int count = q.Count;
+            var order = new int[count];
+            int next = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (q.Rgba[(i * 4) + 3] != 255)
+                {
+                    order[i] = next++;
+                }
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                if (q.Rgba[(i * 4) + 3] == 255)
+                {
+                    order[i] = next++;
+                }
+            }
+
+            var colors = new uint[count];
+            for (int i = 0; i < count; i++)
+            {
+                colors[order[i]] = BinaryPrimitives.ReadUInt32LittleEndian(q.Rgba.AsSpan(i * 4, 4));
+            }
+
+            var map = new byte[256];
+            for (int i = 0; i < count; i++)
+            {
+                map[i] = (byte)order[i];
+            }
+
+            for (int i = 0; i < indices.Length; i++)
+            {
+                indices[i] = map[indices[i]];
+            }
+
+            return new PngPalette(colors, indices);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(strip);
+            ArrayPool<byte>.Shared.Return(rgba);
+        }
+    }
+
+    private static void ToRgba(byte[] source, byte[] destination, int pixels, int bpp)
+    {
+        if (bpp == 4)
+        {
+            source.AsSpan(0, pixels * 4).CopyTo(destination);
+            return;
+        }
+
+        for (int i = 0; i < pixels; i++)
+        {
+            destination[i * 4] = source[i * 3];
+            destination[(i * 4) + 1] = source[(i * 3) + 1];
+            destination[(i * 4) + 2] = source[(i * 3) + 2];
+            destination[(i * 4) + 3] = 255;
+        }
     }
 }
 

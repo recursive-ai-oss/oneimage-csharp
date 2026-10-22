@@ -78,7 +78,7 @@ internal sealed class QuantizedPalette
             int cg = (g & ~7) | 4;
             int cb = (b & ~7) | 4;
             int ca = _full ? ((a & ~31) | 16) : 255;
-            v = (ushort)Nearest(_r, _g, _b, _a, Count, _full ? -1 : TransparentIndex, cr, cg, cb, ca);
+            v = (ushort)Nearest(_r, _g, _b, _a, Count, TransparentIndex, cr, cg, cb, ca);
             _lut[cell] = v;
         }
 
@@ -87,7 +87,7 @@ internal sealed class QuantizedPalette
 
     /// <summary>Records the nearest entry for a cell from a representative color (the mean of the pixels that fell in it).</summary>
     internal void SeedCell(int lutIndex, int r, int g, int b, int a) =>
-        _lut[lutIndex] = (ushort)Nearest(_r, _g, _b, _a, Count, _full ? -1 : TransparentIndex, r, g, b, _full ? a : 255);
+        _lut[lutIndex] = (ushort)Nearest(_r, _g, _b, _a, Count, TransparentIndex, r, g, b, _full ? a : 255);
 
     internal static int Nearest(int[] pr, int[] pg, int[] pb, int[] pa, int count, int skip, int r, int g, int b, int a)
     {
@@ -221,7 +221,7 @@ internal sealed class PaletteMapper
         rgba = rgba.Slice(0, w * 4);
         indices = indices.Slice(0, w);
         int tIndex = p.TransparentIndex;
-        bool binary = p.Alpha == QuantizeAlpha.Binary;
+        int limit = p.Alpha == QuantizeAlpha.Binary ? p.Threshold : 1;
         if (p.Exact is { } set)
         {
             uint lastKey = 0;
@@ -255,7 +255,7 @@ internal sealed class PaletteMapper
                 for (int x = 0; x < w; x++)
                 {
                     ReadOnlySpan<byte> px = rgba.Slice(x * 4, 4);
-                    indices[x] = binary && px[3] < p.Threshold ? (byte)tIndex : (byte)p.Lookup(px[0], px[1], px[2], px[3]);
+                    indices[x] = tIndex >= 0 && px[3] < limit ? (byte)tIndex : (byte)p.Lookup(px[0], px[1], px[2], px[3]);
                 }
 
                 break;
@@ -263,7 +263,7 @@ internal sealed class PaletteMapper
                 for (int x = 0; x < w; x++)
                 {
                     ReadOnlySpan<byte> px = rgba.Slice(x * 4, 4);
-                    if (binary && px[3] < p.Threshold)
+                    if (tIndex >= 0 && px[3] < limit)
                     {
                         indices[x] = (byte)tIndex;
                         continue;
@@ -276,14 +276,14 @@ internal sealed class PaletteMapper
 
                 break;
             default:
-                FloydSteinberg(rgba, indices, binary, tIndex);
+                FloydSteinberg(rgba, indices, limit, tIndex);
                 break;
         }
 
         _nextRow++;
     }
 
-    private void FloydSteinberg(ReadOnlySpan<byte> rgba, Span<byte> indices, bool binary, int tIndex)
+    private void FloydSteinberg(ReadOnlySpan<byte> rgba, Span<byte> indices, int limit, int tIndex)
     {
         QuantizedPalette p = _palette;
         byte[] pal = p.Rgba;
@@ -293,7 +293,7 @@ internal sealed class PaletteMapper
         for (int x = 0; x < _width; x++)
         {
             ReadOnlySpan<byte> px = rgba.Slice(x * 4, 4);
-            if (binary && px[3] < p.Threshold)
+            if (tIndex >= 0 && px[3] < limit)
             {
                 indices[x] = (byte)tIndex;
                 continue;

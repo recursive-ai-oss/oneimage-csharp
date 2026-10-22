@@ -97,12 +97,11 @@ public class PngEncodeTests
     }
 
     [Fact]
-    public void ManyColorsStayTruecolorAndIndexedModeNeedsAQuantizer()
+    public void ManyColorsStayTruecolorUnlessIndexedIsRequested()
     {
         byte[] px = PngGen.Noise(64, 64, PixelFormat.Rgb8, 3);
         byte[] png = PngTestUtil.Encode(px, 64, 64, PixelFormat.Rgb8);
         Assert.Equal((2, 8), PngGen.Header(png));
-        Assert.Throws<ImageOperationException>(() => PngTestUtil.Encode(px, 64, 64, PixelFormat.Rgb8, new PngEncoderOptions { ColorMode = PngColorMode.Indexed }));
         // Truecolor mode never writes a palette even for two colors.
         byte[] two = new byte[16 * 16 * 3];
         byte[] png2 = PngTestUtil.Encode(two, 16, 16, PixelFormat.Rgb8, new PngEncoderOptions { ColorMode = PngColorMode.Truecolor });

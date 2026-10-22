@@ -90,7 +90,7 @@ internal sealed class ColorQuantizer
                 _haveLast = true;
             }
 
-            if (key == 0 && !full)
+            if (key == 0)
             {
                 _transparentCount++;
                 continue;
@@ -157,7 +157,7 @@ internal sealed class ColorQuantizer
             return new QuantizedPalette(rgbaExact, _set.Count, tIndex, _alpha, _alphaThreshold, _set);
         }
 
-        bool binaryTransparent = _alpha == QuantizeAlpha.Binary && _transparentCount > 0;
+        bool binaryTransparent = _transparentCount > 0; // fully transparent pixels always get their own exact entry
         int target = _maxColors - (binaryTransparent ? 1 : 0);
         return BuildWu(target, binaryTransparent);
     }
