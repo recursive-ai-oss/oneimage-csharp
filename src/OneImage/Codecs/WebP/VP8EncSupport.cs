@@ -132,40 +132,9 @@ internal static class VP8Fwd
 
     public static int BitCost(int bit, int prob) => bit != 0 ? BitCost1[prob] : BitCost0[prob];
 
-    /// <summary>Forward 4x4 DCT of (src - pred); both are read with stride 32 from the macroblock buffers.</summary>
-    public static void Fdct(ReadOnlySpan<byte> src, int srcOff, int srcStride, ReadOnlySpan<byte> pred, int predOff, Span<short> output)
-    {
-        Span<int> tmp = stackalloc int[16];
-        for (int i = 0; i < 4; i++)
-        {
-            int so = srcOff + (i * srcStride);
-            int po = predOff + (i * VP8Decoder.Bps);
-            int d0 = src[so] - pred[po];
-            int d1 = src[so + 1] - pred[po + 1];
-            int d2 = src[so + 2] - pred[po + 2];
-            int d3 = src[so + 3] - pred[po + 3];
-            int a0 = d0 + d3;
-            int a1 = d1 + d2;
-            int a2 = d1 - d2;
-            int a3 = d0 - d3;
-            tmp[(i * 4) + 0] = (a0 + a1) * 8;
-            tmp[(i * 4) + 1] = ((a2 * 2217) + (a3 * 5352) + 1812) >> 9;
-            tmp[(i * 4) + 2] = (a0 - a1) * 8;
-            tmp[(i * 4) + 3] = ((a3 * 2217) - (a2 * 5352) + 937) >> 9;
-        }
-
-        for (int i = 0; i < 4; i++)
-        {
-            int a0 = tmp[i] + tmp[12 + i];
-            int a1 = tmp[4 + i] + tmp[8 + i];
-            int a2 = tmp[4 + i] - tmp[8 + i];
-            int a3 = tmp[i] - tmp[12 + i];
-            output[i] = (short)((a0 + a1 + 7) >> 4);
-            output[4 + i] = (short)((((a2 * 2217) + (a3 * 5352) + 12000) >> 16) + (a3 != 0 ? 1 : 0));
-            output[8 + i] = (short)((a0 - a1 + 7) >> 4);
-            output[12 + i] = (short)(((a3 * 2217) - (a2 * 5352) + 51000) >> 16);
-        }
-    }
+    /// <summary>Forward 4x4 DCT of (src - pred); the prediction is read with the macroblock work buffer's stride.</summary>
+    public static void Fdct(ReadOnlySpan<byte> src, int srcOff, int srcStride, ReadOnlySpan<byte> pred, int predOff, Span<short> output) =>
+        Kernels.WebPFdctKernel.Forward(src, srcOff, srcStride, pred, predOff, VP8Decoder.Bps, output);
 
     /// <summary>Forward Walsh-Hadamard transform of the 16 luma DC values (<paramref name="dc"/> holds them in block order).</summary>
     public static void Wht(ReadOnlySpan<short> dc, Span<short> output)
@@ -206,8 +175,8 @@ internal sealed class VP8QuantMatrix
     public readonly int[] Q = new int[16];
     public readonly int[] IQ = new int[16];
     public readonly int[] Bias = new int[16];
-    public readonly int[] ZThresh = new int[16];
     public readonly int[] Sharpen = new int[16];
+    private readonly bool _vectorSafe;
 
     public VP8QuantMatrix(int dcStep, int acStep, int biasDc, int biasAc, bool sharpen)
     {
@@ -217,47 +186,16 @@ internal sealed class VP8QuantMatrix
             Q[i] = q;
             IQ[i] = (1 << QFix) / q;
             Bias[i] = (i == 0 ? biasDc : biasAc) << (QFix - 8);
-            ZThresh[i] = (((1 << QFix) - 1 - Bias[i]) / IQ[i]) ;
             Sharpen[i] = sharpen ? (Sharpening[i] * q) >> 11 : 0;
         }
+
+        _vectorSafe = IQ.Max() <= Kernels.WebPQuantKernel.MaxVectorReciprocal;
     }
 
     /// <summary>
     /// Quantizes coefficients in raster order. Writes levels in zigzag order to <paramref name="levels"/>, the dequantized
     /// raster coefficients back to <paramref name="coeffs"/>, and returns the zigzag index of the last nonzero level (or -1).
     /// </summary>
-    public int Quantize(Span<short> coeffs, Span<short> levels, int first)
-    {
-        int last = -1;
-        for (int n = first; n < 16; n++)
-        {
-            int j = VP8Fwd.Zigzag[n];
-            int v = coeffs[j];
-            bool neg = v < 0;
-            int c = (neg ? -v : v) + Sharpen[j];
-            int level = 0;
-            if (c > ZThresh[j])
-            {
-                level = (int)(((long)c * IQ[j] + Bias[j]) >> QFix);
-                if (level > 2047)
-                {
-                    level = 2047;
-                }
-            }
-
-            if (level != 0)
-            {
-                last = n;
-                coeffs[j] = (short)((neg ? -level : level) * Q[j]);
-                levels[n] = (short)(neg ? -level : level);
-            }
-            else
-            {
-                coeffs[j] = 0;
-                levels[n] = 0;
-            }
-        }
-
-        return last;
-    }
+    public int Quantize(Span<short> coeffs, Span<short> levels, int first) =>
+        Kernels.WebPQuantKernel.Quantize(coeffs, levels, first, Q, IQ, Bias, Sharpen, _vectorSafe);
 }

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using OneImage.Kernels;
 
 namespace OneImage.Codecs.WebP;
 
@@ -25,6 +26,7 @@ internal sealed class VP8Encoder
     private readonly int _quality;
     private readonly int _effort;
     private readonly CancellationToken _token;
+    private readonly int _degree;
 
     private readonly byte[] _srcY;
     private readonly byte[] _srcU;
@@ -52,10 +54,6 @@ internal sealed class VP8Encoder
     private readonly byte[] _nzTop;
     private readonly byte[] _nzLeft = new byte[9];
 
-    private readonly byte[] _work = new byte[Bps * 27];
-    private readonly byte[] _scr = new byte[Bps * 27];
-    private readonly byte[] _bestY16 = new byte[Bps * 27];
-    private readonly byte[] _srcMb = new byte[16 * 16 + 2 * 64];
 
     private sealed class Segment
     {
@@ -66,14 +64,16 @@ internal sealed class VP8Encoder
         public double LambdaI16;
         public double LambdaI4;
         public double LambdaUv;
+        public double LambdaMode;
         public int Alpha;
         public int Beta;
         public int FilterStrength;
         public int MaxEdge;
     }
 
-    private VP8Encoder(byte[] rgba, int w, int h, int quality, int effort, CancellationToken token)
+    private VP8Encoder(byte[] rgba, int w, int h, int quality, int effort, int degree, CancellationToken token)
     {
+        _degree = degree;
         _w = w;
         _h = h;
         _quality = quality;
@@ -110,9 +110,10 @@ internal sealed class VP8Encoder
     /// <param name="quality">0 to 100.</param>
     /// <param name="effort">0 to 6.</param>
     /// <param name="token">Cancellation.</param>
-    public static byte[] Encode(byte[] rgba, int width, int height, int quality, int effort, CancellationToken token)
+    /// <param name="degree">Most threads to use; the output does not depend on it.</param>
+    public static byte[] Encode(byte[] rgba, int width, int height, int quality, int effort, CancellationToken token, int degree = 1)
     {
-        var e = new VP8Encoder(rgba, width, height, quality, effort, token);
+        var e = new VP8Encoder(rgba, width, height, quality, effort, degree, token);
         return e.Run();
     }
 
@@ -191,64 +192,168 @@ internal sealed class VP8Encoder
     private void Analyze()
     {
         int n = _mbw * _mbh;
-        int[] alphas = new int[256];
         int[] mbAlpha = new int[n];
+        var scratch = new Scratch?[Workers(_mbh)];
+        RunRows(scratch, (s, mby) => AnalyzeRow(s, mby, mbAlpha));
+        int[] alphas = new int[256];
         long uvAlphaSum = 0;
-        Span<short> coef = stackalloc short[16];
-        int[] distribution = new int[32];
-        byte[] w = _work;
-        for (int mby = 0; mby < _mbh; mby++)
+        foreach (Scratch? s in scratch)
         {
-            _token.ThrowIfCancellationRequested();
-            for (int mbx = 0; mbx < _mbw; mbx++)
+            if (s == null)
             {
-                // Neighbors for the analysis come from the source image itself.
-                VP8Borders.Prepare(w, _srcY, _srcU, _srcV, _ys, _uvs, mbx, mby, _mbw);
-                LoadSource(mbx, mby);
-                int bestY = -1;
-                for (int mode = 0; mode < 2; mode++)
-                {
-                    Predict.Block(w, YOff, 16, mode == 0 ? VP8Decoder.DcPred : VP8Decoder.TmPred, mbx > 0, mby > 0);
-                    Array.Clear(distribution);
-                    for (int b = 0; b < 16; b++)
-                    {
-                        VP8Fwd.Fdct(_srcMb, ((b >> 2) * 4 * 16) + ((b & 3) * 4), 16, w, YOff + ((b >> 2) * 4 * Bps) + ((b & 3) * 4), coef);
-                        AddToDistribution(distribution, coef);
-                    }
-
-                    bestY = Math.Max(bestY, GetAlpha(distribution));
-                }
-
-                int bestUv = -1;
-                for (int mode = 0; mode < 2; mode++)
-                {
-                    int m = mode == 0 ? VP8Decoder.DcPred : VP8Decoder.TmPred;
-                    Predict.Block(w, UOff, 8, m, mbx > 0, mby > 0);
-                    Predict.Block(w, VOff, 8, m, mbx > 0, mby > 0);
-                    Array.Clear(distribution);
-                    for (int b = 0; b < 4; b++)
-                    {
-                        int so = 256 + ((b >> 1) * 4 * 8) + ((b & 1) * 4);
-                        VP8Fwd.Fdct(_srcMb, so, 8, w, UOff + ((b >> 1) * 4 * Bps) + ((b & 1) * 4), coef);
-                        AddToDistribution(distribution, coef);
-                        VP8Fwd.Fdct(_srcMb, so + 64, 8, w, VOff + ((b >> 1) * 4 * Bps) + ((b & 1) * 4), coef);
-                        AddToDistribution(distribution, coef);
-                    }
-
-                    bestUv = Math.Max(bestUv, GetAlpha(distribution));
-                }
-
-                int alpha = ((3 * bestY) + bestUv + 2) >> 2;
-                alpha = Clip(255 - alpha, 0, 255);
-                alphas[alpha]++;
-                mbAlpha[(mby * _mbw) + mbx] = alpha;
-                uvAlphaSum += bestUv;
+                continue;
             }
+
+            for (int i = 0; i < 256; i++)
+            {
+                alphas[i] += s.Alphas[i];
+            }
+
+            uvAlphaSum += s.UvAlphaSum;
         }
 
         _uvAlpha = (int)((uvAlphaSum + (n / 2)) / n);
         AssignSegments(alphas, mbAlpha);
     }
+
+    private void AnalyzeRow(Scratch s, int mby, int[] mbAlpha)
+    {
+        Span<short> coef = stackalloc short[16];
+        int[] distribution = s.Distribution;
+        byte[] w = s.Work;
+        for (int mbx = 0; mbx < _mbw; mbx++)
+        {
+            // Neighbors for the analysis come from the source image itself.
+            VP8Borders.Prepare(w, _srcY, _srcU, _srcV, _ys, _uvs, mbx, mby, _mbw);
+            LoadSource(s, mbx, mby);
+            int bestY = -1;
+            for (int mode = 0; mode < 2; mode++)
+            {
+                Predict.Block(w, YOff, 16, mode == 0 ? VP8Decoder.DcPred : VP8Decoder.TmPred, mbx > 0, mby > 0);
+                Array.Clear(distribution);
+                for (int b = 0; b < 16; b++)
+                {
+                    VP8Fwd.Fdct(s.SrcMb, ((b >> 2) * 4 * 16) + ((b & 3) * 4), 16, w, YOff + ((b >> 2) * 4 * Bps) + ((b & 3) * 4), coef);
+                    AddToDistribution(distribution, coef);
+                }
+
+                bestY = Math.Max(bestY, GetAlpha(distribution));
+            }
+
+            int bestUv = -1;
+            for (int mode = 0; mode < 2; mode++)
+            {
+                int m = mode == 0 ? VP8Decoder.DcPred : VP8Decoder.TmPred;
+                Predict.Block(w, UOff, 8, m, mbx > 0, mby > 0);
+                Predict.Block(w, VOff, 8, m, mbx > 0, mby > 0);
+                Array.Clear(distribution);
+                for (int b = 0; b < 4; b++)
+                {
+                    int so = 256 + ((b >> 1) * 4 * 8) + ((b & 1) * 4);
+                    VP8Fwd.Fdct(s.SrcMb, so, 8, w, UOff + ((b >> 1) * 4 * Bps) + ((b & 1) * 4), coef);
+                    AddToDistribution(distribution, coef);
+                    VP8Fwd.Fdct(s.SrcMb, so + 64, 8, w, VOff + ((b >> 1) * 4 * Bps) + ((b & 1) * 4), coef);
+                    AddToDistribution(distribution, coef);
+                }
+
+                bestUv = Math.Max(bestUv, GetAlpha(distribution));
+            }
+
+            int alpha = ((3 * bestY) + bestUv + 2) >> 2;
+            alpha = Clip(255 - alpha, 0, 255);
+            s.Alphas[alpha]++;
+            mbAlpha[(mby * _mbw) + mbx] = alpha;
+            s.UvAlphaSum += bestUv;
+        }
+    }
+
+    // Per-thread scratch state: everything a macroblock coder mutates besides the shared planes and neighbor contexts.
+    private sealed class Scratch
+    {
+        public readonly byte[] Work = new byte[Bps * 27];
+        public readonly byte[] Scr = new byte[Bps * 27];
+        public readonly byte[] SrcMb = new byte[(16 * 16) + (2 * 64)];
+        public readonly short[] Deq = new short[256];
+        public readonly byte[] Preds = new byte[10 * 16];
+        public readonly byte[] Rec4 = new byte[16];
+        public readonly byte[] IntraLeft = new byte[4];
+        public readonly byte[] NzLeft = new byte[9];
+        public readonly int[] Distribution = new int[32];
+        public readonly int[] Alphas = new int[256];
+        public readonly int[] MaxEdge = new int[NumSegments];
+        public readonly int[] StatsOnes = new int[1056];
+        public readonly int[] StatsTotal = new int[1056];
+        public readonly int[] StatsOnesCoded = new int[1056];
+        public readonly int[] StatsTotalCoded = new int[1056];
+        public long UvAlphaSum;
+        public long I16Distortion;
+        public readonly Cand I16 = new();
+        public readonly Cand I4 = new();
+        public readonly Cand Uv = new();
+        public readonly Cand Tmp = new();
+    }
+
+    private int Workers(int rows) => Math.Max(1, Math.Min(_degree, rows));
+
+    // Runs fn once per macroblock row. With a wavefront, row y starts a macroblock only once row y-1 has finished the one
+    // up and to the right of it (the top-right pixels feed prediction), so any thread count produces the same bytes.
+    private void RunRows(Scratch?[] scratch, Action<Scratch, int> fn)
+    {
+        int workers = scratch.Length;
+        if (workers == 1)
+        {
+            var s = scratch[0] = new Scratch();
+            for (int y = 0; y < _mbh; y++)
+            {
+                _token.ThrowIfCancellationRequested();
+                fn(s, y);
+            }
+
+            return;
+        }
+
+        int next = -1;
+        Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = _token }, wi =>
+        {
+            var s = scratch[wi] = new Scratch();
+            while (true)
+            {
+                _token.ThrowIfCancellationRequested();
+                int y = Interlocked.Increment(ref next);
+                if (y >= _mbh)
+                {
+                    return;
+                }
+
+                fn(s, y);
+            }
+        });
+    }
+
+    // Waits until row y-1 has completed macroblock column x+1 (or its last column), which is all the prediction of (x, y) reads.
+    private void WaitForRowAbove(int y, int x)
+    {
+        if (y == 0)
+        {
+            return;
+        }
+
+        int need = Math.Min(x + 2, _mbw);
+        if (Volatile.Read(ref _rowProgress[y - 1]) >= need)
+        {
+            return;
+        }
+
+        var spin = new SpinWait();
+        while (Volatile.Read(ref _rowProgress[y - 1]) < need)
+        {
+            _token.ThrowIfCancellationRequested();
+            spin.SpinOnce();
+        }
+    }
+
+    private int[] _rowProgress = [];
+    private Scratch?[] _scratches = [];
 
     private int _uvAlpha;
 
@@ -409,9 +514,10 @@ internal sealed class VP8Encoder
             s.Y1 = new VP8QuantMatrix(y1Dc, y1Ac, 96, 110, sharpen: true);
             s.Y2 = new VP8QuantMatrix(y2Dc, y2Ac, 96, 108, sharpen: false);
             s.Uv = new VP8QuantMatrix(uvDc, uvAc, 110, 115, sharpen: false);
-            s.LambdaI16 = LambdaScale * y2Ac * y2Ac;
-            s.LambdaI4 = LambdaScale * y1Ac * y1Ac;
-            s.LambdaUv = LambdaScale * uvAc * uvAc;
+            s.LambdaI16 = 3 * y2Ac * y2Ac;
+            s.LambdaI4 = (3 * y1Ac * y1Ac) >> 7;
+            s.LambdaUv = (3 * uvAc * uvAc) >> 6;
+            s.LambdaMode = (y1Ac * y1Ac) >> 7;
 
             // Loop filter strength follows the quantizer step; flatter segments are filtered less.
             int qstep = VP8Tables.AcQLookup[Clip(q, 0, 127)] >> 2;
@@ -441,21 +547,19 @@ internal sealed class VP8Encoder
         }
     }
 
-    // Weight of one bit in squared-error units, relative to the squared quantizer step.
-    private const double LambdaScale = 0.12;
 
-    private void LoadSource(int mbx, int mby)
+    private void LoadSource(Scratch s, int mbx, int mby)
     {
         for (int j = 0; j < 16; j++)
         {
-            _srcY.AsSpan((((mby * 16) + j) * _ys) + (mbx * 16), 16).CopyTo(_srcMb.AsSpan(j * 16, 16));
+            _srcY.AsSpan((((mby * 16) + j) * _ys) + (mbx * 16), 16).CopyTo(s.SrcMb.AsSpan(j * 16, 16));
         }
 
         for (int j = 0; j < 8; j++)
         {
             int o = (((mby * 8) + j) * _uvs) + (mbx * 8);
-            _srcU.AsSpan(o, 8).CopyTo(_srcMb.AsSpan(256 + (j * 8), 8));
-            _srcV.AsSpan(o, 8).CopyTo(_srcMb.AsSpan(256 + 64 + (j * 8), 8));
+            _srcU.AsSpan(o, 8).CopyTo(s.SrcMb.AsSpan(256 + (j * 8), 8));
+            _srcV.AsSpan(o, 8).CopyTo(s.SrcMb.AsSpan(256 + 64 + (j * 8), 8));
         }
     }
 
@@ -467,17 +571,27 @@ internal sealed class VP8Encoder
 
     private void EncodeMacroblocks()
     {
-        byte[] probs = DefaultProbs();
         Array.Clear(_intraTop);
         Array.Clear(_nzTop);
-        for (int mby = 0; mby < _mbh; mby++)
+        _rowProgress = new int[_mbh];
+        var scratch = new Scratch?[Workers(_mbh)];
+        RunRows(scratch, (s, mby) =>
         {
-            _token.ThrowIfCancellationRequested();
-            Array.Clear(_intraLeft);
-            Array.Clear(_nzLeft);
+            Array.Clear(s.IntraLeft);
+            Array.Clear(s.NzLeft);
             for (int mbx = 0; mbx < _mbw; mbx++)
             {
-                EncodeMacroblock(mbx, mby, probs);
+                WaitForRowAbove(mby, mbx);
+                EncodeMacroblock(s, mbx, mby);
+                Volatile.Write(ref _rowProgress[mby], mbx + 1);
+            }
+        });
+        _scratches = scratch;
+        foreach (Scratch? s in scratch)
+        {
+            for (int i = 0; s != null && i < NumSegments; i++)
+            {
+                _seg[i].MaxEdge = Math.Max(_seg[i].MaxEdge, s.MaxEdge[i]);
             }
         }
     }
@@ -490,54 +604,49 @@ internal sealed class VP8Encoder
         public readonly byte[] Recon = new byte[Bps * 27];
         public readonly byte[] BModes = new byte[16];
         public long Score;
+        public long Dist;
+        public int Rate;
     }
 
-    private long _i16Distortion;
-    private readonly Cand _i16 = new();
-    private readonly Cand _i4 = new();
-    private readonly Cand _uv = new();
-    private readonly Cand _tmp = new();
 
-    private void EncodeMacroblock(int mbx, int mby, byte[] probs)
+    private void EncodeMacroblock(Scratch s, int mbx, int mby)
     {
         int mb = (mby * _mbw) + mbx;
         Segment sp = _seg[_mbSegment[mb]];
-        VP8Borders.Prepare(_work, _recY, _recU, _recV, _ys, _uvs, mbx, mby, _mbw);
-        LoadSource(mbx, mby);
+        VP8Borders.Prepare(s.Work, _recY, _recU, _recV, _ys, _uvs, mbx, mby, _mbw);
+        LoadSource(s, mbx, mby);
 
         // Chroma and 16x16 luma are evaluated first; 4x4 only if it can beat the 16x16 result.
-        int uvMode = ChooseUv(mbx, mby, sp, probs, _uv);
-        int i16Mode = ChooseI16(mbx, mby, sp, probs, _i16);
+        int uvMode = ChooseUv(s, mbx, mby, sp, s.Uv);
+        int i16Mode = ChooseI16(s, mbx, mby, sp, s.I16);
         bool useI4 = false;
         if (_effort >= 1)
         {
             // The 4x4 search overwrites the work buffer's luma area, which is fine: the 16x16 reconstruction is saved.
-            useI4 = TryI4(mbx, mby, sp, probs, _i4, _i16.Score);
+            useI4 = TryI4(s, mbx, mby, sp, s.I4, ModeScore(s.I16.Dist, s.I16.Rate, sp));
         }
 
-        Cand y = useI4 ? _i4 : _i16;
-        if (!useI4)
+        Cand y = useI4 ? s.I4 : s.I16;
+        // A blocky 16x16 candidate (only luma DC levels, with visible distortion) records how strong the loop filter must be to
+        // smooth the block edges out; the segment's filter strength is raised to that afterwards. It counts even when the
+        // 4x4 coding wins, as the filter has to cope with such blocks wherever they appear.
+        ReadOnlySpan<short> lv16 = s.I16.Levels;
+        bool onlyDc = true;
+        for (int i = 16; i < 16 + 256 && onlyDc; i++)
         {
-            // A blocky macroblock (only luma DC levels, with visible distortion) records how strong the loop filter must be to
-            // smooth the block edges out; the segment's filter strength is raised to that afterwards.
-            ReadOnlySpan<short> lv16 = _i16.Levels;
-            bool onlyDc = true;
-            for (int i = 16; i < 16 + 256 && onlyDc; i++)
-            {
-                onlyDc = lv16[i] == 0 || (i - 16) % 16 == 0;
-            }
+            onlyDc = lv16[i] == 0 || (i - 16) % 16 == 0;
+        }
 
-            bool anyDc = false;
-            for (int i = 0; i < 16 && !anyDc; i++)
-            {
-                anyDc = lv16[i] != 0;
-            }
+        bool anyDc = false;
+        for (int i = 0; i < 16 && !anyDc; i++)
+        {
+            anyDc = lv16[i] != 0;
+        }
 
-            if (onlyDc && anyDc && _i16Distortion > 20 * sp.Y1.Q[0])
-            {
-                int maxV = Math.Max(Math.Abs((int)lv16[1]), Math.Max(Math.Abs((int)lv16[2]), Math.Abs((int)lv16[4])));
-                sp.MaxEdge = Math.Max(sp.MaxEdge, maxV);
-            }
+        if (onlyDc && anyDc && s.I16Distortion > 20 * sp.Y1.Q[0])
+        {
+            int maxV = Math.Max(Math.Abs((int)lv16[1]), Math.Max(Math.Abs((int)lv16[2]), Math.Abs((int)lv16[4])));
+            s.MaxEdge[_mbSegment[mb]] = Math.Max(s.MaxEdge[_mbSegment[mb]], maxV);
         }
         _isI4[mb] = (byte)(useI4 ? 1 : 0);
         _yMode[mb] = (byte)i16Mode;
@@ -550,7 +659,7 @@ internal sealed class VP8Encoder
         // Merge levels: luma from the chosen candidate, chroma from the chroma candidate.
         Span<short> dst = _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb);
         y.Levels.AsSpan(0, 16 + 256).CopyTo(dst);
-        _uv.Levels.AsSpan(16 + 256, 128).CopyTo(dst[(16 + 256)..]);
+        s.Uv.Levels.AsSpan(16 + 256, 128).CopyTo(dst[(16 + 256)..]);
         if (useI4)
         {
             dst[..16].Clear();
@@ -569,7 +678,7 @@ internal sealed class VP8Encoder
         _skip[mb] = (byte)(allZero ? 1 : 0);
 
         // Update neighbor contexts exactly like the decoder will.
-        UpdateContexts(mbx, mb, useI4);
+        UpdateContexts(s, mbx, mb, useI4);
 
         // Store the reconstruction.
         for (int j = 0; j < 16; j++)
@@ -580,41 +689,18 @@ internal sealed class VP8Encoder
         for (int j = 0; j < 8; j++)
         {
             int o = (((mby * 8) + j) * _uvs) + (mbx * 8);
-            _uv.Recon.AsSpan(UOff + (j * Bps), 8).CopyTo(_recU.AsSpan(o, 8));
-            _uv.Recon.AsSpan(VOff + (j * Bps), 8).CopyTo(_recV.AsSpan(o, 8));
+            s.Uv.Recon.AsSpan(UOff + (j * Bps), 8).CopyTo(_recU.AsSpan(o, 8));
+            s.Uv.Recon.AsSpan(VOff + (j * Bps), 8).CopyTo(_recV.AsSpan(o, 8));
         }
     }
 
     // nz layout per macroblock column: Y 0..3, U 4..5, V 6..7, DC 8.
-    private void UpdateContexts(int mbx, int mb, bool i4)
+    // Counts the macroblock's tokens for the probability statistics and moves the non-zero contexts on past it.
+    private void UpdateContexts(Scratch s, int mbx, int mb, bool i4)
     {
-        Span<short> lv = _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb);
-        Span<byte> top = _nzTop.AsSpan(mbx * 9, 9);
-        Span<byte> left = _nzLeft;
-        if (!i4)
-        {
-            int nz = LastNonZero(lv[..16], 0) >= 0 ? 1 : 0;
-            top[8] = left[8] = (byte)nz;
-        }
-
-        int first = i4 ? 0 : 1;
-        for (int b = 0; b < 16; b++)
-        {
-            int nz = LastNonZero(lv.Slice(16 + (b * 16), 16), first) >= first ? 1 : 0;
-            top[b & 3] = (byte)nz;
-            left[b >> 2] = (byte)nz;
-        }
-
-        for (int ch = 0; ch < 2; ch++)
-        {
-            for (int b = 0; b < 4; b++)
-            {
-                int nz = LastNonZero(lv.Slice(16 + 256 + (ch * 64) + (b * 16), 16), 0) >= 0 ? 1 : 0;
-                top[4 + (ch * 2) + (b & 1)] = (byte)nz;
-                left[4 + (ch * 2) + (b >> 1)] = (byte)nz;
-            }
-        }
-
+        ReadOnlySpan<short> lv = _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb);
+        var stats = new DualStatsSink(s.StatsOnes, s.StatsTotal, s.StatsOnesCoded, s.StatsTotalCoded, _skip[mb] == 0);
+        ScanMacroblock(ref stats, lv, i4, _nzTop.AsSpan(mbx * 9, 9), s.NzLeft);
         for (int x = 0; x < 4; x++)
         {
             _intraTop[(mbx * 4) + x] = i4 ? _bModes[(mb * 16) + 12 + x] : MapMode(_yMode[mb]);
@@ -622,7 +708,7 @@ internal sealed class VP8Encoder
 
         for (int y = 0; y < 4; y++)
         {
-            _intraLeft[y] = i4 ? _bModes[(mb * 16) + (y * 4) + 3] : MapMode(_yMode[mb]);
+            s.IntraLeft[y] = i4 ? _bModes[(mb * 16) + (y * 4) + 3] : MapMode(_yMode[mb]);
         }
     }
 
@@ -647,23 +733,8 @@ internal sealed class VP8Encoder
         return -1;
     }
 
-    private static long Sse(ReadOnlySpan<byte> a, int ao, int astride, ReadOnlySpan<byte> b, int bo, int bstride, int size)
-    {
-        long sum = 0;
-        for (int j = 0; j < size; j++)
-        {
-            for (int i = 0; i < size; i++)
-            {
-                int d = a[ao + (j * astride) + i] - b[bo + (j * bstride) + i];
-                sum += d * d;
-            }
-        }
-
-        return sum;
-    }
-
     // Adds a dequantized residual to the prediction already stored in buf.
-    private static void AddResidual(byte[] buf, int off, ReadOnlySpan<short> coeffs, bool anyAc, bool anyCoeff)
+    private static void AddResidual(byte[] buf, int off, int stride, ReadOnlySpan<short> coeffs, bool anyAc, bool anyCoeff)
     {
         if (!anyCoeff)
         {
@@ -675,31 +746,35 @@ internal sealed class VP8Encoder
             int dc = (coeffs[0] + 4) >> 3;
             for (int j = 0; j < 4; j++)
             {
+                Span<byte> row = buf.AsSpan(off + (j * stride), 4);
                 for (int i = 0; i < 4; i++)
                 {
-                    int v = buf[off + (j * Bps) + i] + dc;
-                    buf[off + (j * Bps) + i] = (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
+                    int v = row[i] + dc;
+                    row[i] = (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
                 }
             }
 
             return;
         }
 
-        Idct.Add(coeffs, buf, off);
+        WebPIdctKernel.Add(coeffs, buf, off, stride);
     }
+
+    // Score for choosing between 16x16 and 4x4 coding: the rate weighs little, so this is mostly a distortion comparison.
+    private static long ModeScore(long distortion, int rate256, Segment sp) => Score(distortion, rate256, sp.LambdaMode);
 
     private static long Score(long distortion, int rate256, double lambda) => (distortion * 256) + (long)(rate256 * lambda);
 
-    private int ChooseI16(int mbx, int mby, Segment sp, byte[] probs, Cand best)
+    private int ChooseI16(Scratch s, int mbx, int mby, Segment sp, Cand best)
     {
-        byte[] w = _work;
+        byte[] w = s.Work;
         int bestMode = 0;
         best.Score = long.MaxValue;
         Span<short> coef = stackalloc short[16];
         Span<short> dc = stackalloc short[16];
         Span<short> y2 = stackalloc short[16];
-        short[] deq = new short[256];
-        Span<short> lv = _tmp.Levels;
+        short[] deq = s.Deq;
+        Span<short> lv = s.Tmp.Levels;
         Span<byte> tnz = stackalloc byte[4];
         Span<byte> lnz = stackalloc byte[4];
         for (int mode = 0; mode < 4; mode++)
@@ -707,7 +782,7 @@ internal sealed class VP8Encoder
             Predict.Block(w, YOff, 16, mode, mbx > 0, mby > 0);
             for (int b = 0; b < 16; b++)
             {
-                VP8Fwd.Fdct(_srcMb, ((b >> 2) * 4 * 16) + ((b & 3) * 4), 16, w, YOff + ((b >> 2) * 4 * Bps) + ((b & 3) * 4), coef);
+                WebPFdctKernel.Forward(s.SrcMb, ((b >> 2) * 4 * 16) + ((b & 3) * 4), 16, w, YOff + ((b >> 2) * 4 * Bps) + ((b & 3) * 4), Bps, coef);
                 coef.CopyTo(deq.AsSpan(b * 16, 16));
                 dc[b] = coef[0];
             }
@@ -716,13 +791,12 @@ internal sealed class VP8Encoder
             lv.Clear();
             sp.Y2.Quantize(y2, lv[..16], 0);
             VP8Decoder.TransformWht(y2, deq);
-            // Reconstruct.
-            Array.Copy(w, _scr, w.Length);
-            int rate = 0;
-            var cost = new CostSink(probs);
-            VP8Tokens.EmitBlock(ref cost, lv[..16], 1, 0, _nzTop[(mbx * 9) + 8] + _nzLeft[8]);
-            _nzTop.AsSpan((mbx * 9), 4).CopyTo(tnz);
-            _nzLeft.AsSpan(0, 4).CopyTo(lnz);
+
+            // Reconstruct into the scratch copy of the prediction.
+            CopyLuma(w, s.Scr);
+            int rate = VP8Cost.BlockCost(lv[..16], 1, 0, _nzTop[(mbx * 9) + 8] + s.NzLeft[8]);
+            _nzTop.AsSpan(mbx * 9, 4).CopyTo(tnz);
+            s.NzLeft.AsSpan(0, 4).CopyTo(lnz);
             for (int b = 0; b < 16; b++)
             {
                 Span<short> blockCoef = deq.AsSpan(b * 16, 16);
@@ -733,34 +807,59 @@ internal sealed class VP8Encoder
                 blockCoef[0] = savedDc;
                 int bx = b & 3;
                 int by = b >> 2;
-                VP8Tokens.EmitBlock(ref cost, lv.Slice(16 + (b * 16), 16), 0, 1, lnz[by] + tnz[bx]);
+                rate += VP8Cost.BlockCost(lv.Slice(16 + (b * 16), 16), 0, 1, lnz[by] + tnz[bx]);
                 byte nz = last >= 1 ? (byte)1 : (byte)0;
                 lnz[by] = nz;
                 tnz[bx] = nz;
                 bool anyAc = last >= 1;
-                AddResidual(_scr, YOff + (by * 4 * Bps) + (bx * 4), blockCoef, anyAc, anyAc || blockCoef[0] != 0);
+                AddResidual(s.Scr, YOff + (by * 4 * Bps) + (bx * 4), Bps, blockCoef, anyAc, anyAc || blockCoef[0] != 0);
             }
 
-            rate = cost.Cost + I16ModeBits[mode] + BitsOf(145, 1);
-            long d = Sse(_srcMb, 0, 16, _scr, YOff, Bps, 16);
+            rate += I16ModeBits[mode] + BitsOf(145, 1);
+            long d = WebPSseKernel.Sse(s.SrcMb, 0, 16, s.Scr, YOff, Bps, 16);
             long score = Score(d, rate, sp.LambdaI16);
             if (score < best.Score)
             {
                 best.Score = score;
+                best.Dist = d;
+                best.Rate = rate;
                 bestMode = mode;
-                _i16Distortion = d;
+                s.I16Distortion = d;
                 lv.CopyTo(best.Levels);
-                Array.Copy(_scr, best.Recon, _scr.Length);
+                CopyLuma(s.Scr, best.Recon);
             }
         }
 
         return bestMode;
     }
 
-    private bool TryI4(int mbx, int mby, Segment sp, byte[] probs, Cand cand, long i16Score)
+    // The luma part of a work buffer: 16 rows of 16 bytes at the macroblock's luma offset.
+    private static void CopyLuma(byte[] from, byte[] to) =>
+        from.AsSpan(YOff, (15 * Bps) + 16).CopyTo(to.AsSpan(YOff));
+
+    // Bits of the 4x4 sub-block mode tree path, per (above mode, left mode, mode).
+    private static readonly ushort[] SubModeBits = BuildSubModeBits();
+
+    private static ushort[] BuildSubModeBits()
     {
-        byte[] w = _work;
+        ReadOnlySpan<byte> kf = VP8Tables.KeyFrameBModeProbs;
+        ushort[] t = new ushort[10 * 10 * 10];
+        for (int ctx = 0; ctx < 100; ctx++)
+        {
+            for (int m = 0; m < 10; m++)
+            {
+                t[(ctx * 10) + m] = (ushort)ModeBits(kf.Slice(ctx * 9, 9), m);
+            }
+        }
+
+        return t;
+    }
+
+    private bool TryI4(Scratch s, int mbx, int mby, Segment sp, Cand cand, long i16Score)
+    {
+        byte[] w = s.Work;
         VP8Borders.Prepare(w, _recY, _recU, _recV, _ys, _uvs, mbx, mby, _mbw);
+
         // The top-right pixels of the macroblock serve the right-most sub-block of every row.
         for (int r = 3; r < 16; r += 4)
         {
@@ -770,22 +869,23 @@ internal sealed class VP8Encoder
             }
         }
 
-        ReadOnlySpan<byte> kf = VP8Tables.KeyFrameBModeProbs;
         Span<byte> modes = cand.BModes;
         Span<short> coef = stackalloc short[16];
         Span<short> lv = stackalloc short[16];
         Span<byte> tnz = stackalloc byte[4];
         Span<byte> lnz = stackalloc byte[4];
         _nzTop.AsSpan(mbx * 9, 4).CopyTo(tnz);
-        _nzLeft.AsSpan(0, 4).CopyTo(lnz);
+        s.NzLeft.AsSpan(0, 4).CopyTo(lnz);
         Span<int> modeScore = stackalloc int[10];
         Span<int> order = stackalloc int[10];
-        Span<byte> bestRecon = stackalloc byte[4 * Bps];
         Span<short> bestLv = stackalloc short[16];
+        Span<byte> bestRec = stackalloc byte[16];
+        byte[] preds = s.Preds;
+        byte[] rec = s.Rec4;
         cand.Levels.AsSpan().Clear();
-        Array.Copy(w, cand.Recon, w.Length);
-        long total = 0;
-        int headerBits = BitsOf(145, 0);
+        CopyLuma(w, cand.Recon);
+        long totalD = 0;
+        int totalR = BitsOf(145, 0);
         int keep = _effort >= 6 ? 10 : _effort >= 5 ? 5 : 3;
         for (int b = 0; b < 16; b++)
         {
@@ -794,14 +894,14 @@ internal sealed class VP8Encoder
             int off = YOff + (by * 4 * Bps) + (bx * 4);
             int srcOff = (by * 4 * 16) + (bx * 4);
             int topMode = by == 0 ? _intraTop[(mbx * 4) + bx] : modes[((by - 1) * 4) + bx];
-            int leftMode = bx == 0 ? _intraLeft[by] : modes[(by * 4) + bx - 1];
-            int pb = ((topMode * 10) + leftMode) * 9;
+            int leftMode = bx == 0 ? s.IntraLeft[by] : modes[(by * 4) + bx - 1];
+            int pb = (topMode * 10) + leftMode;
 
             // Rank the modes by the squared error of the plain prediction, then evaluate the best few in full.
+            Predict.AllSubBlocks(w, off, preds);
             for (int m = 0; m < 10; m++)
             {
-                Predict.SubBlock(w, off, m);
-                modeScore[m] = (int)Sse(_srcMb, srcOff, 16, w, off, Bps, 4);
+                modeScore[m] = (int)WebPSseKernel.Sse(s.SrcMb, srcOff, 16, preds, m * 16, 4, 4);
                 order[m] = m;
             }
 
@@ -819,41 +919,34 @@ internal sealed class VP8Encoder
             }
 
             long bestScore = long.MaxValue;
+            long bestD = 0;
+            int bestR = 0;
             int bestMode = 0;
             for (int oi = 0; oi < keep; oi++)
             {
                 int m = order[oi];
-                Predict.SubBlock(w, off, m);
-                VP8Fwd.Fdct(_srcMb, srcOff, 16, w, off, coef);
+                WebPFdctKernel.Forward(s.SrcMb, srcOff, 16, preds, m * 16, 4, coef);
                 int last = sp.Y1.Quantize(coef, lv, 0);
-                // Reconstruct into scratch.
-                for (int j = 0; j < 4; j++)
-                {
-                    w.AsSpan(off + (j * Bps), 4).CopyTo(_scr.AsSpan(off + (j * Bps), 4));
-                }
-
-                AddResidual(_scr, off, coef, HasAc(lv), last >= 0);
-                long d = Sse(_srcMb, srcOff, 16, _scr, off, Bps, 4);
-                var cost = new CostSink(probs);
-                VP8Tokens.EmitBlock(ref cost, lv, 3, 0, lnz[by] + tnz[bx]);
-                int rate = cost.Cost;
-                int mbits = ModeBits(kf.Slice(pb, 9), m);
+                Buffer.BlockCopy(preds, m * 16, rec, 0, 16);
+                AddResidual(rec, 0, 4, coef, HasAc(lv), last >= 0);
+                long d = WebPSseKernel.Sse(s.SrcMb, srcOff, 16, rec, 0, 4, 4);
+                int rate = VP8Cost.BlockCost(lv, 3, 0, lnz[by] + tnz[bx]);
+                int mbits = SubModeBits[(pb * 10) + m];
                 long score = Score(d, rate + mbits, sp.LambdaI4);
                 if (score < bestScore)
                 {
                     bestScore = score;
+                    bestD = d;
+                    bestR = rate + mbits;
                     bestMode = m;
                     lv.CopyTo(bestLv);
-                    for (int j = 0; j < 4; j++)
-                    {
-                        _scr.AsSpan(off + (j * Bps), 4).CopyTo(bestRecon.Slice(j * Bps, 4));
-                    }
+                    rec.AsSpan(0, 16).CopyTo(bestRec);
                 }
-
             }
 
-            total += bestScore;
-            if (total + (headerBits * sp.LambdaI4) > i16Score)
+            totalD += bestD;
+            totalR += bestR;
+            if (ModeScore(totalD, totalR, sp) >= i16Score)
             {
                 return false;
             }
@@ -861,8 +954,8 @@ internal sealed class VP8Encoder
             modes[b] = (byte)bestMode;
             for (int j = 0; j < 4; j++)
             {
-                bestRecon.Slice(j * Bps, 4).CopyTo(w.AsSpan(off + (j * Bps), 4));
-                bestRecon.Slice(j * Bps, 4).CopyTo(cand.Recon.AsSpan(off + (j * Bps), 4));
+                bestRec.Slice(j * 4, 4).CopyTo(w.AsSpan(off + (j * Bps), 4));
+                bestRec.Slice(j * 4, 4).CopyTo(cand.Recon.AsSpan(off + (j * Bps), 4));
             }
 
             bestLv.CopyTo(cand.Levels.AsSpan(16 + (b * 16), 16));
@@ -871,7 +964,7 @@ internal sealed class VP8Encoder
             tnz[bx] = nz;
         }
 
-        cand.Score = total + (long)(headerBits * sp.LambdaI4);
+        cand.Score = ModeScore(totalD, totalR, sp);
         return cand.Score < i16Score;
     }
 
@@ -920,46 +1013,46 @@ internal sealed class VP8Encoder
         return -1;
     }
 
-    private int ChooseUv(int mbx, int mby, Segment sp, byte[] probs, Cand best)
+    private int ChooseUv(Scratch s, int mbx, int mby, Segment sp, Cand best)
     {
-        byte[] w = _work;
+        byte[] w = s.Work;
         best.Score = long.MaxValue;
         int bestMode = 0;
         Span<short> coef = stackalloc short[16];
         Span<short> lv = stackalloc short[16];
         Span<byte> tnz = stackalloc byte[4];
         Span<byte> lnz = stackalloc byte[4];
-        short[] tmpLv = _tmp.Levels;
+        short[] tmpLv = s.Tmp.Levels;
         for (int mode = 0; mode < 4; mode++)
         {
             Predict.Block(w, UOff, 8, mode, mbx > 0, mby > 0);
             Predict.Block(w, VOff, 8, mode, mbx > 0, mby > 0);
-            Array.Copy(w, _scr, w.Length);
-            var cost = new CostSink(probs);
-            Array.Clear(tmpLv);
+            CopyChroma(w, s.Scr);
+            int bits = 0;
+            tmpLv.AsSpan(16 + 256, 128).Clear();
             long d = 0;
             for (int ch = 0; ch < 2; ch++)
             {
                 int baseOff = ch == 0 ? UOff : VOff;
                 int srcBase = 256 + (ch * 64);
                 _nzTop.AsSpan((mbx * 9) + 4 + (ch * 2), 2).CopyTo(tnz);
-                _nzLeft.AsSpan(4 + (ch * 2), 2).CopyTo(lnz);
+                s.NzLeft.AsSpan(4 + (ch * 2), 2).CopyTo(lnz);
                 for (int b = 0; b < 4; b++)
                 {
                     int bx = b & 1;
                     int by = b >> 1;
                     int off = baseOff + (by * 4 * Bps) + (bx * 4);
-                    VP8Fwd.Fdct(_srcMb, srcBase + (by * 4 * 8) + (bx * 4), 8, w, off, coef);
+                    WebPFdctKernel.Forward(s.SrcMb, srcBase + (by * 4 * 8) + (bx * 4), 8, w, off, Bps, coef);
                     int last = sp.Uv.Quantize(coef, lv, 0);
-                    AddResidual(_scr, off, coef, HasAc(lv), last >= 0);
-                    VP8Tokens.EmitBlock(ref cost, lv, 2, 0, lnz[by] + tnz[bx]);
+                    AddResidual(s.Scr, off, Bps, coef, HasAc(lv), last >= 0);
+                    bits += VP8Cost.BlockCost(lv, 2, 0, lnz[by] + tnz[bx]);
                     byte nz = last >= 0 ? (byte)1 : (byte)0;
                     lnz[by] = nz;
                     tnz[bx] = nz;
                     lv.CopyTo(tmpLv.AsSpan(16 + 256 + (ch * 64) + (b * 16), 16));
                 }
 
-                d += Sse(_srcMb, srcBase, 8, _scr, baseOff, Bps, 8);
+                d += WebPSseKernel.Sse(s.SrcMb, srcBase, 8, s.Scr, baseOff, Bps, 8);
             }
 
             int uvBits = mode switch
@@ -969,18 +1062,22 @@ internal sealed class VP8Encoder
                 VP8Decoder.TmPred => BitsOf(142, 1) + BitsOf(114, 1) + BitsOf(183, 1),
                 _ => BitsOf(142, 1) + BitsOf(114, 1) + BitsOf(183, 0),
             };
-            long score = Score(d, cost.Cost + uvBits, sp.LambdaUv);
+            long score = Score(d, bits + uvBits, sp.LambdaUv);
             if (score < best.Score)
             {
                 best.Score = score;
                 bestMode = mode;
-                tmpLv.CopyTo(best.Levels, 0);
-                Array.Copy(_scr, best.Recon, _scr.Length);
+                tmpLv.AsSpan(16 + 256, 128).CopyTo(best.Levels.AsSpan(16 + 256));
+                CopyChroma(s.Scr, best.Recon);
             }
         }
 
         return bestMode;
     }
+
+    // The chroma part of a work buffer: 8 rows of 8 bytes for each of U and V.
+    private static void CopyChroma(byte[] from, byte[] to) =>
+        from.AsSpan(UOff, VOff - UOff + (7 * Bps) + 8).CopyTo(to.AsSpan(UOff));
 
     // ---- bitstream ----
 
@@ -988,8 +1085,23 @@ internal sealed class VP8Encoder
     {
         int n = _mbw * _mbh;
         // Token probabilities from the statistics of the coded levels.
-        var stats = new StatsSink { Ones = new int[1056], Total = new int[1056] };
-        ScanTokens(ref stats, useSkip: false);
+        // The statistics were gathered while coding the macroblocks: every token, and the tokens of the macroblocks that are not skipped.
+        int[] onesAll = new int[1056];
+        int[] totalAll = new int[1056];
+        int[] onesCoded = new int[1056];
+        int[] totalCoded = new int[1056];
+        foreach (Scratch? sc in _scratches)
+        {
+            for (int i = 0; sc != null && i < 1056; i++)
+            {
+                onesAll[i] += sc.StatsOnes[i];
+                totalAll[i] += sc.StatsTotal[i];
+                onesCoded[i] += sc.StatsOnesCoded[i];
+                totalCoded[i] += sc.StatsTotalCoded[i];
+            }
+        }
+
+        var stats = new StatsSink { Ones = onesAll, Total = totalAll };
         int skipCount = 0;
         for (int i = 0; i < n; i++)
         {
@@ -1000,8 +1112,7 @@ internal sealed class VP8Encoder
         bool useSkip = skipCount > 0 && skipProba < 250;
         if (useSkip)
         {
-            stats = new StatsSink { Ones = new int[1056], Total = new int[1056] };
-            ScanTokens(ref stats, useSkip: true);
+            stats = new StatsSink { Ones = onesCoded, Total = totalCoded };
         }
 
         byte[] probs = DefaultProbs();
@@ -1344,41 +1455,47 @@ internal sealed class VP8Encoder
                     continue;
                 }
 
-                ReadOnlySpan<short> lv = _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb);
-                int first = 0;
-                int type = 3;
-                if (!i4)
-                {
-                    int last = VP8Tokens.EmitBlock(ref sink, lv[..16], 1, 0, top[8] + left[8]);
-                    top[8] = left[8] = last >= 0 ? (byte)1 : (byte)0;
-                    first = 1;
-                    type = 0;
-                }
+                ScanMacroblock(ref sink, _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb), i4, top, left);
+            }
+        }
+    }
 
-                for (int b = 0; b < 16; b++)
-                {
-                    int bx = b & 3;
-                    int by = b >> 2;
-                    int last = VP8Tokens.EmitBlock(ref sink, lv.Slice(16 + (b * 16), 16), type, first, left[by] + top[bx]);
-                    byte nz = last >= first ? (byte)1 : (byte)0;
-                    left[by] = nz;
-                    top[bx] = nz;
-                }
+    // Feeds one macroblock's tokens to the sink in stream order and updates the top and left non-zero contexts.
+    private static void ScanMacroblock<TSink>(ref TSink sink, ReadOnlySpan<short> lv, bool i4, Span<byte> top, Span<byte> left)
+        where TSink : struct, ITokenSink
+    {
+        int first = 0;
+        int type = 3;
+        if (!i4)
+        {
+            int last = VP8Tokens.EmitBlock(ref sink, lv[..16], 1, 0, top[8] + left[8]);
+            top[8] = left[8] = last >= 0 ? (byte)1 : (byte)0;
+            first = 1;
+            type = 0;
+        }
 
-                for (int ch = 0; ch < 2; ch++)
-                {
-                    for (int b = 0; b < 4; b++)
-                    {
-                        int bx = b & 1;
-                        int by = b >> 1;
-                        int ti = 4 + (ch * 2) + bx;
-                        int li = 4 + (ch * 2) + by;
-                        int last = VP8Tokens.EmitBlock(ref sink, lv.Slice(16 + 256 + (ch * 64) + (b * 16), 16), 2, 0, left[li] + top[ti]);
-                        byte nz = last >= 0 ? (byte)1 : (byte)0;
-                        left[li] = nz;
-                        top[ti] = nz;
-                    }
-                }
+        for (int b = 0; b < 16; b++)
+        {
+            int bx = b & 3;
+            int by = b >> 2;
+            int last = VP8Tokens.EmitBlock(ref sink, lv.Slice(16 + (b * 16), 16), type, first, left[by] + top[bx]);
+            byte nz = last >= first ? (byte)1 : (byte)0;
+            left[by] = nz;
+            top[bx] = nz;
+        }
+
+        for (int ch = 0; ch < 2; ch++)
+        {
+            for (int b = 0; b < 4; b++)
+            {
+                int bx = b & 1;
+                int by = b >> 1;
+                int ti = 4 + (ch * 2) + bx;
+                int li = 4 + (ch * 2) + by;
+                int last = VP8Tokens.EmitBlock(ref sink, lv.Slice(16 + 256 + (ch * 64) + (b * 16), 16), 2, 0, left[li] + top[ti]);
+                byte nz = last >= 0 ? (byte)1 : (byte)0;
+                left[li] = nz;
+                top[ti] = nz;
             }
         }
     }

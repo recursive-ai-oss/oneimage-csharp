@@ -84,32 +84,57 @@ internal static class Predict
         }
     }
 
-    private static int Avg3(int a, int b, int c) => (a + (2 * b) + c + 2) >> 2;
+    private static byte Avg3(int a, int b, int c) => (byte)((a + (2 * b) + c + 2) >> 2);
 
-    private static int Avg2(int a, int b) => (a + b + 1) >> 1;
+    private static byte Avg2(int a, int b) => (byte)((a + b + 1) >> 1);
 
     /// <summary>Predicts one 4x4 luma sub-block in place (RFC 6386 section 12.3).</summary>
     public static void SubBlock(byte[] w, int off, int mode)
     {
-        // Edge array as in the specification: E[0..3] = left column bottom to top, E[4] = corner, E[5..12] = above row.
         Span<int> e = stackalloc int[13];
-        Span<int> a = e[5..];
-        int p = w[off - Bps - 1];
+        Span<byte> pred = stackalloc byte[16];
+        Edges(w, off, e);
+        Compute(e, mode, pred);
+        for (int r = 0; r < 4; r++)
+        {
+            pred.Slice(r * 4, 4).CopyTo(w.AsSpan(off + (r * Bps), 4));
+        }
+    }
+
+    /// <summary>Predicts a 4x4 luma sub-block with every one of the ten modes into <paramref name="dst"/> (16 bytes per mode, row stride 4), leaving the work buffer untouched.</summary>
+    public static void AllSubBlocks(byte[] w, int off, Span<byte> dst)
+    {
+        Span<int> e = stackalloc int[13];
+        Edges(w, off, e);
+        for (int m = 0; m < 10; m++)
+        {
+            Compute(e, m, dst.Slice(m * 16, 16));
+        }
+    }
+
+    // Edge array as in the specification: E[0..3] = left column bottom to top, E[4] = corner, E[5..12] = above row.
+    private static void Edges(byte[] w, int off, Span<int> e)
+    {
         for (int i = 0; i < 8; i++)
         {
-            a[i] = w[off - Bps + i];
+            e[5 + i] = w[off - Bps + i];
         }
 
-        int l0 = w[off - 1];
-        int l1 = w[off + Bps - 1];
-        int l2 = w[off + (2 * Bps) - 1];
-        int l3 = w[off + (3 * Bps) - 1];
-        e[0] = l3;
-        e[1] = l2;
-        e[2] = l1;
-        e[3] = l0;
-        e[4] = p;
-        Span<int> b = stackalloc int[16];
+        e[0] = w[off + (3 * Bps) - 1];
+        e[1] = w[off + (2 * Bps) - 1];
+        e[2] = w[off + Bps - 1];
+        e[3] = w[off - 1];
+        e[4] = w[off - Bps - 1];
+    }
+
+    private static void Compute(ReadOnlySpan<int> e, int mode, Span<byte> b)
+    {
+        ReadOnlySpan<int> a = e[5..];
+        int p = e[4];
+        int l0 = e[3];
+        int l1 = e[2];
+        int l2 = e[1];
+        int l3 = e[0];
         switch (mode)
         {
             case VP8Decoder.BDc:
@@ -117,21 +142,21 @@ internal static class Predict
                     int v = 4;
                     for (int i = 0; i < 4; i++)
                     {
-                        v += a[i] + w[off + (i * Bps) - 1];
+                        v += a[i] + e[3 - i];
                     }
 
-                    b.Fill(v >> 3);
+                    b.Fill((byte)(v >> 3));
                     break;
                 }
 
             case VP8Decoder.BTm:
                 for (int r = 0; r < 4; r++)
                 {
-                    int l = w[off + (r * Bps) - 1];
+                    int l = e[3 - r];
                     for (int c = 0; c < 4; c++)
                     {
                         int v = l + a[c] - p;
-                        b[(r * 4) + c] = v < 0 ? 0 : v > 255 ? 255 : v;
+                        b[(r * 4) + c] = (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
                     }
                 }
 
@@ -139,17 +164,17 @@ internal static class Predict
             case VP8Decoder.BVe:
                 for (int c = 0; c < 4; c++)
                 {
-                    int v = Avg3(c == 0 ? p : a[c - 1], a[c], a[c + 1]);
+                    byte v = Avg3(c == 0 ? p : a[c - 1], a[c], a[c + 1]);
                     b[c] = b[4 + c] = b[8 + c] = b[12 + c] = v;
                 }
 
                 break;
             case VP8Decoder.BHe:
                 {
-                    int v3 = Avg3(l2, l3, l3);
-                    int v2 = Avg3(l1, l2, l3);
-                    int v1 = Avg3(l0, l1, l2);
-                    int v0 = Avg3(p, l0, l1);
+                    byte v3 = Avg3(l2, l3, l3);
+                    byte v2 = Avg3(l1, l2, l3);
+                    byte v1 = Avg3(l0, l1, l2);
+                    byte v0 = Avg3(p, l0, l1);
                     b[0] = b[1] = b[2] = b[3] = v0;
                     b[4] = b[5] = b[6] = b[7] = v1;
                     b[8] = b[9] = b[10] = b[11] = v2;
@@ -218,16 +243,8 @@ internal static class Predict
                 b[3] = b[5] = Avg3(l1, l2, l3);
                 b[6] = b[8] = Avg2(l2, l3);
                 b[7] = b[9] = Avg3(l2, l3, l3);
-                b[10] = b[11] = b[12] = b[13] = b[14] = b[15] = l3;
+                b[10] = b[11] = b[12] = b[13] = b[14] = b[15] = (byte)l3;
                 break;
-        }
-
-        for (int r = 0; r < 4; r++)
-        {
-            for (int c = 0; c < 4; c++)
-            {
-                w[off + (r * Bps) + c] = (byte)b[(r * 4) + c];
-            }
         }
     }
 }

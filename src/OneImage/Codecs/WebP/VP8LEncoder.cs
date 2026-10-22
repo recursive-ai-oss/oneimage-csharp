@@ -31,6 +31,9 @@ internal sealed class VP8LEncodeOptions
 
     /// <summary>Gets or sets whether histogram clustering into several prefix code groups is allowed.</summary>
     public bool Cluster { get; set; } = true;
+
+    /// <summary>Gets or sets the most threads to use. The output does not depend on it.</summary>
+    public int Degree { get; set; } = 1;
 }
 
 /// <summary>Encoder for the WebP lossless bitstream (RFC 9649 section 3).</summary>
@@ -53,9 +56,12 @@ internal static class VP8LEncoder
     internal static float CLog2(uint c) => c < Log2Table.Length ? Log2Table[c] : (float)(c * Math.Log2(c));
 
     /// <summary>Encodes a full VP8L chunk payload (signature, size, transforms and pixels).</summary>
-    public static byte[] Encode(ReadOnlySpan<uint> argb, int width, int height, bool hasAlpha, VP8LEncodeOptions options, CancellationToken token)
+    public static byte[] Encode(ReadOnlySpan<uint> argb, int width, int height, bool hasAlpha, VP8LEncodeOptions options, CancellationToken token) =>
+        EncodeArray(argb.ToArray(), width, height, hasAlpha, options, token);
+
+    /// <summary>Encodes pixels the caller hands over: the encoder only reads the array.</summary>
+    public static byte[] EncodeArray(uint[] pixels, int width, int height, bool hasAlpha, VP8LEncodeOptions options, CancellationToken token)
     {
-        uint[] pixels = argb.ToArray();
         var enc = new Session(width, height, options, token);
         return enc.EncodeBest(pixels, hasAlpha, header: true);
     }
@@ -157,9 +163,21 @@ internal static class VP8LEncoder
                 Array.Copy(pixels, ((y0 + y) * _w) + x0, sample, y * sw, sw);
             }
 
-            var probe = new Session(sw, sh, _o, _token);
-            int withGreen = probe.EncodePlan(sample, false, false, null, true, pred, cc).Length;
-            int without = probe.EncodePlan(sample, false, false, null, false, pred, cc).Length;
+            int withGreen = 0;
+            int without = 0;
+            if (_o.Degree > 1)
+            {
+                Parallel.Invoke(
+                    new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = _token },
+                    () => withGreen = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, true, pred, cc).Length,
+                    () => without = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, false, pred, cc).Length);
+            }
+            else
+            {
+                withGreen = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, true, pred, cc).Length;
+                without = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, false, pred, cc).Length;
+            }
+
             return withGreen <= without;
         }
 
@@ -233,6 +251,28 @@ internal static class VP8LEncoder
             return _bw.Finish();
         }
 
+        // Runs body for every row index, on several threads when the options allow it. Each thread gets its own scratch from make.
+        private void ForRows<TScratch>(int rows, Func<TScratch> make, Action<int, TScratch> body)
+        {
+            int degree = Math.Min(_o.Degree, rows);
+            if (degree <= 1)
+            {
+                TScratch s = make();
+                for (int y = 0; y < rows; y++)
+                {
+                    body(y, s);
+                }
+
+                return;
+            }
+
+            Parallel.For(0, rows, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = _token }, make, (y, _, s) =>
+            {
+                body(y, s);
+                return s;
+            }, _ => { });
+        }
+
         private int TransformBitsFor(int w, int h)
         {
             if (_o.TransformBits is >= 2 and <= 9)
@@ -302,8 +342,7 @@ internal static class VP8LEncoder
             int th = (_h + (1 << bits) - 1) >> bits;
             uint[] modesImg = new uint[tw * th];
             uint[] res = new uint[src.Length];
-            int[] hist = new int[4 * 256];
-            for (int ty = 0; ty < th; ty++)
+            void Row(int ty, int[] hist)
             {
                 _token.ThrowIfCancellationRequested();
                 for (int tx = 0; tx < tw; tx++)
@@ -318,17 +357,22 @@ internal static class VP8LEncoder
                         float bestScore = float.MinValue;
                         for (int mode = 0; mode < 14; mode++)
                         {
-                            Array.Clear(hist);
+                            // The histogram is all zero here: it starts that way and the scan below zeroes what it reads.
                             Kernels.WebPPredictKernels.ScoreTile(src, w, _h, x0, y0, x1, y1, mode, hist, _o.Effort >= 5 ? 1 : 2);
                             float score = 0;
                             for (int i = 0; i < hist.Length; i++)
                             {
                                 int c = hist[i];
-                                if (c > 1)
+                                if (c != 0)
                                 {
-                                    score += CLog2((uint)c);
+                                    hist[i] = 0;
+                                    if (c > 1)
+                                    {
+                                        score += CLog2((uint)c);
+                                    }
                                 }
                             }
+
                             if (score > bestScore)
                             {
                                 bestScore = score;
@@ -347,6 +391,9 @@ internal static class VP8LEncoder
                     }
                 }
             }
+
+            // Tiles read only the source and write only their own residuals and mode, so rows can run in any order.
+            ForRows(th, () => new int[4 * 256], Row);
 
             _bw.Put(1, 1);
             _bw.Put(0, 2);
@@ -432,8 +479,7 @@ internal static class VP8LEncoder
             int th = (_h + (1 << bits) - 1) >> bits;
             uint[] elems = new uint[tw * th];
             uint[] res = new uint[src.Length];
-            int[] hist = new int[256];
-            for (int ty = 0; ty < th; ty++)
+            void Row(int ty, int[] hist)
             {
                 _token.ThrowIfCancellationRequested();
                 for (int tx = 0; tx < tw; tx++)
@@ -468,6 +514,8 @@ internal static class VP8LEncoder
                     }
                 }
             }
+
+            ForRows(th, () => new int[256], Row);
 
             _bw.Put(1, 1);
             _bw.Put(1, 2);
@@ -552,6 +600,18 @@ internal static class VP8LEncoder
         private void WriteImage(uint[] px, int w, int h, bool isMain)
         {
             Tok[] stream = Lz77(px, w, h, out int count);
+            try
+            {
+                WriteTokenImage(px, w, h, isMain, stream, count);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<Tok>.Shared.Return(stream);
+            }
+        }
+
+        private void WriteTokenImage(uint[] px, int w, int h, bool isMain, Tok[] stream, int count)
+        {
             int cacheBits = 0;
             if (isMain && _o.CacheBits != 0)
             {
@@ -562,13 +622,26 @@ internal static class VP8LEncoder
                 else if (_o.Effort > 0)
                 {
                     float bestCost = EstimateCost(stream, count, w);
-                    foreach (int cb in new[] { 4, 7, 10 })
+                    ReadOnlySpan<int> candidates = [4, 7, 10];
+                    float[] costs = new float[candidates.Length];
+                    if (_o.Degree > 1)
                     {
-                        float c = EstimateCacheCost(stream, count, px, cb, w);
-                        if (c < bestCost)
+                        Parallel.For(0, costs.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(_o.Degree, costs.Length), CancellationToken = _token }, i => costs[i] = EstimateCacheCost(stream, count, px, i == 0 ? 4 : i == 1 ? 7 : 10, w));
+                    }
+                    else
+                    {
+                        for (int i = 0; i < costs.Length; i++)
                         {
-                            bestCost = c;
-                            cacheBits = cb;
+                            costs[i] = EstimateCacheCost(stream, count, px, candidates[i], w);
+                        }
+                    }
+
+                    for (int i = 0; i < costs.Length; i++)
+                    {
+                        if (costs[i] < bestCost)
+                        {
+                            bestCost = costs[i];
+                            cacheBits = candidates[i];
                         }
                     }
                 }
@@ -751,42 +824,99 @@ internal static class VP8LEncoder
 
         // ---- LZ77 ----
 
+        // Images are parsed in independent bands of this many pixels: a match never crosses a band end, so the tokens do not
+        // depend on how many threads parse the bands. The cost is at most one shortened match per band.
+        private const int BandPixels = 1 << 18;
+
+        // Positions without a match after which the match search gets shallow.
+        private const int DrySpan = 4096;
+
         private Tok[] Lz77(uint[] px, int w, int h, out int count)
         {
             int n = px.Length;
-            Tok[] toks = new Tok[n];
-            int nt = 0;
+            Tok[] toks = System.Buffers.ArrayPool<Tok>.Shared.Rent(n);
             if (!_o.Lz77 || n < 4)
             {
+                int k = 0;
                 foreach (uint p in px)
                 {
-                    toks[nt++] = new Tok { Kind = 0, Value = p };
+                    toks[k++] = new Tok { Kind = 0, Value = p };
                 }
 
-                count = nt;
+                count = k;
                 return toks;
             }
 
             const int HashBits = 18;
+            int[] head = new int[1 << HashBits];
+            Array.Fill(head, -1);
+            int[] chain = System.Buffers.ArrayPool<int>.Shared.Rent(n);
+            try
+            {
+                for (int i = 0; i < n - 1; i++)
+                {
+                    uint hv = ((px[i] * 0x1e35a7bdu) ^ (px[i + 1] * 0x9e3779b1u)) >> (32 - HashBits);
+                    chain[i] = head[hv];
+                    head[hv] = i;
+                }
+
+                chain[n - 1] = -1;
+                return ParseBands(px, chain, w, toks, out count);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<int>.Shared.Return(chain);
+            }
+        }
+
+        private Tok[] ParseBands(uint[] px, int[] chain, int w, Tok[] toks, out int count)
+        {
+            int n = px.Length;
+            int bands = (n + BandPixels - 1) / BandPixels;
+            int[] bandCount = new int[bands];
+            void Band(int band)
+            {
+                int start = band * BandPixels;
+                bandCount[band] = ParseBand(px, chain, w, start, Math.Min(n, start + BandPixels), toks);
+            }
+
+            int degree = Math.Min(_o.Degree, bands);
+            if (degree <= 1)
+            {
+                for (int band = 0; band < bands; band++)
+                {
+                    Band(band);
+                }
+            }
+            else
+            {
+                Parallel.For(0, bands, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = _token }, Band);
+            }
+
+            // Each band wrote its tokens at the start of its own pixel range; close the gaps.
+            int nt = bandCount[0];
+            for (int band = 1; band < bands; band++)
+            {
+                Array.Copy(toks, band * BandPixels, toks, nt, bandCount[band]);
+                nt += bandCount[band];
+            }
+
+            count = nt;
+            return toks;
+        }
+
+        // Greedy (lazy at higher effort) parse of the pixels start..end-1, writing tokens from toks[start] on; returns their number.
+        private int ParseBand(uint[] px, int[] chain, int w, int start, int end, Tok[] toks)
+        {
             const int MaxLen = 4096;
             int window = (1 << 20) - 120;
             int maxChain = _o.Effort switch { 0 => 4, 1 => 8, 2 => 16, 3 => 24, 4 => 16, 5 => 96, _ => 256 };
-            int[] head = new int[1 << HashBits];
-            Array.Fill(head, -1);
-            int[] chain = new int[n];
-            for (int i = 0; i < n - 1; i++)
-            {
-                uint hv = ((px[i] * 0x1e35a7bdu) ^ (px[i + 1] * 0x9e3779b1u)) >> (32 - HashBits);
-                chain[i] = head[hv];
-                head[hv] = i;
-            }
-
-            chain[n - 1] = -1;
             bool lazy = _o.Effort >= 2;
+            int nt = start;
 
             (int len, int dist) Find(int i)
             {
-                int maxLen = Math.Min(MaxLen, n - i);
+                int maxLen = Math.Min(MaxLen, end - i);
                 int bestLen = 0;
                 int bestDist = 0;
                 if (maxLen < 3)
@@ -795,6 +925,7 @@ internal static class VP8LEncoder
                 }
 
                 ReadOnlySpan<uint> cur = px.AsSpan(i, maxLen);
+
                 // Short distances have the cheapest codes; try them first.
                 foreach (int d in (ReadOnlySpan<int>)[1, w])
                 {
@@ -838,10 +969,12 @@ internal static class VP8LEncoder
                 return (bestLen, bestDist);
             }
 
-            int pos = 0;
+            int fullChain = maxChain;
+            int dry = 0;
+            int pos = start;
             (int len, int dist) m = (0, 0);
             bool have = false;
-            while (pos < n)
+            while (pos < end)
             {
                 if ((pos & 0xffff) == 0)
                 {
@@ -855,9 +988,14 @@ internal static class VP8LEncoder
 
                 have = false;
                 int min = m.dist <= 4096 ? 3 : 4;
+
+                // After a long run without any match (photographs, noise) the deep chain walks only cost time: look at a few
+                // candidates until matches show up again.
+                maxChain = m.len >= min ? fullChain : dry > DrySpan ? Math.Min(fullChain, 2) : fullChain;
+                dry = m.len >= min ? 0 : dry + 1;
                 if (m.len >= min)
                 {
-                    if (lazy && pos + 1 < n)
+                    if (lazy && pos + 1 < end)
                     {
                         (int len, int dist) m2 = Find(pos + 1);
                         if (m2.len > m.len + 1)
@@ -880,9 +1018,7 @@ internal static class VP8LEncoder
                 }
             }
 
-            _ = h;
-            count = nt;
-            return toks;
+            return nt - start;
         }
 
         // Replaces literals found in a color cache by cache indices, in place.

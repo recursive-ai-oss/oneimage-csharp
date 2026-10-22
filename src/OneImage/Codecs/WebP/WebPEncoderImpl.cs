@@ -62,7 +62,7 @@ internal sealed class WebPEncoderImpl : IImageEncoder
                 byte[] rgba = ReadRgba(fr);
                 ChangedRect(previous, rgba, fr.Width, fr.Height, out int x, out int y, out int w, out int h);
                 byte[] sub = Crop(rgba, fr.Width, x, y, w, h);
-                EncodedFrame f = EncodeSub(sub, w, h, options, cancellationToken);
+                EncodedFrame f = EncodeSub(sub, w, h, options, first.Degree, cancellationToken);
                 anyAlpha |= f.HasAlpha;
                 var payload = new List<byte>(16 + f.Data.Length + (f.Alpha?.Length ?? 0) + 24);
                 WriteUInt24(payload, x / 2);
@@ -242,11 +242,21 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         _ = y;
         _ = unused;
         byte[] rgba = ReadRgba(fr);
-        return EncodeSub(rgba, w, h, options, token);
+        return EncodeSub(rgba, w, h, options, fr.Degree, token);
     }
 
-    private static EncodedFrame EncodeSub(byte[] rgba, int w, int h, WebPEncoderOptions options, CancellationToken token)
+    private static EncodedFrame EncodeSub(byte[] rgba, int w, int h, WebPEncoderOptions options, int degree, CancellationToken token)
     {
+        if (options.Lossless)
+        {
+            // Packing the pixels also finds out whether any is translucent.
+            uint[] argb = new uint[w * h];
+            bool translucent = PackArgb(rgba, argb, options.Exact, degree);
+            var lo = new VP8LEncodeOptions { Effort = options.Effort, Degree = degree };
+            byte[] data = VP8LEncoder.EncodeArray(argb, w, h, translucent, lo, token);
+            return new EncodedFrame { Data = data, Lossless = true, HasAlpha = translucent };
+        }
+
         bool hasAlpha = false;
         for (int i = 3; i < rgba.Length; i += 4)
         {
@@ -257,16 +267,27 @@ internal sealed class WebPEncoderImpl : IImageEncoder
             }
         }
 
-        if (options.Lossless)
+        return LossyEncode(rgba, w, h, hasAlpha, options, degree, token);
+    }
+
+    // Converts RGBA bytes to 0xAARRGGBB words (clearing the color of fully transparent pixels unless exact) and reports whether any alpha is below 255.
+    private static bool PackArgb(byte[] rgba, uint[] argb, bool exact, int degree)
+    {
+        const int Chunk = 1 << 16;
+        int chunks = (argb.Length + Chunk - 1) / Chunk;
+        int translucent = 0;
+        void Run(int c)
         {
-            uint[] argb = new uint[w * h];
-            for (int i = 0; i < argb.Length; i++)
+            int end = Math.Min(argb.Length, (c + 1) * Chunk);
+            bool any = false;
+            for (int i = c * Chunk; i < end; i++)
             {
                 uint r = rgba[i * 4];
                 uint g = rgba[(i * 4) + 1];
                 uint b = rgba[(i * 4) + 2];
                 uint a = rgba[(i * 4) + 3];
-                if (a == 0 && !options.Exact)
+                any |= a != 255;
+                if (a == 0 && !exact)
                 {
                     r = g = b = 0;
                 }
@@ -274,17 +295,30 @@ internal sealed class WebPEncoderImpl : IImageEncoder
                 argb[i] = (a << 24) | (r << 16) | (g << 8) | b;
             }
 
-            var lo = new VP8LEncodeOptions { Effort = options.Effort };
-            byte[] data = VP8LEncoder.Encode(argb, w, h, hasAlpha, lo, token);
-            return new EncodedFrame { Data = data, Lossless = true, HasAlpha = hasAlpha };
+            if (any)
+            {
+                Volatile.Write(ref translucent, 1);
+            }
         }
 
-        return LossyEncode(rgba, w, h, hasAlpha, options, token);
+        if (degree <= 1 || chunks < 4)
+        {
+            for (int c = 0; c < chunks; c++)
+            {
+                Run(c);
+            }
+        }
+        else
+        {
+            Parallel.For(0, chunks, new ParallelOptions { MaxDegreeOfParallelism = degree }, Run);
+        }
+
+        return Volatile.Read(ref translucent) != 0;
     }
 
-    private static EncodedFrame LossyEncode(byte[] rgba, int w, int h, bool hasAlpha, WebPEncoderOptions options, CancellationToken token)
+    private static EncodedFrame LossyEncode(byte[] rgba, int w, int h, bool hasAlpha, WebPEncoderOptions options, int degree, CancellationToken token)
     {
-        byte[] data = VP8Encoder.Encode(rgba, w, h, options.Quality, options.Effort, token);
+        byte[] data = VP8Encoder.Encode(rgba, w, h, options.Quality, options.Effort, token, degree);
         byte[]? alpha = null;
         if (hasAlpha)
         {
