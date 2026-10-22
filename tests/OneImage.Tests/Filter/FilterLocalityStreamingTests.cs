@@ -90,7 +90,7 @@ public class FilterLocalityStreamingTests
 
         sw.Stop();
         long growth = peak - baseline;
-        TestContext.Current.SendDiagnosticMessage($"{label}: peak managed growth {growth / (1 << 20)} MiB ({100.0 * growth / frameBytes:F2}% of the {frameBytes / (1 << 20)} MiB frame), {sw.ElapsedMilliseconds} ms, check {check}");
+        TestNotes.Add($"{label}: peak managed growth {growth / (1 << 20)} MiB ({100.0 * growth / frameBytes:F2}% of the {frameBytes / (1 << 20)} MiB frame), {sw.ElapsedMilliseconds} ms, check {check}");
         return growth;
     }
 

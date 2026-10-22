@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.IO;
+using System.Linq;
 using OneImage;
 using OneImage.Compression;
 
@@ -53,6 +54,20 @@ Image trimmed = snapshot.Pad(5, 5, 5, 5, EdgeMode.Constant, new Rgba32(255, 255,
 if (geo.Width != 204 || turned.ToArray<Rgba32>().Length != turned.Width * turned.Height || trimmed.Width < 1 || snapshot.Orient(6).Width != 200)
 {
     Console.Error.WriteLine("geometry smoke failed");
+    return 1;
+}
+
+// Filters and analysis: blur (exact and wide), sharpen, median, Sobel, convolution, histogram and statistics.
+Image blurred = snapshot.GaussianBlur(2.5);
+Image wide = snapshot.GaussianBlur(30);
+Image filtered = snapshot.Sharpen(1, 1.5).Median(2).Convolve([1f, 2f, 1f, 2f, 4f, 2f, 1f, 2f, 1f], 3, 3);
+ImageHistogram histogram = snapshot.Histogram();
+ImageStatistics stats = snapshot.Statistics();
+if (blurred.ToArray<Rgba32>().Length != 60000 || wide.ToArray<Rgba32>().Length != 60000 || filtered.ToArray<Rgba32>().Length != 60000
+    || snapshot.Sobel().ToArray<Gray8>().Length != 60000 || histogram.PixelCount != 60000 || histogram.Channel(0).ToArray().Sum() != 60000
+    || stats.Channels.Count != 4 || stats.Channels[0].Count != 60000)
+{
+    Console.Error.WriteLine("filter smoke failed");
     return 1;
 }
 

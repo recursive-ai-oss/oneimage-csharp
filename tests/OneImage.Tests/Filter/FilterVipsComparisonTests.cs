@@ -32,7 +32,7 @@ public class FilterVipsComparisonTests
         return (max, (double)sum / n);
     }
 
-    private static void Say(string text) => TestContext.Current.SendDiagnosticMessage("vs libvips " + text);
+    private static void Say(string text) => TestNotes.Add("vs libvips " + text);
 
     [Theory]
     [InlineData(1.0)]

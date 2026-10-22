@@ -36,7 +36,7 @@ public sealed partial class Image
     /// down by f = ceil(σ / 4) (in its own pixel format, in the working space), blurred exactly in float with σ / f, and
     /// enlarged back with Catmull-Rom. On a streaming source the reduced copy (1/f² of the pixels, so 4% of the frame at σ = 20 and
     /// 0.07% at σ = 150) is read once, top to bottom, and kept for the life of the image; everything else still streams. The result stays within a
-    /// few 8-bit levels of the exact blur on photographic content (mean difference under 0.6 level). Results are identical for any thread count or tile order. Animated images blur every frame.
+    /// few 8-bit levels of the exact blur on photographic content (on a test pattern with hard edges and noise: mean difference 0.2 level at 03c3 = 20 and 0.8 at 03c3 = 45, worst pixel 12). Results are identical for any thread count or tile order. Animated images blur every frame.
     /// </para>
     /// </summary>
     /// <param name="sigma">Standard deviation in pixels, finite and not negative.</param>
