@@ -323,7 +323,7 @@ long[] red = Image.Load(input).Histogram().Channel(0).ToArray();   // 256 bins; 
 ## Behavior to expect after porting
 
 - **Orientation is applied for you.** If your old code called `AutoOrient()` or rotated by the EXIF tag, remove that, or the picture will be turned twice.
-- **Resize quality differs slightly.** Resampling is done in linear light on premultiplied alpha, so edges and gradients can look a little different (usually better) than a gamma-space resize. Pass `linear: false` to compare.
+- **Resize quality differs slightly.** Resampling is done in linear light on premultiplied alpha, so edges and gradients can look a little different from a gamma-space resize. Pass `linear: false` to compare.
 - **Errors surface later.** Wrap the `Save`, not only the `Load`, in your `try` block, or load with `Validate = true`.
 - **There is nothing to dispose** on an `Image`; delete `using` statements and let `Canvas` carry the `using`.
 - **Operations are cheap to build and run once.** Don't save an intermediate just to reuse it: keep the `Image` and derive more images from it. Each save recomputes its own path, though shared tiles are cached under the engine's memory budget.

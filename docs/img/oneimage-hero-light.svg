@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="696" viewBox="0 0 760 696" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12">
+<rect width="760" height="696" fill="#ffffff"/>
+<text x="16" y="24" font-size="15" font-weight="600" fill="#1f2328">OneImage vs ImageSharp 3.1.12: how many times faster (log scale, higher is better)</text>
+<text x="16" y="42" fill="#59636e">Bars left of 1x are slower than ImageSharp; grey is a tie (within 5%). Time only; peak memory is on the results page.</text>
+<line x1="250.0" y1="58" x2="250.0" y2="644" stroke="#d0d7de" stroke-width="1"/>
+<text x="250.0" y="660" text-anchor="middle" fill="#59636e">0.5x</text>
+<line x1="330.0" y1="58" x2="330.0" y2="644" stroke="#1f2328" stroke-width="1.5"/>
+<text x="330.0" y="660" text-anchor="middle" fill="#59636e">1x</text>
+<line x1="410.0" y1="58" x2="410.0" y2="644" stroke="#d0d7de" stroke-width="1"/>
+<text x="410.0" y="660" text-anchor="middle" fill="#59636e">2x</text>
+<line x1="490.0" y1="58" x2="490.0" y2="644" stroke="#d0d7de" stroke-width="1"/>
+<text x="490.0" y="660" text-anchor="middle" fill="#59636e">4x</text>
+<line x1="570.0" y1="58" x2="570.0" y2="644" stroke="#d0d7de" stroke-width="1"/>
+<text x="570.0" y="660" text-anchor="middle" fill="#59636e">8x</text>
+<line x1="650.0" y1="58" x2="650.0" y2="644" stroke="#d0d7de" stroke-width="1"/>
+<text x="650.0" y="660" text-anchor="middle" fill="#59636e">16x</text>
+<line x1="730.0" y1="58" x2="730.0" y2="644" stroke="#d0d7de" stroke-width="1"/>
+<text x="730.0" y="660" text-anchor="middle" fill="#59636e">32x</text>
+<text x="242" y="78" text-anchor="end" fill="#1f2328">thumb-jpeg</text>
+<rect x="330.0" y="67" width="26.1" height="13" fill="#2da44e" rx="2"/>
+<text x="362.1" y="78" text-anchor="start" fill="#59636e">1.25x</text>
+<text x="242" y="98" text-anchor="end" fill="#1f2328">thumb-webp</text>
+<rect x="330.0" y="87" width="38.4" height="13" fill="#2da44e" rx="2"/>
+<text x="374.4" y="98" text-anchor="start" fill="#59636e">1.39x</text>
+<text x="242" y="118" text-anchor="end" fill="#1f2328">png-to-webp (natural)</text>
+<rect x="330.0" y="107" width="340.5" height="13" fill="#2da44e" rx="2"/>
+<text x="676.5" y="118" text-anchor="start" fill="#59636e">19.1x</text>
+<text x="242" y="138" text-anchor="end" fill="#1f2328">png-to-webp (photo)</text>
+<rect x="330.0" y="127" width="280.1" height="13" fill="#2da44e" rx="2"/>
+<text x="616.1" y="138" text-anchor="start" fill="#59636e">11.3x</text>
+<text x="242" y="158" text-anchor="end" fill="#1f2328">png-to-webp (screenshot)</text>
+<rect x="330.0" y="147" width="104.3" height="13" fill="#2da44e" rx="2"/>
+<text x="440.3" y="158" text-anchor="start" fill="#59636e">2.5x</text>
+<text x="242" y="178" text-anchor="end" fill="#1f2328">jpeg-decode</text>
+<rect x="330.0" y="167" width="72.5" height="13" fill="#2da44e" rx="2"/>
+<text x="408.5" y="178" text-anchor="start" fill="#59636e">1.9x</text>
+<text x="242" y="198" text-anchor="end" fill="#1f2328">jpeg-encode</text>
+<rect x="330.0" y="187" width="16.2" height="13" fill="#2da44e" rx="2"/>
+<text x="352.2" y="198" text-anchor="start" fill="#59636e">1.15x</text>
+<text x="242" y="218" text-anchor="end" fill="#1f2328">png-decode (natural)</text>
+<rect x="330.0" y="207" width="142.3" height="13" fill="#2da44e" rx="2"/>
+<text x="478.3" y="218" text-anchor="start" fill="#59636e">3.4x</text>
+<text x="242" y="238" text-anchor="end" fill="#1f2328">png-decode (photo)</text>
+<rect x="330.0" y="227" width="22.3" height="13" fill="#2da44e" rx="2"/>
+<text x="358.3" y="238" text-anchor="start" fill="#59636e">1.21x</text>
+<text x="242" y="258" text-anchor="end" fill="#1f2328">png-decode (screenshot)</text>
+<rect x="330.0" y="247" width="42.7" height="13" fill="#2da44e" rx="2"/>
+<text x="378.7" y="258" text-anchor="start" fill="#59636e">1.45x</text>
+<text x="242" y="278" text-anchor="end" fill="#1f2328">png-encode (natural)</text>
+<rect x="330.0" y="267" width="182.2" height="13" fill="#2da44e" rx="2"/>
+<text x="518.2" y="278" text-anchor="start" fill="#59636e">4.8x</text>
+<text x="242" y="298" text-anchor="end" fill="#1f2328">png-encode (photo)</text>
+<rect x="330.0" y="287" width="208.5" height="13" fill="#2da44e" rx="2"/>
+<text x="544.5" y="298" text-anchor="start" fill="#59636e">6.1x</text>
+<text x="242" y="318" text-anchor="end" fill="#1f2328">png-encode (screenshot)</text>
+<rect x="330.0" y="307" width="72.2" height="13" fill="#2da44e" rx="2"/>
+<text x="408.2" y="318" text-anchor="start" fill="#59636e">1.9x</text>
+<text x="242" y="338" text-anchor="end" fill="#1f2328">webp-decode (lossy)</text>
+<rect x="330.0" y="327" width="70.0" height="13" fill="#2da44e" rx="2"/>
+<text x="406.0" y="338" text-anchor="start" fill="#59636e">1.8x</text>
+<text x="242" y="358" text-anchor="end" fill="#1f2328">webp-decode (lossless)</text>
+<rect x="330.0" y="347" width="116.3" height="13" fill="#2da44e" rx="2"/>
+<text x="452.3" y="358" text-anchor="start" fill="#59636e">2.7x</text>
+<text x="242" y="378" text-anchor="end" fill="#1f2328">webp-encode (lossless-2000x1500)</text>
+<rect x="330.0" y="367" width="233.2" height="13" fill="#2da44e" rx="2"/>
+<text x="569.2" y="378" text-anchor="start" fill="#59636e">7.5x</text>
+<text x="242" y="398" text-anchor="end" fill="#1f2328">webp-encode (lossy-2000x1500)</text>
+<rect x="330.0" y="387" width="203.1" height="13" fill="#2da44e" rx="2"/>
+<text x="539.1" y="398" text-anchor="start" fill="#59636e">5.8x</text>
+<text x="242" y="418" text-anchor="end" fill="#1f2328">webp-encode (lossy-400x300)</text>
+<rect x="330.0" y="407" width="170.7" height="13" fill="#2da44e" rx="2"/>
+<text x="506.7" y="418" text-anchor="start" fill="#59636e">4.4x</text>
+<text x="242" y="438" text-anchor="end" fill="#1f2328">gif-decode</text>
+<rect x="330.0" y="427" width="112.6" height="13" fill="#2da44e" rx="2"/>
+<text x="448.6" y="438" text-anchor="start" fill="#59636e">2.7x</text>
+<text x="242" y="458" text-anchor="end" fill="#1f2328">gif-encode</text>
+<rect x="330.0" y="447" width="27.0" height="13" fill="#2da44e" rx="2"/>
+<text x="363.0" y="458" text-anchor="start" fill="#59636e">1.26x</text>
+<text x="242" y="478" text-anchor="end" fill="#1f2328">gif-resize</text>
+<rect x="330.0" y="467" width="17.7" height="13" fill="#2da44e" rx="2"/>
+<text x="353.7" y="478" text-anchor="start" fill="#59636e">1.17x</text>
+<text x="242" y="498" text-anchor="end" fill="#1f2328">tiff-multipage-decode</text>
+<rect x="330.0" y="487" width="223.9" height="13" fill="#2da44e" rx="2"/>
+<text x="559.9" y="498" text-anchor="start" fill="#59636e">7.0x</text>
+<text x="242" y="518" text-anchor="end" fill="#1f2328">tiff-encode</text>
+<rect x="330.0" y="507" width="128.0" height="13" fill="#2da44e" rx="2"/>
+<text x="464.0" y="518" text-anchor="start" fill="#59636e">3.0x</text>
+<text x="242" y="538" text-anchor="end" fill="#1f2328">bmp-decode</text>
+<rect x="330.0" y="527" width="64.9" height="13" fill="#2da44e" rx="2"/>
+<text x="400.9" y="538" text-anchor="start" fill="#59636e">1.8x</text>
+<text x="242" y="558" text-anchor="end" fill="#1f2328">bmp-encode</text>
+<rect x="330.0" y="547" width="64.6" height="13" fill="#2da44e" rx="2"/>
+<text x="400.6" y="558" text-anchor="start" fill="#59636e">1.8x</text>
+<text x="242" y="578" text-anchor="end" fill="#1f2328">upscale-2x</text>
+<rect x="330.0" y="567" width="77.2" height="13" fill="#2da44e" rx="2"/>
+<text x="413.2" y="578" text-anchor="start" fill="#59636e">2.0x</text>
+<text x="242" y="598" text-anchor="end" fill="#1f2328">watermark</text>
+<rect x="328.0" y="587" width="4.0" height="13" fill="#8c959f" rx="2"/>
+<text x="338.0" y="598" text-anchor="start" fill="#59636e">1.00x tie</text>
+<text x="242" y="618" text-anchor="end" fill="#1f2328">cmyk-jpeg-to-srgb</text>
+<rect x="272.8" y="607" width="57.2" height="13" fill="#d1242f" rx="2"/>
+<text x="338.0" y="618" text-anchor="start" fill="#59636e">0.61x (ImageSharp skips ICC)</text>
+<text x="242" y="638" text-anchor="end" fill="#1f2328">jpeg-decode-rgba</text>
+<rect x="330.0" y="627" width="69.7" height="13" fill="#2da44e" rx="2"/>
+<text x="405.7" y="638" text-anchor="start" fill="#59636e">1.8x</text>
+<rect x="250" y="673" width="10" height="10" fill="#2da44e" rx="2"/><text x="265" y="682" fill="#59636e">faster</text>
+<rect x="330" y="673" width="10" height="10" fill="#8c959f" rx="2"/><text x="345" y="682" fill="#59636e">tie</text>
+<rect x="410" y="673" width="10" height="10" fill="#d1242f" rx="2"/><text x="425" y="682" fill="#59636e">slower</text>
+</svg>

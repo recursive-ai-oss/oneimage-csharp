@@ -4,7 +4,7 @@
     <AssemblyName>$(LibName)</AssemblyName>
     <RootNamespace>$(LibName)</RootNamespace>
     <PackageId>$(LibName)</PackageId>
-    <Description>A pure-managed image library: tiled, lazy, streaming image processing and codecs.</Description>
+    <Description>A pure-managed .NET image library: one-line thumbnails, crops and conversions, and lazy, tiled, streaming load, edit and render on the same engine.</Description>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>
@@ -42,7 +42,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
 </Project>
