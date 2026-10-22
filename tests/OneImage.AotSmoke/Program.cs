@@ -189,5 +189,23 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Composite and Thumbnail: a watermark over an RGB image (fast path), a linear-light blend (float path), and a thumbnail of encoded bytes.
+{
+    Image wm = Image.FromPixels<Rgba32>(new Rgba32[40 * 20], 40, 20);
+    Image bg = snapshot.ConvertTo(PixelFormat.Rgb8);
+    Rgb24[] marked = bg.Composite(wm.Invert(), 10, 10, 0.5f).ToArray<Rgb24>();
+    Rgb24[] lin = bg.Composite(wm, 5, 5, 0.25f, linear: true).ToArray<Rgb24>();
+    using var enc = new MemoryStream();
+    bg.Save(enc, JpegFormat.Instance);
+    Image thumb = Image.Thumbnail(enc.ToArray(), 100);
+    using var webp = new MemoryStream();
+    thumb.Save(webp, new WebPFormat());
+    if (marked.Length != 300 * 200 || lin.Length != 300 * 200 || thumb.Width != 100 || thumb.Height != 67 || webp.Length == 0 || thumb.Metadata.IccProfile.IsEmpty)
+    {
+        Console.Error.WriteLine("composite/thumbnail smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

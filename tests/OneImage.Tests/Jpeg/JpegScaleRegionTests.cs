@@ -40,6 +40,7 @@ internal sealed class RecordingJpeg : IImageFormat, IImageDecoder
     }
 }
 
+[Collection(MemoryMeasurement.Name)]
 public class JpegScaleRegionTests
 {
     public static TheoryData<string> Names() => new() { "base-420", "base-422", "base-440", "base-444", "prog-420", "arith-420", "gray", "cmyk", "ycck", "p12-420", "base-420-restart-rows", "arith-prog-444", "base-411" };
