@@ -10,6 +10,14 @@
     <IsTrimmable>true</IsTrimmable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>image;imaging;thumbnail;resize;jpeg;png;webp;gif;tiff;bmp;icc;color-management;nativeaot;trimmable</PackageTags>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <!-- Symbols ship as a separate .snupkg. SourceLink for GitHub comes with the SDK; embedding untracked sources and
+         the commit in the repository metadata makes the debug experience work without any package reference. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
 
   <ItemGroup>
