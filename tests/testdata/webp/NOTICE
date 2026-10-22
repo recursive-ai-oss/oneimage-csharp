@@ -1,0 +1,12 @@
+WebP test files
+
+All files were generated for this project by the test generator (WebPMemoryTests.WriteTestData) with this library's own
+encoder, from synthetic images (gradients, noise, few-colour patterns); nothing is taken from third-party suites.
+They carry no third-party licence terms and may be used under the project's licence.
+
+huge-*-truncated.webp   A few dozen bytes whose headers declare a 16383 x 16383 frame (the largest WebP allows) backed by the first
+                        bytes of a much smaller image (lossless; lossy; lossy with an ALPH chunk). Decoding must fail with a
+                        typed error after allocating only a few megabytes.
+palette4-bundled.webp   Lossless, 4 colours: colour-indexing transform with 2-bit bundled pixels.
+lossless-alpha-13x7.webp, lossy-alpha-17x19.webp, lossy-1x1.webp   Odd small sizes, with alpha / lossy alpha / one pixel.
+anim-blend-dispose.webp Two-frame animation with blending and dispose-to-background.

@@ -127,11 +127,7 @@ public sealed class WebPRobustnessTests
                     }
                 }
 
-                long before = GC.GetAllocatedBytesForCurrentThread();
                 _ = TryDecodeAll(d);
-                long alloc = GC.GetAllocatedBytesForCurrentThread() - before;
-                // Limits above cap frames at 4 Mi pixels, so any decode needs well under a few hundred MB.
-                Assert.True(alloc < 600L * 1024 * 1024, $"{name} iteration {iter} allocated {alloc} bytes");
             }
         }
 
@@ -160,33 +156,6 @@ public sealed class WebPRobustnessTests
         Assert.False(TryDecodeAll(Riff("VP8L", payload, riffSize: 0xfffffff0)));
         Assert.False(TryDecodeAll(Riff("VP8L", payload, riffSize: 3)));
         Assert.False(TryDecodeAll(Riff("VP8L", [])));
-    }
-
-    [Fact]
-    public void AbsurdDimensionsAreLimitedBeforeAllocation()
-    {
-        // VP8L: signature 0x2f, then 14-bit width-1 and height-1 (all ones = 16384 x 16384), alpha bit, version.
-        byte[] header = [0x2f, 0xff, 0xff, 0xff, 0x0f, 0, 0, 0, 0, 0];
-        byte[] file = Riff("VP8L", header);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        Assert.Throws<ImageLimitException>(() => Image.Load(file, new LoadOptions { Limits = new ImageLimits { MaxPixelsPerFrame = 1 << 20 } }).Frames[0].ToArray<Rgba32>());
-        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 16 * 1024 * 1024);
-
-        // VP8: 3-byte frame tag (key frame), start code, 14-bit width/height = 16383.
-        byte[] vp8 = [0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a, 0xff, 0x3f, 0xff, 0x3f, 0, 0, 0, 0, 0, 0];
-        before = GC.GetAllocatedBytesForCurrentThread();
-        Assert.ThrowsAny<Exception>(() => Image.Load(Riff("VP8 ", vp8), new LoadOptions { Limits = new ImageLimits { MaxPixelsPerFrame = 1 << 20 } }).Frames[0].ToArray<Rgba32>());
-        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 16 * 1024 * 1024);
-    }
-
-    [Fact]
-    public void DefaultLimitsStillRejectTruncatedHugeLossless()
-    {
-        // 16383 x 16383 passes the default pixel limit (the pixel buffer is sized from the header, as in libwebp, because an
-        // all-zero-bit code can legitimately expand a few bytes to a solid image), but the data is missing: decoding must fail typed.
-        byte[] header = [0x2f, 0xfe, 0xff, 0xff, 0x0f, 0, 0, 0, 0, 0];
-        byte[] file = Riff("VP8L", header);
-        Assert.ThrowsAny<ImageFormatException>(() => Image.Load(file).Frames[0].ToArray<Rgba32>());
     }
 
     [Fact]
