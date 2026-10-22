@@ -411,6 +411,55 @@ Image.Load(input)
 | `DetectEdges(KnownEdgeDetectorKernels.X, grayscale)` | `DetectEdges(EdgeDetector.X, grayscale)` | Same kernels (Sobel, Prewitt, Scharr, RobertsCross, Kayyali, Laplacian3x3, Laplacian5x5, LaplacianOfGaussian, Kirsch, Robinson), same results to the level. With `grayscale: true` (the default) the result is a gray image without alpha, where ImageSharp returns an RGB image of equal channels. |
 | `EntropyCrop(threshold)` | `EntropyCrop(threshold)` | Same rectangle. Eager, like `Trim`; an image with no detail is returned as it is. |
 
+### Color matrix, preset looks, color blindness, opacity
+
+ImageSharp:
+
+```csharp
+using Image image = Image.Load(input);
+image.Mutate(x => x.Sepia(0.8f));
+image.Mutate(x => x.Kodachrome());
+image.Mutate(x => x.ColorBlindness(ColorBlindnessMode.Deuteranopia));
+image.Mutate(x => x.Opacity(0.5f));
+image.Mutate(x => x.Filter(new ColorMatrix(
+    1f, 0f, 0f, 0f,
+    0f, 1f, 0f, 0f,
+    0f, 0f, 1f, 0f,
+    0f, 0f, 0f, 1f,
+    0.1f, 0f, 0f, 0f)));
+image.Save(output);
+```
+
+OneImage:
+
+```csharp
+Image.Load(input)
+    .Sepia(0.8f)
+    .Kodachrome()
+    .ColorBlindness(ColorBlindnessMode.Deuteranopia)
+    .Opacity(0.5f)
+    .ApplyColorMatrix(new ColorMatrix(
+        1f, 0f, 0f, 0f,
+        0f, 1f, 0f, 0f,
+        0f, 0f, 1f, 0f,
+        0f, 0f, 0f, 1f,
+        0.1f, 0f, 0f, 0f))
+    .Save(output);
+```
+
+`ColorMatrix` has ImageSharp's layout (`M11`..`M54`, the pixel as a row vector, row 5 the offsets), so a matrix copies over value for value. The presets use ImageSharp's matrices, and the 8-bit results agree with ImageSharp to within one step (checked in the test suite).
+
+| ImageSharp | OneImage | Differences |
+|---|---|---|
+| `Filter(ColorMatrix)` | `ApplyColorMatrix(ColorMatrix)` | Works on straight color on the stored values, like ImageSharp. Integer results clamp; float results are not clamped (alpha always is). Gray images become RGB. |
+| `Sepia(amount)`, `BlackWhite()`, `Kodachrome()` | `Sepia(amount)`, `BlackWhite()`, `Kodachrome()` | Same matrices. `Sepia(0)` returns the image unchanged. `BlackWhite` is a hard, high-contrast matrix, not a luminance conversion; use `Grayscale` for that. |
+| `Lomograph()`, `Polaroid()` | `Lomograph()`, `Polaroid()` | The color matrices only. ImageSharp follows the matrix with a vignette-style darkening (and, for Polaroid, a tint); that part is not reproduced, so the center of the frame matches Lomograph and the rest does not. |
+| `ColorBlindness(mode)` | `ColorBlindness(mode)` | Same eight modes and matrices. |
+| `Opacity(amount)` | `Opacity(amount)` | Multiplies alpha. An image without alpha gains an alpha channel. |
+| `KnownFilterMatrices` | `ColorMatrix.Sepia(amount)`, `.BlackWhite`, `.Kodachrome`, `.Lomograph`, `.Polaroid`, `.ColorBlindness(mode)`, `.Opacity(amount)` | Matrices as values you can inspect, multiply (`a * b` applies `a`, then `b`) and pass to `ApplyColorMatrix`. |
+
+These ops fuse with the other color ops (`Gamma`, `Levels`, `Invert`, ...) into one pass over each tile, so `Sepia().BrightnessContrast(...).Opacity(...)` reads the pixels once.
+
 ## Behavior to expect after porting
 
 - **Orientation is applied for you.** If your old code called `AutoOrient()` or rotated by the EXIF tag, remove that, or the picture will be turned twice.
@@ -444,19 +493,10 @@ Drawing is SixLabors.ImageSharp.Drawing 2.1.7; text layout and fonts are SixLabo
 
 Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with "CFF2 Fonts are not currently supported") and a public API for variable-font axes (the package lists the `rvrn` feature tag but exposes no axis settings). Also not covered by the colour-font option: SVG, `sbix`, CBDT and other bitmap colour glyphs.
 
-### Opacity: coming soon
-
-| ImageSharp | As of 1.0 | Closest workaround |
-|---|---|---|
-| `Opacity(amount)` (multiply every pixel's alpha) | No single call. `AddAlpha(alpha)` sets a constant alpha on an opaque image, and `Composite` takes an `opacity`. | `Composite` the image onto a transparent `Canvas` with the opacity you want. |
-
 ### Effects and filters: coming soon
 
 | ImageSharp | As of 1.0 | Closest workaround |
 |---|---|---|
-| `Sepia`, `Kodachrome`, `Lomograph`, `Polaroid`, `BlackWhite` preset filters | None. | `ChannelMixer` can apply the sepia matrix; `Grayscale` followed by `Threshold` approximates `BlackWhite`. |
-| `ColorBlindness(mode)` (Protanopia, Deuteranopia, Tritanopia, Achromatopsia and the "-omaly" modes) | None. | `ChannelMixer` with the simulation matrix you want. |
-| `Filter(ColorMatrix)` and `KnownFilterMatrices` | No general 4×4/5×4 color matrix. | `ChannelMixer` takes a 3×3 or 3×4 RGB matrix; there is no alpha row. |
 | `HistogramEqualization(options)` (global, adaptive tile, sliding window, `AutoLevel`) | None. `Histogram` gives the data. | `Levels` or `Curves` with values you compute from `Histogram`. |
 | `AdaptiveThreshold(...)` | None. `Threshold(level)` is a global threshold. | None. |
 | `BinaryDither(...)` and `Dither(..., palette)` with `KnownDitherings` (Atkinson, Burkes, JarvisJudiceNinke, Sierra2/3/Lite, Stucki, StevensonArce, Bayer2x2/4x4/8x8/16x16, Ordered3x3) | `Quantize(colors, dither)` offers none, Floyd–Steinberg and an 8×8 ordered dither, and picks its own palette. | Quantize to 2 colors for a bilevel result. A caller-supplied palette and the other matrices are not available. |

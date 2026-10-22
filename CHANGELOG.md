@@ -11,6 +11,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `Fit.BoxPad` and `Fit.Min` (ImageSharp's `ResizeMode.BoxPad` and `Min`), the aliases `Fit.Max` and `Fit.Crop`, and `Image.ResizeInto` for resizing into a rectangle of a canvas (`ResizeMode.Manual`).
 - Resampling filters `Hermite`, `Lanczos5`, `Lanczos8`, `Robidoux`, `RobidouxSharp`, `Spline` and `Welch`, with the aliases `Bicubic` and `Triangle`, in `Resize` and in the rotate, affine and perspective samplers.
 - Neighbourhood effects, matching ImageSharp 3.1.12: `Pixelate`, `OilPaint`, `Vignette`, `Glow`, `BokehBlur`, `GaussianSharpen`, `DetectEdges` (`EdgeDetector`: Sobel, Prewitt, Scharr, RobertsCross, Kayyali, Laplacian3x3/5x5, LaplacianOfGaussian, Kirsch, Robinson) and `EntropyCrop`. `OilPaint` centers its window, where ImageSharp's is shifted; see the migration guide.
+- Color matrix: `Image.ApplyColorMatrix(ColorMatrix)` with a public `ColorMatrix` (ImageSharp's 5x4 layout), and the looks built on it: `Sepia`, `BlackWhite`, `Kodachrome`, `Lomograph`, `Polaroid`, `ColorBlindness(ColorBlindnessMode)` and `Opacity`. They fuse with the other color ops into one pass per tile.
 
 ## [1.0.0] - 2026-10-22
 

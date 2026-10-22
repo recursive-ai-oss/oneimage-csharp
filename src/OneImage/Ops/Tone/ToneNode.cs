@@ -143,6 +143,12 @@ internal sealed class ToneNode : Node
                 continue;
             }
 
+            if (plan.Stages != null)
+            {
+                RunStages(plan.Stages, s, d, w);
+                continue;
+            }
+
             if (_steps.Length == 1 && _steps[0].TryApplyBytes(s, d, inF, w))
             {
                 continue;
@@ -175,7 +181,7 @@ internal sealed class ToneNode : Node
 
         if (!tabulate)
         {
-            return new Compiled(null, null);
+            return new Compiled(null, null, CompileStages());
         }
 
         int colors = f.ColorChannels;
@@ -198,7 +204,7 @@ internal sealed class ToneNode : Node
                 }
             }
 
-            return new Compiled(tables, null);
+            return new Compiled(tables, null, null);
         }
         else
         {
@@ -219,7 +225,7 @@ internal sealed class ToneNode : Node
                 }
             }
 
-            return new Compiled(null, tables);
+            return new Compiled(null, tables, null);
         }
     }
 
@@ -232,5 +238,99 @@ internal sealed class ToneNode : Node
         }
     }
 
-    private sealed record Compiled(byte[][]? Lut8, ushort[][]? Lut16);
+    /// <summary>
+    /// 8-bit chains that contain a color matrix run as byte stages: runs of channel-wise steps become one table pass and each matrix is the
+    /// vector kernel. Every stage stores 8-bit samples, which is the rounding the float path applies after every step, so the bytes are the same;
+    /// it just avoids the slow generic float rows. Returns null when some step does not fit (the generic path then runs).
+    /// </summary>
+    private Stage8[]? CompileStages()
+    {
+        PixelFormat f = Inputs[0].Format;
+        if (f.Sample != SampleType.U8 || f.Alpha == AlphaMode.Premultiplied || !_steps.Any(static s => s is ColorMatrixStep))
+        {
+            return null;
+        }
+
+        var stages = new List<Stage8>();
+        PixelFormat before = f;
+        int i = 0;
+        while (i < _steps.Length)
+        {
+            if (_steps[i] is ColorMatrixStep m)
+            {
+                PixelFormat after = _formats[i];
+                if (before.Model != ColorModel.Rgb || after.Alpha == AlphaMode.Premultiplied)
+                {
+                    return null;
+                }
+
+                stages.Add(new Stage8(null, m, before, after));
+                before = after;
+                i++;
+                continue;
+            }
+
+            int first = i;
+            PixelFormat runFormat = before;
+            while (i < _steps.Length && _steps[i] is not ColorMatrixStep && _steps[i].ChannelWise(before) && _formats[i] == before)
+            {
+                i++;
+            }
+
+            if (i == first)
+            {
+                return null;
+            }
+
+            var tables = new byte[runFormat.ColorChannels][];
+            var ramp = new float[256];
+            for (int k = 0; k < tables.Length; k++)
+            {
+                for (int v = 0; v < 256; v++)
+                {
+                    ramp[v] = v / 255f;
+                }
+
+                for (int j = first; j < i; j++)
+                {
+                    _steps[j].ApplyChannel(k, ramp);
+                    ToneKernel.RoundSpan(ramp, SampleType.U8);
+                }
+
+                tables[k] = new byte[256];
+                for (int v = 0; v < 256; v++)
+                {
+                    tables[k][v] = ToneKernel.StoreU8(ramp[v]);
+                }
+            }
+
+            stages.Add(new Stage8(tables, null, runFormat, runFormat));
+        }
+
+        return stages.ToArray();
+    }
+
+    private static void RunStages(Stage8[] stages, ReadOnlySpan<byte> src, Span<byte> dst, int width)
+    {
+        Span<byte> ping = stackalloc byte[Tile.Size * 4];
+        Span<byte> pong = stackalloc byte[Tile.Size * 4];
+        for (int i = 0; i < stages.Length; i++)
+        {
+            Stage8 st = stages[i];
+            ReadOnlySpan<byte> current = i == 0 ? src : (i % 2 == 1 ? ping : pong);
+            Span<byte> target = i == stages.Length - 1 ? dst : (i % 2 == 0 ? ping : pong);
+            if (st.Tables != null)
+            {
+                ToneKernel.ApplyLut8(current, target, width, st.In.ChannelCount, st.In.ColorChannels, st.Tables);
+            }
+            else if (!st.Matrix!.TryApplyBytes(current, target, st.In, width))
+            {
+                throw new InvalidOperationException("Color matrix stage does not fit the 8-bit kernel.");
+            }
+        }
+    }
+
+    private sealed record Stage8(byte[][]? Tables, ColorMatrixStep? Matrix, PixelFormat In, PixelFormat Out);
+
+    private sealed record Compiled(byte[][]? Lut8, ushort[][]? Lut16, Stage8[]? Stages);
 }

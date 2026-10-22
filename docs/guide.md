@@ -165,6 +165,13 @@ Like `Rotate` and `Affine` it grows the canvas to the transformed bounding box b
 
 **Color and tone**: `Grayscale`, `BrightnessContrast`, `Exposure`, `Gamma`, `Levels`, `Curves`, `HueSaturationLightness`, `Invert`, `Threshold`, `Posterize`, `ChannelMixer`, `CombineChannels`, `AddAlpha`, `RemoveAlpha`, `Flatten`, `ConvertTo(PixelFormat)`. Adjacent tone ops fuse into one pass. Identity parameters return the input unchanged. Tone ops act on straight (not premultiplied) color and leave alpha alone; most work on encoded values, while `Grayscale` and `Exposure` default to linear light.
 
+**Color matrix and presets**: `ApplyColorMatrix(ColorMatrix)` multiplies straight RGBA by a 5×4 matrix (ImageSharp's layout; `ColorMatrix` documents it), and the looks built on it are `Sepia(amount)`, `BlackWhite()`, `Kodachrome()`, `Lomograph()`, `Polaroid()`, `ColorBlindness(mode)` (the eight simulations) and `Opacity(amount)`. They work on stored values, fuse with the other color ops, and the identity (`Sepia(0)`, `Opacity(1)`) returns the input.
+
+```csharp
+Image warm = photo.Sepia(0.6f).BrightnessContrast(contrast: 0.1).Opacity(0.9f);
+Image seen = photo.ColorBlindness(ColorBlindnessMode.Protanopia);
+```
+
 ```csharp
 img.Grayscale().BrightnessContrast(brightness: 0.1, contrast: 0.2).Gamma(1.1);
 ```

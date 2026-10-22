@@ -106,7 +106,7 @@ Notes on the table:
 Compared with ImageSharp 3.1.12 and its Drawing 2.1.7, Fonts 2.1.3 and Web 3.2.0 packages (the last releases that build without a license key), as of 1.0 OneImage does not have:
 
 - **Drawing and text:** shapes and paths with boolean operations, fills and strokes (dashes, joins, caps), solid, gradient, pattern and image brushes, clipping to a path, and text (OpenType shaping, bidirectional layout, font fallback, COLR color fonts, text along a path). Coming soon.
-- **Effects:** pixelate, oil paint, vignette, glow, bokeh blur, preset filters (sepia, Kodachrome, Lomograph, Polaroid), color-blindness filters, histogram equalization, adaptive threshold, the other edge detectors and dither matrices. Coming soon.
+- **Effects:** histogram equalization, adaptive threshold and the extra dither matrices and palettes. Coming soon.
 - **ASP.NET Core resizing middleware:** URL-command resizing, file-system and web-root providers, a disk cache, HMAC-signed URLs and Razor tag helpers. Coming soon.
 - **Formats:** TGA, PBM and QOI. Not planned.
 

@@ -116,9 +116,11 @@ if (status != InflateStatus.Done || produced != sample.Length || !unzipped.AsSpa
 // Color and tone: a fused chain, grayscale, flatten, split/combine.
 Image toned = snapshot.Crop(0, 0, 64, 64).Levels(0.1, 0.9, 1.2).Curves([new CurvePoint(0, 0), new CurvePoint(0.5, 0.6), new CurvePoint(1, 1)]).Gamma(1.5).Invert();
 Image flat = snapshot.Crop(0, 0, 64, 64).Grayscale().HueSaturationLightness(20, 0.1).Flatten(new Rgba32(255, 255, 255, 255));
+Image matrixed = snapshot.Crop(0, 0, 64, 64).Sepia(0.5f).ColorBlindness(ColorBlindnessMode.Tritanopia).Opacity(0.5f).ApplyColorMatrix(ColorMatrix.Kodachrome);
 Image rejoined = Image.CombineChannels(snapshot.Crop(0, 0, 64, 64).SplitChannels());
 bool toneOk = toned.ToArray<Rgba32>().Length == 4096 && flat.Format == PixelFormat.Rgb8 && flat.ToArray<Rgb24>().Length == 4096
-    && rejoined.ToArray<Rgba32>().AsSpan().SequenceEqual(snapshot.Crop(0, 0, 64, 64).ToArray<Rgba32>()) && toned.DescribeGraph().Contains("fused", StringComparison.Ordinal);
+    && rejoined.ToArray<Rgba32>().AsSpan().SequenceEqual(snapshot.Crop(0, 0, 64, 64).ToArray<Rgba32>()) && toned.DescribeGraph().Contains("fused", StringComparison.Ordinal)
+    && matrixed.Format.HasAlpha && Math.Abs((matrixed.ToArray<Rgba32>()[0].A * 2) - snapshot.Crop(0, 0, 64, 64).ToArray<Rgba32>()[0].A) <= 1 && matrixed.DescribeGraph().Contains("color_matrix", StringComparison.Ordinal);
 if (!toneOk)
 {
     Console.Error.WriteLine("tone smoke failed");
