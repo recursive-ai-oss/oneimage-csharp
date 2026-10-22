@@ -150,6 +150,13 @@ public sealed class TextOptions
     /// </summary>
     public TextDirection TextDirection { get; set; }
 
+    /// <summary>
+    /// Gets or sets how lines are oriented and stacked. The default is <see cref="Text.LayoutMode.HorizontalTopBottom"/>. In the
+    /// vertical modes a line is a column: <see cref="WrappingLength"/> limits its height, text alignment works along it, and columns
+    /// stack to the right or to the left. Bidirectional reordering is not applied in vertical modes. See <c>docs/text.md</c>.
+    /// </summary>
+    public LayoutMode LayoutMode { get; set; }
+
     /// <summary>Gets or sets whether the font's kerning is applied. The default is <see cref="KerningMode.Normal"/>.</summary>
     public KerningMode Kerning { get; set; }
 
@@ -261,6 +268,7 @@ public sealed class TextOptions
         VerticalAlignment = VerticalAlignment,
         TextAlignment = TextAlignment,
         TextDirection = TextDirection,
+        LayoutMode = LayoutMode,
         Kerning = Kerning,
         WordBreaking = WordBreaking,
         TextJustification = TextJustification,

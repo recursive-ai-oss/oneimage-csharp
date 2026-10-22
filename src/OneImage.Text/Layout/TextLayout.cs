@@ -24,6 +24,9 @@ internal struct ShapedGlyph
     public float YOffset;
     public bool IsSpace;
 
+    /// <summary>In vertical layout: whether the glyph stands upright (advancing by its vertical advance) rather than lying rotated a quarter turn clockwise (advancing by its horizontal advance).</summary>
+    public bool Upright;
+
     /// <summary>The bidirectional embedding level of the glyph's character (0 when the paragraph has no right-to-left text and is not right to left).</summary>
     public byte Level;
 
@@ -49,6 +52,10 @@ internal sealed class GlyphStyle
     public float Pitch;
     public float Ascent;
     public float TabAdvance;
+
+    /// <summary>For vertical layout when the face has no vertical metrics: the advance height and the distance from the top of the cell to the baseline, in font units.</summary>
+    public int VerticalAdvanceDefault;
+    public int VerticalOriginDefault;
 
     /// <summary>Centers of the decoration lines above the baseline, and their thicknesses, in pixels.</summary>
     public float UnderlineOffset;
@@ -88,8 +95,11 @@ internal sealed class LayoutLine
     /// <summary>Absolute x of the line start, in pixels.</summary>
     public float Left;
 
-    /// <summary>Absolute y of the baseline, in pixels.</summary>
+    /// <summary>Absolute y of the baseline, in pixels. In vertical layouts: the x of the baseline of rotated glyphs.</summary>
     public float Baseline;
+
+    /// <summary>Vertical layouts only: absolute y where the column starts, in pixels.</summary>
+    public float Top;
 
     /// <summary>Whether the line belongs to a right-to-left paragraph.</summary>
     public bool Rtl;
@@ -127,6 +137,12 @@ internal sealed class TextLayout
     private readonly Font _baseFont;
     private readonly IList<FontFamily> _fallbacks;
     private readonly TextDirection _direction;
+    private readonly LayoutMode _mode;
+    private readonly bool _vertical;
+    private readonly bool _mixed;
+    private readonly FeatureSet _verticalFeatures;
+    private bool _curUpright = true;
+    private bool _runUpright;
 
     // Bidirectional data of the paragraph being laid out: the level of each UTF-16 offset from its start (null when the paragraph is
     // plain left to right and nothing needs reordering), and the paragraph level.
@@ -170,6 +186,16 @@ internal sealed class TextLayout
         }
 
         _features = FeatureSet.Create(settings);
+        _mode = o.LayoutMode;
+        _vertical = _mode is LayoutMode.VerticalLeftRight or LayoutMode.VerticalRightLeft or LayoutMode.VerticalMixedLeftRight or LayoutMode.VerticalMixedRightLeft;
+        _mixed = _mode is LayoutMode.VerticalMixedLeftRight or LayoutMode.VerticalMixedRightLeft;
+
+        // Upright glyphs advance down the column: horizontal kerning is off and the font's vertical forms are on (vrt2 and vert
+        // are alternatives in a font; both are asked for, and a font normally has one). The caller's own feature settings come
+        // last, so they win.
+        var vsettings = new List<(uint, int)> { (Tag.Kern, 0), (Fonts.Be.Tag("vert"), 1), (Fonts.Be.Tag("vrt2"), 1) };
+        vsettings.AddRange(settings);
+        _verticalFeatures = FeatureSet.Create(vsettings);
         _direction = o.TextDirection;
         _wordBreaking = o.WordBreaking;
         _justification = o.TextJustification;
@@ -441,6 +467,8 @@ internal sealed class TextLayout
             // The font's ascent and descent are centered in the line box.
             Ascent = (m.Ascender * sy) - ((natural - pitch) / 2),
             TabAdvance = _tabWidth * f.GetAdvance(f.GetGlyphIndex(' ')) * sx,
+            VerticalAdvanceDefault = m.LineHeight,
+            VerticalOriginDefault = m.Ascender,
             UnderlineOffset = shift + (ulPos * sy),
             UnderlineThickness = ulThick * sy,
             StrikeoutOffset = shift + (stPos * sy),
@@ -462,6 +490,8 @@ internal sealed class TextLayout
         _pending = 0;
         _runStyle = -1;
         _runRtl = false;
+        _runUpright = false;
+        _curUpright = true;
         _script = 0;
         int face = 0;
         int i = start;
@@ -498,11 +528,24 @@ internal sealed class TextLayout
             // A shaping run keeps one direction: glyphs are substituted and positioned in reading order, and the run is turned
             // around as a whole when the line is reordered.
             bool rtl = _levels is not null && (_levels[i - start] & 1) == 1;
-            if (style != _runStyle || rtl != _runRtl)
+            bool upright = false;
+            if (_vertical)
+            {
+                // Orientation is decided by the first character of a cluster; marks follow their base. Tr and R lie down, U and Tu stand.
+                if (_clusters[i - start] != 0)
+                {
+                    _curUpright = !_mixed || VerticalOrientation.Of(cp) is VerticalOrientationClass.U or VerticalOrientationClass.Tu;
+                }
+
+                upright = _curUpright;
+            }
+
+            if (style != _runStyle || rtl != _runRtl || upright != _runUpright)
             {
                 FlushRun(end);
                 _runStyle = style;
                 _runRtl = rtl;
+                _runUpright = upright;
             }
 
             if (cp == '\t')
@@ -510,7 +553,7 @@ internal sealed class TextLayout
                 FlushRun(end);
                 GlyphStyle st = Styles[style];
                 int gid = st.Face.GetGlyphIndex(' ');
-                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = st.TabAdvance, IsSpace = true, Style = style, Level = LevelAt(i - start) });
+                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = st.TabAdvance, IsSpace = true, Style = style, Level = LevelAt(i - start), Upright = upright });
             }
             else if (cp is 0x200C or 0x200B or 0x00AD && !indicJoiner)
             {
@@ -620,7 +663,7 @@ internal sealed class TextLayout
 
         GlyphStyle st = Styles[_runStyle];
         _run.Clear();
-        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run, _runRtl, ref _script);
+        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _runUpright ? _verticalFeatures : _features, _run, _runRtl, ref _script);
         for (int k = 0; k < _run.Count; k++)
         {
             ShapedRunGlyph r = _run[k];
@@ -631,7 +674,8 @@ internal sealed class TextLayout
                 CodePoint = r.CodePoint,
                 Cluster = r.Cluster,
                 Length = Math.Max(nextCluster - r.Cluster, 1),
-                Advance = r.XAdvance * st.Sx,
+                Advance = _runUpright ? VerticalAdvance(st, r.GlyphId) : r.XAdvance * st.Sx,
+                Upright = _runUpright,
                 XOffset = r.XOffset * st.Sx,
                 YOffset = (r.YOffset * st.Sy) + st.Shift,
                 IsSpace = IsBreakingSpace(r.CodePoint),
@@ -786,7 +830,7 @@ internal sealed class TextLayout
         _paraLevel = 0;
         int length = end - start;
         ReadOnlySpan<char> span = text.AsSpan(start, length);
-        if (length == 0 || (_direction != TextDirection.RightToLeft && !MayNeedBidi(span)))
+        if (length == 0 || _vertical || (_direction != TextDirection.RightToLeft && !MayNeedBidi(span)))
         {
             return;
         }
@@ -1250,6 +1294,12 @@ internal sealed class TextLayout
     // Block placement and per-line alignment.
     private void Position(TextOptions o)
     {
+        if (_vertical)
+        {
+            PositionVertical(o);
+            return;
+        }
+
         // Horizontal alignment puts a box on the origin: left edge, center or right edge. Start lines share the left edge of a box
         // as wide as the widest line. Center and End place each line inside a box as wide as the wrapping length (the widest line
         // when there is none). The two boxes are the same width unless text wraps, which is how ImageSharp lays it out.
@@ -1265,6 +1315,8 @@ internal sealed class TextLayout
             VerticalAlignment.Bottom => o.Origin.Y - blockH,
             _ => o.Origin.Y,
         };
+        float origTop = top;
+        float stacked = 0;
         for (int i = 0; i < Lines.Count; i++)
         {
             LayoutLine l = Lines[i];
@@ -1277,9 +1329,76 @@ internal sealed class TextLayout
                 TextAlignment.End => l.Rtl ? left - (haFraction * alignW) : left - (haFraction * alignW) + (alignW - w),
                 _ => l.Rtl ? left - (haFraction * blockW) + (blockW - w) : left - (haFraction * blockW),
             } - l.Hang;
+            if (_mode == LayoutMode.HorizontalBottomTop)
+            {
+                // The first line is at the bottom of the block.
+                l.Baseline = origTop + (blockH - stacked - l.Height) + l.Ascent;
+                stacked += l.Height;
+                continue;
+            }
+
             l.Baseline = top + l.Ascent;
             top += l.Height;
         }
+    }
+
+    // ---- Vertical layouts ----
+
+    // Lines are columns: Width is the length down the column, Height the column's width. Columns stack to the right
+    // (LeftRight modes) or to the left (RightLeft modes); the block's size across is TotalHeight and along is MaxWidth.
+    private void PositionVertical(TextOptions o)
+    {
+        float flowBox = _wrap > 0 ? _wrap : MaxWidth;
+        float hFraction = o.HorizontalAlignment switch { HorizontalAlignment.Center => 0.5f, HorizontalAlignment.Right => 1f, _ => 0f };
+        float vFraction = o.VerticalAlignment switch { VerticalAlignment.Center => 0.5f, VerticalAlignment.Bottom => 1f, _ => 0f };
+        float left = o.Origin.X - (hFraction * TotalHeight);
+        bool rightToLeft = _mode is LayoutMode.VerticalRightLeft or LayoutMode.VerticalMixedRightLeft;
+        float used = 0;
+        foreach (LayoutLine l in Lines)
+        {
+            l.Top = o.TextAlignment switch
+            {
+                TextAlignment.Center => o.Origin.Y - (vFraction * flowBox) + ((flowBox - l.Width) / 2),
+                TextAlignment.End => o.Origin.Y - (vFraction * flowBox) + (flowBox - l.Width),
+                _ => o.Origin.Y - (vFraction * MaxWidth),
+            };
+            used += l.Height;
+            l.Left = rightToLeft ? left + TotalHeight - used : left + used - l.Height;
+            l.Baseline = l.Left + l.Height - l.Ascent;
+        }
+    }
+
+    private static float VerticalAdvance(GlyphStyle st, int glyph)
+    {
+        VerticalMetrics? v = st.Face.Vertical;
+        return (v is null ? st.VerticalAdvanceDefault : v.GetAdvance(glyph)) * st.Sy;
+    }
+
+    // Where an upright glyph's pen sits in its column: x from the column's left edge and the distance from the top of the glyph's
+    // cell down to its baseline. The baseline comes from VORG or the top side bearing, else it is one ascender down.
+    private static void UprightPlacement(GlyphStyle st, int glyph, int codePoint, float columnWidth, out float dx, out float baseline)
+    {
+        FontFace f = st.Face;
+        Outline o = f.GetOutline(glyph);
+        (float ax, _, float bx, float by) = o.IsEmpty ? default : o.TightBox();
+
+        // Characters that are upright by nature (ideographs, kana) fill the em square and sit on it, centered in the column.
+        // Characters that would lie down in running text (Latin letters, digits) are centered by their ink.
+        VerticalOrientationClass cls = VerticalOrientation.Of(codePoint);
+        dx = o.IsEmpty || cls is VerticalOrientationClass.U or VerticalOrientationClass.Tu
+            ? (columnWidth - (f.UnitsPerEm * st.Sx)) / 2
+            : ((columnWidth - ((bx - ax) * st.Sx)) / 2) - (ax * st.Sx);
+        baseline = (f.Vertical is { } v ? v.GetOriginY(glyph, (int)MathF.Round(by)) : st.VerticalOriginDefault) * st.Sy;
+    }
+
+    // The axis-aligned box of a font-unit box after a glyph matrix (a scale/flip or a quarter turn).
+    private static System.Drawing.RectangleF TransformBox(Matrix3x2 m, float ax, float ay, float bx, float by)
+    {
+        Vector2 p = Vector2.Transform(new Vector2(ax, ay), m);
+        Vector2 q = Vector2.Transform(new Vector2(bx, by), m);
+        float x0 = Math.Min(p.X, q.X);
+        float y0 = Math.Min(p.Y, q.Y);
+        return new System.Drawing.RectangleF(x0, y0, Math.Max(p.X, q.X) - x0, Math.Max(p.Y, q.Y) - y0);
     }
 
     public TextMetrics ToMetrics()
@@ -1316,6 +1435,16 @@ internal sealed class TextLayout
                 }
 
                 (float ax, float ay, float bx, float by) = o.TightBox();
+                if (_vertical)
+                {
+                    System.Drawing.RectangleF r = TransformBox(GlyphMatrix(l, k, st, null), ax, ay, bx, by);
+                    x0 = Math.Min(x0, r.Left);
+                    x1 = Math.Max(x1, r.Right);
+                    y0 = Math.Min(y0, r.Top);
+                    y1 = Math.Max(y1, r.Bottom);
+                    continue;
+                }
+
                 float gx = l.Left + PenX[k] + g.XOffset;
                 x0 = Math.Min(x0, gx + (ax * st.Sx));
                 x1 = Math.Max(x1, gx + (bx * st.Sx));
@@ -1325,7 +1454,7 @@ internal sealed class TextLayout
             }
         }
 
-        var advance = new System.Drawing.SizeF(MaxWidth, TotalHeight);
+        var advance = _vertical ? new System.Drawing.SizeF(TotalHeight, MaxWidth) : new System.Drawing.SizeF(MaxWidth, TotalHeight);
         System.Drawing.RectangleF bounds = x0 <= x1
             ? new System.Drawing.RectangleF(x0, y0, x1 - x0, y1 - y0)
             : new System.Drawing.RectangleF(Lines.Count > 0 ? Lines[0].Left : 0, Lines.Count > 0 ? Lines[0].Baseline - Lines[0].Ascent : 0, 0, 0);
@@ -1349,10 +1478,14 @@ internal sealed class TextLayout
                 if (!outline.IsEmpty)
                 {
                     (float ax, float ay, float bx, float by) = outline.TightBox();
-                    ink = new System.Drawing.RectangleF(gx + (ax * st.Sx), gy - (by * st.Sy), (bx - ax) * st.Sx, (by - ay) * st.Sy);
+                    ink = _vertical
+                        ? TransformBox(GlyphMatrix(l, k, st, null), ax, ay, bx, by)
+                        : new System.Drawing.RectangleF(gx + (ax * st.Sx), gy - (by * st.Sy), (bx - ax) * st.Sx, (by - ay) * st.Sy);
                 }
 
-                var box = new System.Drawing.RectangleF(l.Left + PenX[k], l.Baseline - l.Ascent, g.Advance, l.Height);
+                var box = _vertical
+                    ? new System.Drawing.RectangleF(l.Left, l.Top + PenX[k], l.Height, g.Advance)
+                    : new System.Drawing.RectangleF(l.Left + PenX[k], l.Baseline - l.Ascent, g.Advance, l.Height);
                 if (!ClusterStart[k] && k > l.GlyphStart && list.Count > 0)
                 {
                     // A combining mark or other continuation: one box for the whole grapheme cluster, never split.
@@ -1547,6 +1680,18 @@ internal sealed class TextLayout
     private Matrix3x2 GlyphMatrix(LayoutLine l, int k, GlyphStyle st, PathRoute? route)
     {
         ShapedGlyph g = Glyphs[k];
+        if (_vertical)
+        {
+            if (g.Upright)
+            {
+                UprightPlacement(st, g.GlyphId, g.CodePoint, l.Height, out float px, out float down);
+                return new Matrix3x2(st.Sx, 0, 0, -st.Sy, l.Left + px + g.XOffset, l.Top + PenX[k] + down - g.YOffset);
+            }
+
+            // Rotated a quarter turn clockwise: the glyph's up points right and its advance runs down the column.
+            return new Matrix3x2(0, st.Sx, st.Sy, 0, l.Baseline + g.YOffset, l.Top + PenX[k] + g.XOffset);
+        }
+
         float oy = l.Baseline - g.YOffset;
         if (route is null)
         {
@@ -1561,6 +1706,12 @@ internal sealed class TextLayout
 
     private void AddDecorations(LayoutLine l, PathRoute? route, Func<PaintKey, PathBuilder> builderFor)
     {
+        if (_vertical)
+        {
+            // Decorations are horizontal rules; vertical layouts do not draw them.
+            return;
+        }
+
         int visibleStart = l.VisStart;
         int visibleEnd = l.VisEnd;
         if (visibleEnd == visibleStart)

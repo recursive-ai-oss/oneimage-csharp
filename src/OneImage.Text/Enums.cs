@@ -107,3 +107,31 @@ public enum TextAttributes
     /// <summary>Lowered and shrunk by the subscript size and offset the font's <c>OS/2</c> table recommends.</summary>
     Subscript,
 }
+
+/// <summary>How lines are oriented and in which direction they stack.</summary>
+public enum LayoutMode
+{
+    /// <summary>Horizontal lines, the first at the top and later lines below it (the default).</summary>
+    HorizontalTopBottom,
+
+    /// <summary>Horizontal lines stacked upward: the first line is at the bottom of the block and later lines are above it. Each line still reads left to right.</summary>
+    HorizontalBottomTop,
+
+    /// <summary>
+    /// Vertical columns, every character upright, reading top to bottom, the first column at the left and later columns to its
+    /// right. The font's vertical metrics (<c>vhea</c>, <c>vmtx</c>, <c>VORG</c>) and its <c>vert</c>/<c>vrt2</c> forms are used.
+    /// </summary>
+    VerticalLeftRight,
+
+    /// <summary>Like <see cref="VerticalLeftRight"/> with the first column at the right and later columns to its left, as in traditional East Asian typesetting.</summary>
+    VerticalRightLeft,
+
+    /// <summary>
+    /// Vertical columns, the first at the left, with the orientation of each character taken from the Unicode Vertical_Orientation
+    /// property (UAX #50): ideographs and kana stand upright, Latin letters, digits and most punctuation lie rotated a quarter turn clockwise.
+    /// </summary>
+    VerticalMixedLeftRight,
+
+    /// <summary>Like <see cref="VerticalMixedLeftRight"/> with the first column at the right.</summary>
+    VerticalMixedRightLeft,
+}

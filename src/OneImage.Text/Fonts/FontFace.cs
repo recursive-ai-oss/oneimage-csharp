@@ -129,6 +129,8 @@ internal sealed class FontFace
         FamilyName = family ?? FullName ?? PostScriptName ?? "Unknown";
         SubfamilyName = sub ?? (IsBold ? (IsItalic ? "Bold Italic" : "Bold") : (IsItalic ? "Italic" : "Regular"));
 
+        Vertical = VerticalMetrics.TryCreate(_tables, NumGlyphs);
+
         Color = ColorGlyphs.TryCreate(Table("COLR", required: false), Table("CPAL", required: false));
 
         // GSUB, GPOS and GDEF with an unusable header are ignored: the font then shapes with plain advances.
@@ -138,6 +140,9 @@ internal sealed class FontFace
             _kern = KernTable.Create(kern);
         }
     }
+
+    /// <summary>Vertical metrics (<c>vhea</c>, <c>vmtx</c>, <c>VORG</c>), or null when the font has none.</summary>
+    public VerticalMetrics? Vertical { get; }
 
     public int UnitsPerEm { get; }
 
