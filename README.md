@@ -16,8 +16,8 @@ benchmark task (wall-clock time, log scale, higher is better; a task
 where OneImage is slower shows as a bar to the left, a tie in grey):
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.2.0/docs/img/oneimage-hero-dark.svg">
-  <img alt="Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower." src="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.2.0/docs/img/oneimage-hero-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/main/docs/img/oneimage-hero-dark.svg">
+  <img alt="Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower." src="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/main/docs/img/oneimage-hero-light.svg">
 </picture>
 
 [Full results, with memory, the losses and the method →](docs/performance.md)
