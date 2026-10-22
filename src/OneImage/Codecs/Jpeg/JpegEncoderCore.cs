@@ -77,8 +77,9 @@ internal sealed class JpegEncodeSession : IDisposable
     private readonly int _mcusY;
     private readonly int[][] _quant = new int[2][];
     private readonly uint[][] _recip = new uint[2][];
-    private readonly JpegHuffmanEncodeTable[] _dc = [new(), new()];
-    private readonly JpegHuffmanEncodeTable[] _ac = [new(), new()];
+    private readonly JpegTableSet _tables = JpegTableSet.Rent();
+    private readonly JpegHuffmanEncodeTable[] _dc;
+    private readonly JpegHuffmanEncodeTable[] _ac;
     private readonly bool _color;
     private readonly bool _cmyk;
     private bool _storesAll;
@@ -92,7 +93,7 @@ internal sealed class JpegEncodeSession : IDisposable
     internal static long StoredPixelLimitForTests;
 
     private bool _countAc;
-    private readonly long[][] _acFreq = [new long[257], new long[257]];
+    private readonly long[][] _acFreq;
     private int _slot;
     private readonly int _degree;
     private bool _sentRestartInterval;
@@ -101,6 +102,9 @@ internal sealed class JpegEncodeSession : IDisposable
 
     public JpegEncodeSession(ImageFrameReader frame, ImageMetadata meta, JpegEncoderOptions options, Stream dest, int degree, CancellationToken ct)
     {
+        _dc = _tables.Dc;
+        _ac = _tables.Ac;
+        _acFreq = _tables.AcFreq;
         _frame = frame;
         _meta = meta;
         _degree = degree;
@@ -161,6 +165,7 @@ internal sealed class JpegEncodeSession : IDisposable
     public void Dispose()
     {
         _w.Dispose();
+        _tables.Return(); // idempotent: a second call must not put the set in the pool twice
         foreach (Comp c in _comps)
         {
             if (c.Blocks.Length > 0)
@@ -443,10 +448,38 @@ internal sealed class JpegEncodeSession : IDisposable
     /// <summary>Per-worker buffers for turning one MCU row of pixels into quantized blocks.</summary>
     private sealed class RowScratch
     {
+        private static readonly System.Collections.Concurrent.ConcurrentBag<RowScratch> s_pool = [];
+
         public byte[][] Full = [];
         public byte[][] Planes = [];
         public int[] Coef = new int[64];
         public long[][] AcFreq = [new long[257], new long[257]];
+
+        // Encoders run back to back in a service; the shells are tiny but they add up as garbage, so they are reused.
+        public static RowScratch Rent(int components)
+        {
+            if (!s_pool.TryTake(out RowScratch? sc))
+            {
+                sc = new RowScratch();
+            }
+
+            if (sc.Full.Length != components)
+            {
+                sc.Full = new byte[components][];
+                sc.Planes = new byte[components][];
+            }
+
+            Array.Clear(sc.AcFreq[0]);
+            Array.Clear(sc.AcFreq[1]);
+            return sc;
+        }
+
+        public void Return()
+        {
+            Array.Clear(Full);
+            Array.Clear(Planes);
+            s_pool.Add(this);
+        }
     }
 
     /// <summary>
@@ -475,7 +508,7 @@ internal sealed class JpegEncodeSession : IDisposable
 
             for (int w = 0; w < workers; w++)
             {
-                var sc = new RowScratch { Full = new byte[_comps.Length][], Planes = new byte[_comps.Length][] };
+                RowScratch sc = RowScratch.Rent(_comps.Length);
                 scratch[w] = sc;
                 for (int i = 0; i < _comps.Length; i++)
                 {
@@ -597,6 +630,8 @@ internal sealed class JpegEncodeSession : IDisposable
                         ArrayPool<byte>.Shared.Return(b);
                     }
                 }
+
+                sc.Return();
             }
 
             if (!_storesAll)
@@ -1138,5 +1173,44 @@ internal sealed class JpegEncodeSession : IDisposable
 
         list.Add(new ScanSpec { Comps = [0], Ss = 1, Se = 63, Ah = 1, Al = 0 });
         return list;
+    }
+}
+
+/// <summary>The Huffman tables and AC symbol counters of one encode, pooled so back-to-back encodes do not allocate them again.</summary>
+internal sealed class JpegTableSet
+{
+    private static readonly System.Collections.Concurrent.ConcurrentBag<JpegTableSet> s_pool = [];
+
+    private int _returned;
+
+    public JpegHuffmanEncodeTable[] Dc { get; } = [new(), new()];
+
+    public JpegHuffmanEncodeTable[] Ac { get; } = [new(), new()];
+
+    public long[][] AcFreq { get; } = [new long[257], new long[257]];
+
+    public static JpegTableSet Rent() => s_pool.TryTake(out JpegTableSet? t) ? t : new JpegTableSet();
+
+    public void Return()
+    {
+        if (Interlocked.Exchange(ref _returned, 1) != 0)
+        {
+            return;
+        }
+
+        foreach (JpegHuffmanEncodeTable d in Dc)
+        {
+            d.Reset();
+        }
+
+        foreach (JpegHuffmanEncodeTable a in Ac)
+        {
+            a.Reset();
+        }
+
+        Array.Clear(AcFreq[0]);
+        Array.Clear(AcFreq[1]);
+        Volatile.Write(ref _returned, 0);
+        s_pool.Add(this);
     }
 }

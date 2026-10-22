@@ -43,4 +43,20 @@ public class CacheLifetimeTests
         // Still correct afterwards: tiles are simply recomputed.
         Assert.Equal(new Rgba32((byte)(255 - PatternNode.Expected(7, 9).R), (byte)(255 - PatternNode.Expected(7, 9).G), (byte)(255 - PatternNode.Expected(7, 9).B), PatternNode.Expected(7, 9).A), img.ToArray<Rgba32>()[(9 * 600) + 7]);
     }
+
+    [Fact]
+    public void ShrunkLoadReadTwiceGivesTheSamePixels()
+    {
+        var px = new Rgb24[800 * 600];
+        for (int i = 0; i < px.Length; i++)
+        {
+            px[i] = new Rgb24((byte)(i % 800 / 4), (byte)(i / 800 / 3), (byte)(i % 251));
+        }
+
+        byte[] jpeg = Jpeg.JpegEncodeTests.Encode(Image.FromPixels<Rgb24>(px, 800, 600), new JpegEncoderOptions { Quality = 85 });
+        Image thumb = Image.Load(jpeg).Resize(width: 100);
+        Rgb24[] first = thumb.ToArray<Rgb24>();
+        Rgb24[] second = thumb.ToArray<Rgb24>();
+        Assert.Equal(first, second);
+    }
 }

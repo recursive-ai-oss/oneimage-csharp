@@ -57,7 +57,18 @@ public sealed class ImageFrame
             throw new ArgumentException("Destination too short for the rectangle.", nameof(destination));
         }
 
-        Render.ReadRegion(Node, rect, SpanCast.AsBytes(destination), 0, T.Format, RenderContext.Create(maxDegree, cancellationToken));
+        try
+        {
+            Render.ReadRegion(Node, rect, SpanCast.AsBytes(destination), 0, T.Format, RenderContext.Create(maxDegree, cancellationToken));
+        }
+        finally
+        {
+            if (rect.X == 0 && rect.Y == 0 && rect.Width == Node.Width && rect.Height == Node.Height)
+            {
+                // A whole-frame read is a one-shot pass like a save: give back what only this pipeline held (a shrunk decode's tiles).
+                Node.ReleaseAfterSave([Node]);
+            }
+        }
     }
 
     /// <summary>Computes the whole frame as a new array in <typeparamref name="T"/> (converting if needed).</summary>

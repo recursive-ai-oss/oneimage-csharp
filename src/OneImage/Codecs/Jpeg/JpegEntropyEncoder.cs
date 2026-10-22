@@ -15,6 +15,17 @@ internal sealed class JpegHuffmanEncodeTable
     public readonly byte[] Values = new byte[256];
     public int Count;
 
+    /// <summary>Returns the table to its freshly created state so a pooled instance behaves like a new one.</summary>
+    public void Reset()
+    {
+        Array.Clear(Code);
+        Array.Clear(Size);
+        Array.Clear(Freq);
+        Array.Clear(Bits);
+        Array.Clear(Values);
+        Count = 0;
+    }
+
     public void Build(ReadOnlySpan<byte> counts, ReadOnlySpan<byte> values)
     {
         Array.Clear(Size);
