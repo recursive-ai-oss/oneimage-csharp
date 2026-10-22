@@ -69,6 +69,7 @@ internal sealed class VP8Encoder
         public int Alpha;
         public int Beta;
         public int FilterStrength;
+        public int MaxEdge;
     }
 
     private VP8Encoder(byte[] rgba, int w, int h, int quality, int effort, CancellationToken token)
@@ -419,6 +420,27 @@ internal sealed class VP8Encoder
         }
     }
 
+    // Filter strengths that would smooth the strongest block edge seen in each segment (libwebp's VP8AdjustFilterStrength).
+    private static readonly byte[] LevelsFromDelta =
+    [
+        0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17, 18, 20, 21, 23, 24, 26, 27, 29, 30, 32, 33, 35, 36, 38, 39, 41, 42,
+        44, 45, 47, 48, 50, 51, 53, 54, 56, 57, 59, 60, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63,
+    ];
+
+    private void AdjustFilterStrength()
+    {
+        for (int i = 0; i < NumSegments; i++)
+        {
+            Segment s = _seg[i];
+            int delta = (s.MaxEdge * s.Y2.Q[1]) >> 3;
+            int level = LevelsFromDelta[Math.Min(delta, 63)];
+            if (level > s.FilterStrength)
+            {
+                s.FilterStrength = level;
+            }
+        }
+    }
+
     // Weight of one bit in squared-error units, relative to the squared quantizer step.
     internal static double LambdaScale = 0.12;
 
@@ -470,6 +492,7 @@ internal sealed class VP8Encoder
         public long Score;
     }
 
+    private long _i16Distortion;
     private readonly Cand _i16 = new();
     private readonly Cand _i4 = new();
     private readonly Cand _uv = new();
@@ -493,6 +516,29 @@ internal sealed class VP8Encoder
         }
 
         Cand y = useI4 ? _i4 : _i16;
+        if (!useI4)
+        {
+            // A blocky macroblock (only luma DC levels, with visible distortion) records how strong the loop filter must be to
+            // smooth the block edges out; the segment's filter strength is raised to that afterwards.
+            ReadOnlySpan<short> lv16 = _i16.Levels;
+            bool onlyDc = true;
+            for (int i = 16; i < 16 + 256 && onlyDc; i++)
+            {
+                onlyDc = lv16[i] == 0 || (i - 16) % 16 == 0;
+            }
+
+            bool anyDc = false;
+            for (int i = 0; i < 16 && !anyDc; i++)
+            {
+                anyDc = lv16[i] != 0;
+            }
+
+            if (onlyDc && anyDc && _i16Distortion > 20 * sp.Y1.Q[0])
+            {
+                int maxV = Math.Max(Math.Abs((int)lv16[1]), Math.Max(Math.Abs((int)lv16[2]), Math.Abs((int)lv16[4])));
+                sp.MaxEdge = Math.Max(sp.MaxEdge, maxV);
+            }
+        }
         _isI4[mb] = (byte)(useI4 ? 1 : 0);
         _yMode[mb] = (byte)i16Mode;
         _uvMode[mb] = (byte)uvMode;
@@ -702,6 +748,7 @@ internal sealed class VP8Encoder
             {
                 best.Score = score;
                 bestMode = mode;
+                _i16Distortion = d;
                 lv.CopyTo(best.Levels);
                 Array.Copy(_scr, best.Recon, _scr.Length);
             }
@@ -1006,6 +1053,17 @@ internal sealed class VP8Encoder
 
         bool useSegments = usedSegments > 1;
         Segment head = useSegments ? _seg[0] : _seg[onlySegment];
+        AdjustFilterStrength();
+        int frameLevel = 0;
+        for (int s = 0; s < NumSegments; s++)
+        {
+            frameLevel = Math.Max(frameLevel, _seg[s].FilterStrength);
+        }
+
+        if (!useSegments)
+        {
+            frameLevel = head.FilterStrength;
+        }
 
         var bw = new VP8BoolWriter(n * 4);
         bw.PutBit(0, 128);
@@ -1048,7 +1106,7 @@ internal sealed class VP8Encoder
 
         int baseQuant = head.Quant;
         bw.PutBit(0, 128); // normal (not simple) loop filter
-        bw.PutLiteral(head.FilterStrength, 6);
+        bw.PutLiteral(frameLevel, 6);
         bw.PutLiteral(0, 3); // sharpness
         bw.PutBit(0, 128); // no filter deltas
         bw.PutLiteral(0, 2); // one token partition
