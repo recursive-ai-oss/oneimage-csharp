@@ -55,9 +55,10 @@ public sealed class WebPTiming
             double viaImage = Time(() =>
             {
                 Image img = Image.Load(file);
-                _ = img.ToArray<Rgba32>();
+                if (img.Format == PixelFormat.Rgb8) { _ = img.ToArray<Rgb24>(); } else { _ = img.ToArray<Rgba32>(); }
             }, 10);
-            lines.Add($"{(lossless ? "lossless" : "lossy"),-9} decode {w}x{h}: libwebp(skia) {libwebp:F1} ms, ours raw {decodeOnly:F1} ms, ours via Image {viaImage:F1} ms");
+            double viaRgba = Time(() => { Image img = Image.Load(file); _ = img.ToArray<Rgba32>(); }, 10);
+            lines.Add($"{(lossless ? "lossless" : "lossy"),-9} decode {w}x{h}: libwebp(skia) {libwebp:F1} ms, ours raw {decodeOnly:F1} ms, ours via Image (native format) {viaImage:F1} ms, via Image as Rgba32 {viaRgba:F1} ms");
         }
 
         Image src = Image.FromPixels<Rgba32>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Rgba32>(rgba), w, h);

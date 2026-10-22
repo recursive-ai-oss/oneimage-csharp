@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace OneImage.Kernels;
 
@@ -190,12 +191,25 @@ internal static class WebPLoopFilterKernel
     {
         Span<byte> s = p;
         Span<byte> cols = stackalloc byte[8 * 16];
-        for (int r = 0; r < 16; r++)
+        if (Sse2.IsSupported)
         {
-            ulong x = BinaryPrimitives.ReadUInt64LittleEndian(s.Slice(o - 4 + (r * stride), 8));
-            for (int c = 0; c < 8; c++)
+            Span<ulong> rows = stackalloc ulong[16];
+            for (int r = 0; r < 16; r++)
             {
-                cols[(c * 16) + r] = (byte)(x >> (8 * c));
+                rows[r] = BinaryPrimitives.ReadUInt64LittleEndian(s.Slice(o - 4 + (r * stride), 8));
+            }
+
+            Transpose8Columns(rows, cols);
+        }
+        else
+        {
+            for (int r = 0; r < 16; r++)
+            {
+                ulong x = BinaryPrimitives.ReadUInt64LittleEndian(s.Slice(o - 4 + (r * stride), 8));
+                for (int c = 0; c < 8; c++)
+                {
+                    cols[(c * 16) + r] = (byte)(x >> (8 * c));
+                }
             }
         }
 
@@ -222,6 +236,18 @@ internal static class WebPLoopFilterKernel
         q0.CopyTo(cols.Slice(64, 16));
         q1.CopyTo(cols.Slice(80, 16));
         q2.CopyTo(cols.Slice(96, 16));
+        if (Sse2.IsSupported)
+        {
+            Span<ulong> rows = stackalloc ulong[16];
+            TransposeBack(cols, rows);
+            for (int r = 0; r < 16; r++)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(s.Slice(o - 4 + (r * stride), 8), rows[r]);
+            }
+
+            return;
+        }
+
         for (int r = 0; r < 16; r++)
         {
             ulong x = 0;
@@ -235,11 +261,108 @@ internal static class WebPLoopFilterKernel
         }
     }
 
+    // 16 rows of 8 bytes -> 8 columns of 16 bytes (column c at cols[16 * c ..]), by byte/word/dword/qword unpacking.
+    private static void Transpose8Columns(ReadOnlySpan<ulong> rows, Span<byte> cols)
+    {
+        Vector128<byte> a0 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[0]).AsByte(), Vector128.CreateScalarUnsafe(rows[1]).AsByte());
+        Vector128<byte> a1 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[2]).AsByte(), Vector128.CreateScalarUnsafe(rows[3]).AsByte());
+        Vector128<byte> a2 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[4]).AsByte(), Vector128.CreateScalarUnsafe(rows[5]).AsByte());
+        Vector128<byte> a3 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[6]).AsByte(), Vector128.CreateScalarUnsafe(rows[7]).AsByte());
+        Vector128<byte> a4 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[8]).AsByte(), Vector128.CreateScalarUnsafe(rows[9]).AsByte());
+        Vector128<byte> a5 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[10]).AsByte(), Vector128.CreateScalarUnsafe(rows[11]).AsByte());
+        Vector128<byte> a6 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[12]).AsByte(), Vector128.CreateScalarUnsafe(rows[13]).AsByte());
+        Vector128<byte> a7 = Sse2.UnpackLow(Vector128.CreateScalarUnsafe(rows[14]).AsByte(), Vector128.CreateScalarUnsafe(rows[15]).AsByte());
+        Vector128<ushort> b0 = Sse2.UnpackLow(a0.AsUInt16(), a1.AsUInt16());
+        Vector128<ushort> b1 = Sse2.UnpackHigh(a0.AsUInt16(), a1.AsUInt16());
+        Vector128<ushort> b2 = Sse2.UnpackLow(a2.AsUInt16(), a3.AsUInt16());
+        Vector128<ushort> b3 = Sse2.UnpackHigh(a2.AsUInt16(), a3.AsUInt16());
+        Vector128<ushort> b4 = Sse2.UnpackLow(a4.AsUInt16(), a5.AsUInt16());
+        Vector128<ushort> b5 = Sse2.UnpackHigh(a4.AsUInt16(), a5.AsUInt16());
+        Vector128<ushort> b6 = Sse2.UnpackLow(a6.AsUInt16(), a7.AsUInt16());
+        Vector128<ushort> b7 = Sse2.UnpackHigh(a6.AsUInt16(), a7.AsUInt16());
+        Vector128<uint> d0 = Sse2.UnpackLow(b0.AsUInt32(), b2.AsUInt32());
+        Vector128<uint> d1 = Sse2.UnpackHigh(b0.AsUInt32(), b2.AsUInt32());
+        Vector128<uint> d2 = Sse2.UnpackLow(b1.AsUInt32(), b3.AsUInt32());
+        Vector128<uint> d3 = Sse2.UnpackHigh(b1.AsUInt32(), b3.AsUInt32());
+        Vector128<uint> e0 = Sse2.UnpackLow(b4.AsUInt32(), b6.AsUInt32());
+        Vector128<uint> e1 = Sse2.UnpackHigh(b4.AsUInt32(), b6.AsUInt32());
+        Vector128<uint> e2 = Sse2.UnpackLow(b5.AsUInt32(), b7.AsUInt32());
+        Vector128<uint> e3 = Sse2.UnpackHigh(b5.AsUInt32(), b7.AsUInt32());
+        Sse2.UnpackLow(d0.AsUInt64(), e0.AsUInt64()).AsByte().CopyTo(cols.Slice(0, 16));
+        Sse2.UnpackHigh(d0.AsUInt64(), e0.AsUInt64()).AsByte().CopyTo(cols.Slice(16, 16));
+        Sse2.UnpackLow(d1.AsUInt64(), e1.AsUInt64()).AsByte().CopyTo(cols.Slice(32, 16));
+        Sse2.UnpackHigh(d1.AsUInt64(), e1.AsUInt64()).AsByte().CopyTo(cols.Slice(48, 16));
+        Sse2.UnpackLow(d2.AsUInt64(), e2.AsUInt64()).AsByte().CopyTo(cols.Slice(64, 16));
+        Sse2.UnpackHigh(d2.AsUInt64(), e2.AsUInt64()).AsByte().CopyTo(cols.Slice(80, 16));
+        Sse2.UnpackLow(d3.AsUInt64(), e3.AsUInt64()).AsByte().CopyTo(cols.Slice(96, 16));
+        Sse2.UnpackHigh(d3.AsUInt64(), e3.AsUInt64()).AsByte().CopyTo(cols.Slice(112, 16));
+    }
+
+    // The inverse: 8 columns of 16 bytes -> 16 rows of 8 bytes.
+    private static void TransposeBack(ReadOnlySpan<byte> cols, Span<ulong> rows)
+    {
+        Vector128<byte> c0 = Vector128.Create(cols.Slice(0, 16));
+        Vector128<byte> c1 = Vector128.Create(cols.Slice(16, 16));
+        Vector128<byte> c2 = Vector128.Create(cols.Slice(32, 16));
+        Vector128<byte> c3 = Vector128.Create(cols.Slice(48, 16));
+        Vector128<byte> c4 = Vector128.Create(cols.Slice(64, 16));
+        Vector128<byte> c5 = Vector128.Create(cols.Slice(80, 16));
+        Vector128<byte> c6 = Vector128.Create(cols.Slice(96, 16));
+        Vector128<byte> c7 = Vector128.Create(cols.Slice(112, 16));
+        // Pairs of columns, rows 0-7 (low) and 8-15 (high).
+        Vector128<ushort> f01l = Sse2.UnpackLow(c0, c1).AsUInt16();
+        Vector128<ushort> f01h = Sse2.UnpackHigh(c0, c1).AsUInt16();
+        Vector128<ushort> f23l = Sse2.UnpackLow(c2, c3).AsUInt16();
+        Vector128<ushort> f23h = Sse2.UnpackHigh(c2, c3).AsUInt16();
+        Vector128<ushort> f45l = Sse2.UnpackLow(c4, c5).AsUInt16();
+        Vector128<ushort> f45h = Sse2.UnpackHigh(c4, c5).AsUInt16();
+        Vector128<ushort> f67l = Sse2.UnpackLow(c6, c7).AsUInt16();
+        Vector128<ushort> f67h = Sse2.UnpackHigh(c6, c7).AsUInt16();
+        // Quads of columns 0-3 and 4-7 for rows 0-3, 4-7, 8-11, 12-15 (each dword = one row).
+        Vector128<uint> q0a = Sse2.UnpackLow(f01l, f23l).AsUInt32();
+        Vector128<uint> q0b = Sse2.UnpackHigh(f01l, f23l).AsUInt32();
+        Vector128<uint> q0c = Sse2.UnpackLow(f01h, f23h).AsUInt32();
+        Vector128<uint> q0d = Sse2.UnpackHigh(f01h, f23h).AsUInt32();
+        Vector128<uint> q1a = Sse2.UnpackLow(f45l, f67l).AsUInt32();
+        Vector128<uint> q1b = Sse2.UnpackHigh(f45l, f67l).AsUInt32();
+        Vector128<uint> q1c = Sse2.UnpackLow(f45h, f67h).AsUInt32();
+        Vector128<uint> q1d = Sse2.UnpackHigh(f45h, f67h).AsUInt32();
+        // Join the halves: each qword = one row.
+        Vector128<ulong> r01 = Sse2.UnpackLow(q0a, q1a).AsUInt64();
+        Vector128<ulong> r23 = Sse2.UnpackHigh(q0a, q1a).AsUInt64();
+        Vector128<ulong> r45 = Sse2.UnpackLow(q0b, q1b).AsUInt64();
+        Vector128<ulong> r67 = Sse2.UnpackHigh(q0b, q1b).AsUInt64();
+        Vector128<ulong> r89 = Sse2.UnpackLow(q0c, q1c).AsUInt64();
+        Vector128<ulong> r1011 = Sse2.UnpackHigh(q0c, q1c).AsUInt64();
+        Vector128<ulong> r1213 = Sse2.UnpackLow(q0d, q1d).AsUInt64();
+        Vector128<ulong> r1415 = Sse2.UnpackHigh(q0d, q1d).AsUInt64();
+        r01.CopyTo(rows.Slice(0, 2));
+        r23.CopyTo(rows.Slice(2, 2));
+        r45.CopyTo(rows.Slice(4, 2));
+        r67.CopyTo(rows.Slice(6, 2));
+        r89.CopyTo(rows.Slice(8, 2));
+        r1011.CopyTo(rows.Slice(10, 2));
+        r1213.CopyTo(rows.Slice(12, 2));
+        r1415.CopyTo(rows.Slice(14, 2));
+    }
+
     private static void VerticalChroma(byte[] pu, byte[] pv, int o, int stride, short t2, short it, short hev, bool mbEdge)
     {
         Span<byte> u = pu;
         Span<byte> v = pv;
         Span<byte> cols = stackalloc byte[8 * 16];
+        if (Sse2.IsSupported)
+        {
+            Span<ulong> rows = stackalloc ulong[16];
+            for (int r = 0; r < 8; r++)
+            {
+                rows[r] = BinaryPrimitives.ReadUInt64LittleEndian(u.Slice(o - 4 + (r * stride), 8));
+                rows[8 + r] = BinaryPrimitives.ReadUInt64LittleEndian(v.Slice(o - 4 + (r * stride), 8));
+            }
+
+            Transpose8Columns(rows, cols);
+        }
+        else
         for (int r = 0; r < 8; r++)
         {
             ulong xu = BinaryPrimitives.ReadUInt64LittleEndian(u.Slice(o - 4 + (r * stride), 8));
@@ -266,6 +389,19 @@ internal static class WebPLoopFilterKernel
         q0.CopyTo(cols.Slice(64, 16));
         q1.CopyTo(cols.Slice(80, 16));
         q2.CopyTo(cols.Slice(96, 16));
+        if (Sse2.IsSupported)
+        {
+            Span<ulong> rows = stackalloc ulong[16];
+            TransposeBack(cols, rows);
+            for (int r = 0; r < 8; r++)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(u.Slice(o - 4 + (r * stride), 8), rows[r]);
+                BinaryPrimitives.WriteUInt64LittleEndian(v.Slice(o - 4 + (r * stride), 8), rows[8 + r]);
+            }
+
+            return;
+        }
+
         for (int r = 0; r < 8; r++)
         {
             ulong xu = 0;

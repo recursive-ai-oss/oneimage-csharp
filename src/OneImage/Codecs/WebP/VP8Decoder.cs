@@ -620,14 +620,17 @@ internal sealed class VP8Decoder
     }
 
     // Reads the coefficient tokens of one block (RFC 6386 section 13) and returns the position after the last token.
-    private int GetCoeffs(ref VP8BoolReader br, int type, int ctx, int dcq, int acq, int n, Span<short> output)
+    private int GetCoeffs(ref VP8BoolReader brRef, int type, int ctx, int dcq, int acq, int n, Span<short> output)
     {
+        // Work on a local copy so the reader state lives in registers, then write it back.
+        VP8BoolReader br = brRef;
         byte[] p = _coeffProbs;
         int pb = (((type * 8) + Bands[n]) * 3 + ctx) * 11;
         for (; n < 16; n++)
         {
             if (br.GetBit(p[pb]) == 0)
             {
+                brRef = br;
                 return n; // end of block
             }
 
@@ -637,6 +640,7 @@ internal sealed class VP8Decoder
                 pb = (((type * 8) + Bands[++n]) * 3) * 11;
                 if (n == 16)
                 {
+                    brRef = br;
                     return 16;
                 }
             }
@@ -657,6 +661,7 @@ internal sealed class VP8Decoder
             output[Zigzag[n]] = (short)(br.GetSigned(v) * (n > 0 ? acq : dcq));
         }
 
+        brRef = br;
         return 16;
     }
 
