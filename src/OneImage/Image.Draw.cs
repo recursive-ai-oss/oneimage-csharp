@@ -164,7 +164,9 @@ public sealed partial class Image
     // the same profile conversion the pixels get.
     private static float[] LinearSolid(Rgba32 color, ColorProfile original, PixelFormat linearFormat)
     {
-        Image px = FromPixels<Rgba32>([color], 1, 1);
+        using var canvas = new Canvas(1, 1, PixelFormat.Rgba8);
+        canvas.CopyFrom<Rgba32>([color], new ImageRect(0, 0, 1, 1));
+        Image px = canvas.View();
         if (original.Model == ColorModel.Gray)
         {
             px = px.ConvertTo(PixelFormat.GrayAlpha8);
@@ -174,6 +176,9 @@ public sealed partial class Image
         var work = new PixelFormat(linearFormat.Model, SampleType.F32, AlphaMode.Premultiplied);
         var values = new float[work.ChannelCount];
         Render.ReadRegion(lin._frames[0].Node, new ImageRect(0, 0, 1, 1), SpanCast.AsBytes(values.AsSpan()), 0, work, RenderContext.Create(1, CancellationToken.None));
+
+        // The one-pixel graph is done: give back its tiles rather than leave a pooled buffer to the garbage collector.
+        Node.ReleaseAfterSave([lin._frames[0].Node]);
         return values;
     }
 }

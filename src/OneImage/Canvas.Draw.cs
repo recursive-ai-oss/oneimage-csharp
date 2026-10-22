@@ -83,28 +83,7 @@ public sealed partial class Canvas
         Raster? clip = s.Clip == null ? null : Raster.Build(s.Clip, Matrix3x2.Identity, Width, Height, s.Tolerance);
         if (s.Linear)
         {
-            // Linear light converts through the image pipeline; the tiles it produces replace the touched ones.
-            Node filled = Snapshot().FillCore(brush, path, s).Root;
-            RenderContext context = RenderContext.Create(1, CancellationToken.None);
-            for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
-            {
-                for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
-                {
-                    if (raster.MayTouch(tx, ty) && (clip == null || clip.MayTouch(tx, ty)))
-                    {
-                        Tile source = filled.GetTile(tx, ty, context);
-                        try
-                        {
-                            source.Span.CopyTo(WritableTile(tx, ty, willOverwriteAll: true).Span);
-                        }
-                        finally
-                        {
-                            source.Release();
-                        }
-                    }
-                }
-            }
-
+            FillLinear(brush, path, s, raster, clip);
             return;
         }
 
@@ -135,6 +114,84 @@ public sealed partial class Canvas
         }
 
         Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => PaintTile(raster, clip, plan, s, touched[i].Tx, touched[i].Ty, touched[i].Tile));
+    }
+
+    /// <summary>
+    /// Linear light converts through the image pipeline; the tiles it produces replace the touched ones. Without an outside snapshot
+    /// the pipeline reads a private copy of the tile table (as <c>Clip</c> does), so the canvas keeps owning its tiles and the replaced
+    /// ones go back to the pool. Either way the tiles the one-shot graph cached are given back when it is done.
+    /// </summary>
+    private void FillLinear(Brush brush, Path path, FillSettings s, Raster raster, Raster? clip)
+    {
+        bool exclusive = !_grid.Shared;
+        TileGrid readGrid = exclusive ? _grid.Clone() : _grid;
+        if (!exclusive)
+        {
+            _grid.Shared = true;
+            _token = new object();
+        }
+
+        Node filled = Image.FromNode(new GridSourceNode(readGrid)).FillCore(brush, path, s).Root;
+        RenderContext context = RenderContext.Create(1, CancellationToken.None);
+        var replaced = new List<(int Index, Tile? Old)>();
+        bool done = false;
+        try
+        {
+            for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
+            {
+                for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
+                {
+                    if (!raster.MayTouch(tx, ty) || (clip != null && !clip.MayTouch(tx, ty)))
+                    {
+                        continue;
+                    }
+
+                    Tile source = filled.GetTile(tx, ty, context);
+                    try
+                    {
+                        if (exclusive)
+                        {
+                            int idx = (ty * _grid.TilesX) + tx;
+                            Tile fresh = Tile.Rent(Tile.ByteSize(Format), clear: false);
+                            fresh.Owner = _token;
+                            replaced.Add((idx, _grid.Tiles[idx]));
+                            _grid.Tiles[idx] = fresh;
+                            source.Span.CopyTo(fresh.Span);
+                        }
+                        else
+                        {
+                            source.Span.CopyTo(WritableTile(tx, ty, willOverwriteAll: true).Span);
+                        }
+                    }
+                    finally
+                    {
+                        source.Release();
+                    }
+                }
+            }
+
+            done = true;
+        }
+        finally
+        {
+            Node.ReleaseAfterSave([filled]);
+            foreach ((int index, Tile? old) in replaced)
+            {
+                if (done)
+                {
+                    // Only a tile this canvas owned is its to return; any other belongs to a snapshot's table.
+                    if (old != null && ReferenceEquals(old.Owner, _token))
+                    {
+                        old.Release();
+                    }
+                }
+                else
+                {
+                    _grid.Tiles[index]?.Release();
+                    _grid.Tiles[index] = old;
+                }
+            }
+        }
     }
 
     private void PaintTile(Raster raster, Raster? clip, FillPlan plan, FillSettings s, int tx, int ty, Tile tile)

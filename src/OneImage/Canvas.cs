@@ -93,6 +93,12 @@ public sealed partial class Canvas : IDisposable
     }
 
     /// <summary>
+    /// Returns an image that reads this canvas's tiles directly, without freezing them. It is valid only until the canvas is next written or
+    /// disposed, so it suits a short-lived internal computation that disposes the canvas afterwards and returns its tiles to the pool.
+    /// </summary>
+    internal Image View() => Image.FromNode(new GridSourceNode(_grid));
+
+    /// <summary>
     /// Locks a rectangle for typed row access. Inside one tile the rows are the tile's memory; across tiles the rows live in a
     /// staging buffer that is copied back on <see cref="PixelLock{T}.Dispose"/> for write access. <typeparamref name="T"/> must match the canvas format exactly.
     /// </summary>

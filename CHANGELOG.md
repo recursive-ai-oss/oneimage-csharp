@@ -12,6 +12,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- `Canvas.Fill(..., linear: true)` (and `Draw` with `linear: true`) no longer reads the canvas through a public snapshot: without an outside snapshot it swaps in fresh pooled tiles and returns the replaced ones, and it gives back the tiles its one-shot graph cached, which used to fill the shared tile cache (up to its 256 MiB budget) until the canvas was collected. A linear-light fill of a circle on a 2000 x 2000 canvas allocates 65 MB instead of 82 MB, with identical output. The color for a linear-light solid fill is now computed without leaving a pooled tile behind.
 - `Canvas.Clip` no longer copies tiles through a public snapshot: it swaps in fresh pooled tiles and returns the replaced and cached ones to the pool. A blur clipped to a circle on a 2000 x 2000 canvas allocates 88 KB instead of 9.6 MB, at the same speed and with identical output.
 
 ## [1.1.0] - 2026-10-22
