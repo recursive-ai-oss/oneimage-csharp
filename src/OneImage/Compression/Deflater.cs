@@ -46,7 +46,7 @@ internal sealed class Deflater : IDisposable
         (4, 6, 32, 32),
         (4, 4, 16, 16),
         (8, 16, 32, 32),
-        (8, 12, 64, 64),
+        (8, 16, 128, 128),
         (8, 32, 128, 256),
         (32, 128, 258, 1024),
         (32, 258, 258, 4096),
@@ -150,6 +150,21 @@ internal sealed class Deflater : IDisposable
         _hashLen = _filtered ? 6 : 3;
         _hashMask = _filtered ? 0x0000FFFFFFFFFFFFUL : 0x0000000000FFFFFFUL;
         _minUseful = _filtered ? 6 : MinMatch;
+        if (_level > 0)
+        {
+            ApplyLevelConfig();
+        }
+    }
+
+    // zlib's table, except that level 6 on unfiltered data searches a little less: it gives up about 0.4% in size for
+    // roughly a fifth of the time. Filtered (PNG-style) data keeps the full search, where long matches pay off.
+    private void ApplyLevelConfig()
+    {
+        (_goodMatch, _maxLazy, _niceMatch, _maxChain) = Config[_level];
+        if (_level == 6 && !_filtered)
+        {
+            (_goodMatch, _maxLazy, _niceMatch, _maxChain) = (8, 12, 64, 64);
+        }
     }
 
     /// <summary>Starts a new stream writing to <paramref name="sink"/>, keeping the buffers.</summary>
@@ -178,7 +193,7 @@ internal sealed class Deflater : IDisposable
             }
 
             Array.Clear(_head, 0, 1 << HashBits);
-            (_goodMatch, _maxLazy, _niceMatch, _maxChain) = Config[level];
+            ApplyLevelConfig();
         }
 
         _strstart = 0;
