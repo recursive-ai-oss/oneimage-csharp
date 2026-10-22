@@ -49,10 +49,9 @@ internal static class MetadataTargets
                     if (sf.Sample == SampleType.F32)
                     {
                         // Plausible Lab floats rather than reinterpreted junk.
-                        Span<float> f = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(src.AsSpan());
-                        for (int i = 0; i < f.Length; i++)
+                        for (int i = 0; i < width * 3; i++)
                         {
-                            f[i] = (i % 3) == 0 ? 50f + i : (i % 7) - 3f;
+                            BitConverter.TryWriteBytes(src.AsSpan(i * 4), (i % 3) == 0 ? 50f + i : (i % 7) - 3f);
                         }
                     }
 
