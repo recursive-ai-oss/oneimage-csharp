@@ -138,6 +138,9 @@ public sealed class TiffRobustnessTests
         byte[] file = b.Build();
         Assert.ThrowsAny<ImageFormatException>(() => TiffTestUtil.Decode(file));
         int calls = 0;
+        // Build the default configuration first: it installs the JPEG hook once, and saving the hook before that would
+        // restore an empty hook for every later test.
+        _ = ImageConfiguration.Default;
         JpegBlockDecoder? previous = TiffJpegSeam.DecodeJpeg;
         TiffJpegSeam.DecodeJpeg = (jpeg, w, h, comps, ycc, dest) =>
         {

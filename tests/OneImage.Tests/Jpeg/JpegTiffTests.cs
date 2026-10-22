@@ -14,6 +14,9 @@ public class JpegTiffTests
     [MemberData(nameof(Names))]
     public void JpegInTiffMatchesLibjpeg(string name)
     {
+        // Build the default configuration first: it installs the JPEG hook once, and saving the hook before that would
+        // restore an empty hook for every later test.
+        _ = ImageConfiguration.Default;
         JpegBlockDecoder? previous = TiffJpegSeam.DecodeJpeg;
         try
         {
