@@ -101,6 +101,19 @@ Notes on the table:
   is checked for correctness on ARM64 but has no published ARM64
   timings, and it is new.
 
+## Not in OneImage yet
+
+Compared with ImageSharp 3.1.12 and its Drawing, Fonts and Web packages, as of 1.0 OneImage does not have:
+
+- **Drawing and text:** shapes, paths, brushes, pens, gradients and text rendering. Coming soon.
+- **Blend modes** beyond normal source-over in `Composite`. Coming soon.
+- **Effects:** pixelate, oil paint, vignette, glow, bokeh blur, preset filters (sepia, Kodachrome, Lomograph, Polaroid), color-blindness filters, histogram equalization, adaptive threshold, the other edge detectors and dither matrices. Coming soon.
+- **Perspective transforms.** Coming soon. Affine transforms exist.
+- **ASP.NET Core resizing middleware.** Coming soon.
+- **Formats:** TGA, PBM and QOI. Not planned.
+
+Coming soon means planned, without a date. The [full list](migrating.md#not-in-oneimage-yet) has the exact ImageSharp APIs and what to use in the meantime.
+
 ## Choosing
 
 - Thumbnails, crops and conversions for the web, in a service, with no

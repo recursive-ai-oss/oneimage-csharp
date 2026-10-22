@@ -329,13 +329,85 @@ long[] red = Image.Load(input).Histogram().Channel(0).ToArray();   // 256 bins; 
 - **Operations are cheap to build and run once.** Don't save an intermediate just to reuse it: keep the `Image` and derive more images from it. Each save recomputes its own path, though shared tiles are cached under the engine's memory budget.
 - **Limits are on.** Very large or suspicious files throw `ImageLimitException`; raise the limits or use `ImageLimits.Unrestricted` for trusted data.
 
-## No equivalent yet
+## Not in OneImage yet
 
-Not in the library today, so port these with another tool or leave them out:
+This is the one list of what ImageSharp 3.1.x has that OneImage 1.0 does not. It was built by going through the public API of ImageSharp 3.1.12 (the version this guide is checked against) and, for text, shapes and the web middleware, the feature sets of the SixLabors.Fonts, SixLabors.ImageSharp.Drawing and SixLabors.ImageSharp.Web packages. "Coming soon" means the work is planned and next in line; it is not a promise of a date. "Not planned" means we are not working on it and are not promising it.
 
-- **Drawing**: paths, polygons, shapes, brushes, pens, gradients (`Graphics.Draw*`, ImageSharp.Drawing).
-- **Text**: fonts and text rendering.
-- **Layers, masks and blend modes** other than normal `Composite`.
-- **Vector formats and PDF**: SVG, PDF and similar.
-- Other formats: AVIF, JPEG XL, HEIC, camera RAW, PSD, JPEG 2000.
-- ImageSharp's `IImageProcessor` plug-in model: custom steps go through the codec interfaces or are done on pixels after `ToArray`/`Canvas`.
+Where OneImage has part of a feature, the table says what it covers and what it does not.
+
+### Drawing and text: coming soon
+
+| ImageSharp | As of 1.0 | Closest workaround |
+|---|---|---|
+| `Mutate(x => x.Fill(...))`, `Draw(...)`, `DrawLine`, `DrawPolygon`, `DrawBeziers`, `DrawPath`, `FillPolygon` and the `IPath`, `PathBuilder`, `Polygon`, `EllipsePolygon`, `RectangularPolygon` shapes (ImageSharp.Drawing) | No paths, shapes, fills or strokes. | Write pixels yourself through `Canvas.Lock`, or draw elsewhere and bring the result in with `Composite`. |
+| `Brush`, `SolidBrush`, `LinearGradientBrush`, `RadialGradientBrush`, `PatternBrush`, `ImageBrush`, `Pen` | None. | A gradient can be generated into a `Canvas` and composited. |
+| `DrawText`, `Font`, `FontCollection`, `TextOptions`, text shaping and layout (SixLabors.Fonts) | No fonts and no text rendering. | Render the text with another tool and `Composite` the result. |
+| Drawing clipped to a shape (`ShapeOptions`, `DrawingOptions`, `GraphicsOptions` anti-aliasing and blending) | None. | None. |
+
+### Blending: coming soon
+
+| ImageSharp | As of 1.0 | Closest workaround |
+|---|---|---|
+| `DrawImage(image, point, PixelColorBlendingMode, opacity)` with `Multiply`, `Add`, `Subtract`, `Screen`, `Darken`, `Lighten`, `Overlay`, `HardLight` | `Composite(overlay, x, y, opacity)` does normal source-over only. | Do the blend per pixel with `Canvas.Lock` on both images. |
+| `PixelAlphaCompositionMode` (`SrcAtop`, `SrcIn`, `SrcOut`, `Dest`, `DestOver`, `DestIn`, `DestOut`, `DestAtop`, `Clear`, `Xor`; `SrcOver` is the default) | Source-over only. | As above. |
+| `Opacity(amount)` (multiply every pixel's alpha) | No single call. `AddAlpha(alpha)` sets a constant alpha on an opaque image, and `Composite` takes an `opacity`. | `Composite` the image onto a transparent `Canvas` with the opacity you want. |
+
+### Effects and filters: coming soon
+
+| ImageSharp | As of 1.0 | Closest workaround |
+|---|---|---|
+| `Pixelate(size)` | None. | `Resize` down with `filter: ResamplingFilter.Box`, then back up with `ResamplingFilter.Nearest`. |
+| `OilPaint(levels, brushSize)` | None. | None; per-pixel code on a `Canvas`. |
+| `Vignette(...)`, `Glow(...)` (overlays) | None. | Draw the radial falloff into a `Canvas` and `Composite` it. |
+| `BokehBlur(radius, components, gamma)` | None. `GaussianBlur` and `BoxBlur` exist. | `Convolve` with a disc-shaped kernel gives a plain (non-bokeh) lens blur. |
+| `Sepia`, `Kodachrome`, `Lomograph`, `Polaroid`, `BlackWhite` preset filters | None. | `ChannelMixer` can apply the sepia matrix; `Grayscale` followed by `Threshold` approximates `BlackWhite`. |
+| `ColorBlindness(mode)` (Protanopia, Deuteranopia, Tritanopia, Achromatopsia and the "-omaly" modes) | None. | `ChannelMixer` with the simulation matrix you want. |
+| `Filter(ColorMatrix)` and `KnownFilterMatrices` | No general 4×4/5×4 color matrix. | `ChannelMixer` takes a 3×3 or 3×4 RGB matrix; there is no alpha row. |
+| `HistogramEqualization(options)` (global, adaptive tile, sliding window, `AutoLevel`) | None. `Histogram` gives the data. | `Levels` or `Curves` with values you compute from `Histogram`. |
+| `AdaptiveThreshold(...)` | None. `Threshold(level)` is a global threshold. | None. |
+| `BinaryDither(...)` and `Dither(..., palette)` with `KnownDitherings` (Atkinson, Burkes, JarvisJudiceNinke, Sierra2/3/Lite, Stucki, StevensonArce, Bayer2x2/4x4/8x8/16x16, Ordered3x3) | `Quantize(colors, dither)` offers none, Floyd–Steinberg and an 8×8 ordered dither, and picks its own palette. | Quantize to 2 colors for a bilevel result. A caller-supplied palette and the other matrices are not available. |
+| `Quantize(KnownQuantizers.Octree / WebSafe / Werner, ...)` | One built-in quantizer; no `PaletteQuantizer`, web-safe or Werner palettes. | `Quantize(colors, ...)`. |
+| `GaussianSharpen(sigma)` | `Sharpen` is an unsharp mask, not the same kernel. | `Sharpen(...)`. |
+| `DetectEdges(...)` with Kayyali, Kirsch, Laplacian3x3/5x5, LaplacianOfGaussian, Prewitt, RobertsCross, Robinson, Scharr (and the compass variants) | `Sobel` only. | `Convolve` with the kernel you need. |
+| `EntropyCrop(threshold)` | None. `Trim` removes a uniform border, and `Anchor.Smart` picks a crop by detail when resizing. | `Trim` for borders, `Resize(..., anchor: Anchor.Smart)` for content-aware crops. |
+| `CalculateIntegralImage()` | None. | `Histogram` and `Statistics` cover the common uses. |
+
+`BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`. `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.
+
+### Transforms: coming soon
+
+| ImageSharp | As of 1.0 | Closest workaround |
+|---|---|---|
+| `Transform(ProjectiveTransformBuilder)`: perspective, `AppendTaperMatrix`, arbitrary 3×3 projective matrices | None. `Affine` covers rotate, scale, skew and translate. | None for true perspective. |
+| Resize extras: `ResizeMode.BoxPad` and `Min`/`Max`, `ResizeOptions.Sampler` choices `Hermite`, `Lanczos5`, `Lanczos8`, `Robidoux`, `RobidouxSharp`, `Spline`, `Welch` | `Fit` offers Contain, Cover, Stretch and Pad. Filters are nearest, box, bilinear, Catmull-Rom, Mitchell, Lanczos2 and Lanczos3. | Pick the closest filter; compute Min/Max sizes yourself and pass them. |
+
+### Web middleware: coming soon
+
+| ImageSharp | As of 1.0 | Closest workaround |
+|---|---|---|
+| SixLabors.ImageSharp.Web: URL-driven resizing (`?width=...`), image providers, response caching | No ASP.NET Core package. | Call `Image.Thumbnail` or `Resize` in your own endpoint and cache the result. |
+
+### Formats: not planned
+
+ImageSharp reads and writes more formats than OneImage. We are not working on these and are not promising them.
+
+| ImageSharp | As of 1.0 |
+|---|---|
+| `TgaDecoder` / `TgaEncoder` (TGA) | Not supported. |
+| `PbmDecoder` / `PbmEncoder` (PBM, PGM, PPM, PFM) | Not supported. |
+| `QoiDecoder` / `QoiEncoder` (QOI) | Not supported. |
+
+OneImage reads and writes PNG, JPEG, WebP, GIF, TIFF, BMP and ICO. ImageSharp 3.1.12 has no CUR support, so there is nothing to port there. Formats neither library has (AVIF, JPEG XL, HEIC, camera RAW, PSD, SVG, PDF) are listed on the [comparison page](comparison.md#not-in-oneimage-yet).
+
+### Programming model
+
+| ImageSharp | As of 1.0 | Closest workaround |
+|---|---|---|
+| `IImageProcessor` and `ApplyProcessors` plug-ins | No public processor interface. | Transform pixels after `ToArray`, or write into a `Canvas`. |
+| `ProcessPixelRows`, `ProcessPixelRowsAsVector4`, `PixelRowOperation` | No row-callback API. | `Canvas.Lock` gives row spans. |
+| Typed IPTC and XMP editing (`IptcProfile`, `XmpProfile`) | The blobs are kept and can be stripped; they cannot be edited tag by tag. | Edit the blob with another tool. |
+| Pixel types beyond OneImage's list (`Bgra32`, `Argb32`, `Bgr24`, `NormalizedByte4`, `Short4`, `HalfVector4`, ...) | `Rgb24`, `Rgba32`, `Rgb48`, `Rgba64`, `RgbaHalf`, `RgbFloat`, `RgbaFloat`, `Gray8`, `Gray16`, `GrayFloat`, `GrayAlpha8`. | Convert at the edge with `CopyPixelsTo<T>`. |
+
+### Not in either library
+
+Layers, masks and groups with Photoshop blend modes, PSD, and vector formats are further out than the items above and are not in ImageSharp either.
