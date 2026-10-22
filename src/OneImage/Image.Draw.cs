@@ -109,7 +109,7 @@ public sealed partial class Image
     /// <summary>The first frame's node (a canvas snapshot has exactly one).</summary>
     internal Node Root => _frames[0].Node;
 
-    internal Image FillCore(Brush brush, Path path, in FillSettings s)
+    internal Image FillCore(Brush brush, Path path, in FillSettings s, FillLabel? label = null)
     {
         var nodes = new Node[_frames.Length];
         var delays = new TimeSpan[nodes.Length];
@@ -124,7 +124,7 @@ public sealed partial class Image
             for (int i = 0; i < nodes.Length; i++)
             {
                 Node n = _frames[i].Node;
-                nodes[i] = new FillNode(n, new RasterSource(path, s.Transform, n.Width, n.Height, s.Tolerance), plan, FillNode.Describe("fill", brush, path, s));
+                nodes[i] = new FillNode(n, new RasterSource(path, s.Transform, n.Width, n.Height, s.Tolerance), plan, FillNode.Describe("fill", brush, path, s, label));
             }
 
             return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);
@@ -140,13 +140,13 @@ public sealed partial class Image
         {
             Node ln = lin._frames[i].Node;
             sources[i] = new RasterSource(path, s.Transform, ln.Width, ln.Height, s.Tolerance);
-            filled[i] = new FillNode(ln, sources[i], linPlan, FillNode.Describe("fill", brush, path, s));
+            filled[i] = new FillNode(ln, sources[i], linPlan, FillNode.Describe("fill", brush, path, s, label));
         }
 
         Image processed = new Image(filled, delays, LoopCount, lin.Metadata, SourceFormat).FromLinearLight(original, Format);
         for (int i = 0; i < nodes.Length; i++)
         {
-            nodes[i] = new FillSelectNode(_frames[i].Node, processed._frames[i].Node, sources[i], FillNode.Describe("fill-linear", brush, path, s));
+            nodes[i] = new FillSelectNode(_frames[i].Node, processed._frames[i].Node, sources[i], FillNode.Describe("fill-linear", brush, path, s, label));
         }
 
         return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);

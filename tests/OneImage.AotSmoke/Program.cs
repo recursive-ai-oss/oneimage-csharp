@@ -316,5 +316,21 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Strokes: a dashed pen with round joins on an image and a canvas must agree, and the outline must come back as a path.
+{
+    OneImage.Drawing.Path line = OneImage.Drawing.Path.ParseSvg("M10 10 C 80 150 160 -40 280 120 L 40 180");
+    var pen = new OneImage.Drawing.Pen(OneImage.Drawing.Brush.Solid(new Rgba32(20, 60, 220, 220)), 6, OneImage.Drawing.StrokeJoin.Round, OneImage.Drawing.StrokeCap.Round, dashPattern: [12, 5]);
+    Rgba32[] viaImage = snapshot.Draw(pen, line).ToArray<Rgba32>();
+    using var stroked = snapshot.ToCanvas();
+    stroked.Draw(pen, line);
+    var viaCanvas = new Rgba32[viaImage.Length];
+    stroked.CopyTo<Rgba32>(viaCanvas, new ImageRect(0, 0, 300, 200));
+    if (!viaImage.AsSpan().SequenceEqual(viaCanvas) || OneImage.Drawing.PathStrokeExtensions.GenerateOutline(line, pen).IsEmpty)
+    {
+        Console.Error.WriteLine("stroke smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

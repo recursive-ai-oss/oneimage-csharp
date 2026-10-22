@@ -585,4 +585,4 @@ Layers, masks and groups with Photoshop blend modes, PSD, and vector formats are
 
 ## Drawing shapes
 
-Filling shapes with a solid color maps closely to ImageSharp.Drawing; the names and the differences (default fill rule, non-anti-aliased edge rule, pixel-coordinate conventions) are in [drawing.md](drawing.md). Strokes, gradient and pattern brushes, clipping and text are not available yet.
+Filling and stroking shapes with a solid color or a pen maps closely to ImageSharp.Drawing; the names and the differences (default fill rule, non-anti-aliased edge rule, pixel-coordinate conventions, strokes landing half a pixel from ImageSharp's) are in [drawing.md](drawing.md). Gradient and pattern brushes, clipping and text are not available yet.

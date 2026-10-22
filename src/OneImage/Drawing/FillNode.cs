@@ -3,6 +3,9 @@ using System.Numerics;
 
 namespace OneImage.Drawing;
 
+/// <summary>Names a fill as another op (a stroke) in descriptors: the op name, the path to show, and extra parameters.</summary>
+internal sealed record FillLabel(string Name, Path Path, OpParameter[] Extra);
+
 /// <summary>A path, its transform and the image size it will be rasterized for; builds the raster once, on first use, for any number of threads.</summary>
 internal sealed class RasterSource
 {
@@ -107,12 +110,18 @@ internal sealed class FillNode : Node
     }
 
     /// <summary>Describes a fill for an op descriptor.</summary>
-    public static OpDescriptor Describe(string name, Brush brush, Path path, FillSettings s)
+    public static OpDescriptor Describe(string name, Brush brush, Path path, FillSettings s, FillLabel? label = null)
     {
-        return new OpDescriptor(name, () => Parameters(brush, path, s));
+        if (label != null)
+        {
+            name = label.Name + name.AsSpan(4).ToString();
+            return new OpDescriptor(name, () => Parameters(brush, label.Path, s, label.Extra));
+        }
+
+        return new OpDescriptor(name, () => Parameters(brush, path, s, null));
     }
 
-    private static OpParameter[] Parameters(Brush brush, Path path, FillSettings s)
+    private static OpParameter[] Parameters(Brush brush, Path path, FillSettings s, OpParameter[]? extra)
     {
         var p = new List<OpParameter>(brush.Describe())
         {
@@ -130,6 +139,11 @@ internal sealed class FillNode : Node
             new("m32", (double)s.Transform.M32),
             new("path", DescribePath(path)),
         };
+        if (extra != null)
+        {
+            p.AddRange(extra);
+        }
+
         return [.. p];
     }
 
