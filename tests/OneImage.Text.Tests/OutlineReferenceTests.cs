@@ -36,6 +36,8 @@ public class OutlineReferenceTests
 
         Assert.Equal(chars.EnumerateRunes().Count(), glyphs);
 
+        TestReport.Line($"OUTLINE {file}#{faceIndex} ({glyphs} glyphs): largest point difference {worst}");
+
         // Same float32 arithmetic on integer inputs: the points agree to rounding of the layout offset.
         Assert.True(worst < 0.01, $"largest point difference {worst}");
     }

@@ -124,16 +124,17 @@ public sealed class TextOptions
         }
     }
 
-    /// <summary>Gets or sets where the block sits horizontally relative to the origin. The default is <see cref="HorizontalAlignment.Left"/>. The block is as wide as the wrapping length when there is one, else as the widest line.</summary>
+    /// <summary>Gets or sets where the block sits horizontally relative to the origin. The default is <see cref="HorizontalAlignment.Left"/>. The block is as wide as the widest line (for <see cref="TextAlignment.Start"/>) or as the wrapping length (for Center and End); see <see cref="TextAlignment"/>.</summary>
     public HorizontalAlignment HorizontalAlignment { get; set; }
 
     /// <summary>Gets or sets where the block sits vertically relative to the origin. The default is <see cref="VerticalAlignment.Top"/>.</summary>
     public VerticalAlignment VerticalAlignment { get; set; }
 
     /// <summary>
-    /// Gets or sets how each line lines up inside the block. The default is <see cref="TextAlignment.Start"/>, which leaves every
-    /// line where <see cref="HorizontalAlignment"/> put it: lines share their left edge, and the block as a whole moves. Center and
-    /// End move each line by its slack against the wrapping length (the widest line when there is none), as ImageSharp does; they
+    /// Gets or sets how each line lines up. The default is <see cref="TextAlignment.Start"/>: every line starts at the left edge of
+    /// a box as wide as the widest line, and <see cref="HorizontalAlignment"/> puts that box on the origin. Center and End instead
+    /// place each line in a box as wide as <see cref="WrappingLength"/> (the widest line when there is none), centered or against
+    /// its right edge, and horizontal alignment puts that box on the origin. This is how ImageSharp lays text out; Center and End
     /// are meant for use with a wrapping length.
     /// </summary>
     public TextAlignment TextAlignment { get; set; }

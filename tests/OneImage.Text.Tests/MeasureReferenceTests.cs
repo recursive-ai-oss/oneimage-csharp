@@ -23,6 +23,7 @@ public class MeasureReferenceTests
     {
         var diffs = new List<string>();
         int cases = 0;
+        double worstAdvance = 0;
         foreach (float size in new[] { 12f, 20f, 33.3f })
         {
             foreach (float dpi in new[] { 72f, 96f })
@@ -45,6 +46,7 @@ public class MeasureReferenceTests
                                 diffs.Add($"{tag}: lines {m.LineCount} vs {lines}");
                             }
 
+                            worstAdvance = Math.Max(worstAdvance, Math.Max(Math.Abs(m.Advance.Width - adv.Width), Math.Abs(m.Advance.Height - adv.Height)));
                             if (Math.Abs(m.Advance.Width - adv.Width) > 0.01f || Math.Abs(m.Advance.Height - adv.Height) > 0.01f)
                             {
                                 diffs.Add($"{tag}: advance {m.Advance.Width:F3}x{m.Advance.Height:F3} vs {adv.Width:F3}x{adv.Height:F3}");
@@ -55,6 +57,7 @@ public class MeasureReferenceTests
             }
         }
 
+        TestReport.Line($"ADVANCE {cases} cases: largest difference {worstAdvance:F5} px");
         Report(diffs, cases);
     }
 
@@ -63,6 +66,7 @@ public class MeasureReferenceTests
     {
         var diffs = new List<string>();
         int cases = 0;
+        double worstBounds = 0;
         foreach (float size in new[] { 14f, 40f })
         {
             foreach (float wrap in new[] { 0f, 130f })
@@ -88,6 +92,7 @@ public class MeasureReferenceTests
                                 System.Drawing.RectangleF b = TextMeasurer.MeasureBounds(text, mine);
                                 FontRectangle r = SixLabors.Fonts.TextMeasurer.MeasureBounds(text, theirs);
                                 double d = Math.Max(Math.Max(Math.Abs(b.X - r.X), Math.Abs(b.Y - r.Y)), Math.Max(Math.Abs(b.Width - r.Width), Math.Abs(b.Height - r.Height)));
+                                worstBounds = Math.Max(worstBounds, d);
                                 if (d > 0.05)
                                 {
                                     diffs.Add($"size={size} wrap={wrap} {ha}/{va}/{ta} '{text.Replace("\n", "\\n")}': ({b.X:F3},{b.Y:F3},{b.Width:F3},{b.Height:F3}) vs ({r.X:F3},{r.Y:F3},{r.Width:F3},{r.Height:F3})");
@@ -99,6 +104,7 @@ public class MeasureReferenceTests
             }
         }
 
+        TestReport.Line($"BOUNDS {cases} cases: largest difference {worstBounds:F5} px");
         Report(diffs, cases);
     }
 
@@ -115,6 +121,7 @@ public class MeasureReferenceTests
         };
         int compared = 0;
         int kerned = 0;
+        double worstKern = 0;
         foreach ((string file, int faceIndex, Func<float, Font> make, string[] pairs) in cases)
         {
             Font font = make(1000);
@@ -126,6 +133,7 @@ public class MeasureReferenceTests
                     var mine = new TextOptions(font) { Kerning = mode };
                     float ours = TextMeasurer.MeasureAdvance(pair, mine).Width;
                     float theirs = SixLabors.Fonts.TextMeasurer.MeasureAdvance(pair, Reference.Options(refFont, mine)).Width;
+                    worstKern = Math.Max(worstKern, Math.Abs(ours - theirs));
                     Assert.True(Math.Abs(ours - theirs) < 0.01f, $"{file} '{pair}' {mode}: {ours} vs {theirs}");
                     compared++;
                     if (mode == KerningMode.Normal && Math.Abs(ours - TextMeasurer.MeasureAdvance(pair, new TextOptions(font) { Kerning = KerningMode.None }).Width) > 0.5f)
@@ -136,6 +144,7 @@ public class MeasureReferenceTests
             }
         }
 
+        TestReport.Line($"KERNING {compared} comparisons ({kerned} kerned pairs): largest difference {worstKern:F5} font units");
         Assert.True(compared >= 40);
         Assert.True(kerned >= 8, $"only {kerned} pairs were actually kerned");
     }
