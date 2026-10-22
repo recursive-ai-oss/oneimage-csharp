@@ -35,6 +35,7 @@ internal sealed class Deflater : IDisposable
     private const int SymEnd = SymBufSize - 1;
     private const int OutSize = 32768;
     private const int MaxStored = 65535;
+    private const int LazySkipShift = 6;
 
     // good_length, max_lazy (max_insert for levels 1-3), nice_length, max_chain
     private static readonly (int Good, int Lazy, int Nice, int Chain)[] Config =
@@ -45,7 +46,7 @@ internal sealed class Deflater : IDisposable
         (4, 6, 32, 32),
         (4, 4, 16, 16),
         (8, 16, 32, 32),
-        (8, 16, 128, 128),
+        (8, 12, 64, 64),
         (8, 32, 128, 256),
         (32, 128, 258, 1024),
         (32, 258, 258, 4096),
@@ -60,6 +61,7 @@ internal sealed class Deflater : IDisposable
     private bool _finished;
     private bool _disposed;
     private bool _filtered;
+    private int _miss;
     private int _hashLen = 4;
     private ulong _hashMask = 0xFFFFFFFFUL;
     private int _minUseful = MinMatch;
@@ -125,9 +127,11 @@ internal sealed class Deflater : IDisposable
     }
 
     /// <summary>
-    /// Gets or sets the "filtered" strategy for levels 4-9: matches of 5 bytes or fewer are not used and become literals
-    /// (zlib's Z_FILTERED). It suits data that went through predictive filtering, such as PNG scanlines, where short
-    /// matches are mostly coincidences. It is kept across <see cref="Reset"/>; levels 0-3 ignore it, as zlib does.
+    /// Gets or sets the "filtered" strategy: matches of 5 bytes or fewer are not used and become literals (like zlib's
+    /// Z_FILTERED, but it applies to levels 1-9). It suits data that went through predictive filtering, such as PNG
+    /// scanlines, where short matches are mostly coincidences. Because only longer matches count, the match finder hashes
+    /// 6 bytes instead of 3, which keeps the candidate chains short and makes compression much faster. Set it before the
+    /// first <see cref="Write"/>; it is kept across <see cref="Reset"/>.
     /// </summary>
     public bool FilteredStrategy
     {
@@ -177,6 +181,7 @@ internal sealed class Deflater : IDisposable
         _prevLength = MinMatch - 1;
         _prevMatch = 0;
         _matchAvailable = false;
+        _miss = 0;
         _storedLen = 0;
         _symNext = 0;
         Array.Clear(_litFreq);
@@ -434,8 +439,18 @@ internal sealed class Deflater : IDisposable
                 }
                 else
                 {
-                    int rest = Math.Max(0, maxLen - 8);
-                    len = 8 + w.AsSpan(scan + 8, rest).CommonPrefixLength(w.AsSpan(curMatch + 8, rest));
+                    len = 8;
+                    while (len < maxLen)
+                    {
+                        x = BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(scan + len)) ^ BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(curMatch + len));
+                        if (x != 0)
+                        {
+                            len += BitOperations.TrailingZeroCount(x) >> 3;
+                            break;
+                        }
+
+                        len += 8;
+                    }
                 }
 
                 if (len > maxLen)
@@ -511,6 +526,7 @@ internal sealed class Deflater : IDisposable
             bool flush;
             if (_matchLength >= _minUseful)
             {
+                _miss = 0;
                 flush = TallyDist(_strstart - _matchStart, _matchLength - MinMatch);
                 _lookahead -= _matchLength;
                 if (_matchLength <= _maxLazy && _lookahead >= _hashLen)
@@ -532,9 +548,23 @@ internal sealed class Deflater : IDisposable
             }
             else
             {
-                flush = TallyLit(w[_strstart]);
-                _lookahead--;
-                _strstart++;
+                // Long stretches without a match are probably incompressible: skip the search for some of the
+                // following positions (they become literals) and look harder less often. Matches resume the
+                // normal pace.
+                int step = Math.Min(1 + (_miss >> 5), Math.Min(_lookahead, 8));
+                _miss++;
+                flush = false;
+                for (int k = 0; k < step; k++)
+                {
+                    flush |= TallyLit(w[_strstart]);
+                    _lookahead--;
+                    _strstart++;
+                    if (flush)
+                    {
+                        FlushBlock(false);
+                        flush = false;
+                    }
+                }
             }
 
             if (flush)
@@ -586,6 +616,7 @@ internal sealed class Deflater : IDisposable
             if (_prevLength >= MinMatch && _matchLength <= _prevLength)
             {
                 int maxInsert = _strstart + _lookahead - _hashLen;
+                _miss = 0;
                 bool flush = TallyDist(_strstart - 1 - _prevMatch, _prevLength - MinMatch);
                 _lookahead -= _prevLength - 1;
                 _prevLength -= 2;
@@ -607,13 +638,19 @@ internal sealed class Deflater : IDisposable
             }
             else if (_matchAvailable)
             {
-                if (TallyLit(w[_strstart - 1]))
+                // After a long run without any match, skip searching a few positions (see ProcessFast).
+                int steps = _matchLength >= MinMatch ? 1 : Math.Min(1 + Math.Min(_miss >> LazySkipShift, 7), _lookahead);
+                _miss++;
+                for (int k = 0; k < steps; k++)
                 {
-                    FlushBlock(false);
-                }
+                    if (TallyLit(w[_strstart - 1]))
+                    {
+                        FlushBlock(false);
+                    }
 
-                _strstart++;
-                _lookahead--;
+                    _strstart++;
+                    _lookahead--;
+                }
             }
             else
             {
@@ -762,38 +799,80 @@ internal sealed class Deflater : IDisposable
     {
         byte[] lits = _symLit;
         ushort[] dists = _symDist;
+        byte[] lenSym = DeflateTables.LengthSymbol;
+        byte[] lenExtra = DeflateTables.LengthExtra;
+        ushort[] lenBase = DeflateTables.LengthBase;
+        ushort[] distBase = DeflateTables.DistBase;
+        byte[] distExtra = DeflateTables.DistExtra;
+        byte[] o = _out;
         int count = _symNext;
+
+        // The bit accumulator lives in locals for the whole block; it holds fewer than 32 bits between symbols.
+        ulong bb = _bitBuf;
+        int bc = _bitCnt;
+        int op = _outPos;
         for (int i = 0; i < count; i++)
         {
-            if (_outPos > OutSize - 32)
+            if (op > OutSize - 32)
             {
+                _outPos = op;
                 Drain();
+                op = 0;
             }
 
             int dist = dists[i];
             if (dist == 0)
             {
                 uint e = litEnc[lits[i]];
-                PutBits(e & 0xFFFF, (int)(e >> 16));
+                bb |= (ulong)(e & 0xFFFF) << bc;
+                bc += (int)(e >> 16);
             }
             else
             {
                 int lm3 = lits[i];
-                int ls = DeflateTables.LengthSymbol[lm3];
+                int ls = lenSym[lm3];
                 uint e = litEnc[257 + ls];
-                int eb = DeflateTables.LengthExtra[ls];
                 int el = (int)(e >> 16);
-                PutBits((e & 0xFFFF) | ((uint)(lm3 + MinMatch - DeflateTables.LengthBase[ls]) << el), el + eb);
+                bb |= (ulong)((e & 0xFFFF) | ((uint)(lm3 + MinMatch - lenBase[ls]) << el)) << bc;
+                bc += el + lenExtra[ls];
+                if (bc >= 32)
+                {
+                    BinaryPrimitives.WriteUInt32LittleEndian(o.AsSpan(op), (uint)bb);
+                    op += 4;
+                    bb >>= 32;
+                    bc -= 32;
+                }
+
                 int ds = DeflateTables.DistanceSymbol(dist);
                 e = distEnc[ds];
-                eb = DeflateTables.DistExtra[ds];
                 el = (int)(e >> 16);
-                PutBits((e & 0xFFFF) | ((uint)(dist - DeflateTables.DistBase[ds]) << el), el + eb);
+                bb |= (ulong)((e & 0xFFFF) | ((uint)(dist - distBase[ds]) << el)) << bc;
+                bc += el + distExtra[ds];
+            }
+
+            if (bc >= 32)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(o.AsSpan(op), (uint)bb);
+                op += 4;
+                bb >>= 32;
+                bc -= 32;
             }
         }
 
         uint eob = litEnc[256];
-        PutBits(eob & 0xFFFF, (int)(eob >> 16));
+        bb |= (ulong)(eob & 0xFFFF) << bc;
+        bc += (int)(eob >> 16);
+        if (bc >= 32)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(o.AsSpan(op), (uint)bb);
+            op += 4;
+            bb >>= 32;
+            bc -= 32;
+        }
+
+        _bitBuf = bb;
+        _bitCnt = bc;
+        _outPos = op;
     }
 
     // Run-length codes the concatenated literal and distance code lengths (RFC 1951 3.2.7).

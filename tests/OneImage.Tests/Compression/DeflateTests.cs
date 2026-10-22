@@ -158,4 +158,32 @@ public class DeflateTests
             Assert.True(z.Length < (level >= 4 ? data.Length / 2 : data.Length * 3 / 4), $"L{level} {z.Length}");
         }
     }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(6)]
+    [InlineData(9)]
+    public void FilteredStrategyRoundTripsAndIsDeterministicAcrossChunkings(int level)
+    {
+        // Noisy scanlines (long literal stretches trigger the search-skipping path) mixed with repeats.
+        byte[] data = CompressionTestUtil.ImageLike(700, 300, 8).Concat(CompressionTestUtil.Random(150_000, 3)).Concat(CompressionTestUtil.Text(90_000, 4)).Concat(new byte[40_000]).ToArray();
+        byte[] first = null!;
+        foreach (int chunk in new[] { data.Length, 4096, 777, 1 << 14 })
+        {
+            var sink = new System.Buffers.ArrayBufferWriter<byte>();
+            using var d = new Deflater(sink, level) { FilteredStrategy = true };
+            for (int i = 0; i < data.Length; i += chunk)
+            {
+                d.Write(data.AsSpan(i, Math.Min(chunk, data.Length - i)));
+            }
+
+            d.Finish();
+            byte[] z = sink.WrittenSpan.ToArray();
+            first ??= z;
+            Assert.Equal(first, z);
+            Assert.True(data.AsSpan().SequenceEqual(CompressionTestUtil.SystemDecompress(z, true)), $"L{level} chunk={chunk}");
+        }
+    }
 }

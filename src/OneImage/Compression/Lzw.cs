@@ -70,10 +70,16 @@ internal sealed class LzwDecoder
     private long _maxOutput;
     private double _maxRatio;
 
-    private readonly ulong[] _tail = new ulong[Lzw.MaxCodes];
-    private readonly short[] _chunkPrev = new short[Lzw.MaxCodes];
-    private readonly ushort[] _length = new ushort[Lzw.MaxCodes];
-    private readonly byte[] _firstByte = new byte[Lzw.MaxCodes];
+    // One 16-byte record per table entry keeps everything a code needs in a single cache line.
+    private struct Entry
+    {
+        public ulong Tail;
+        public short ChunkPrev;
+        public ushort Length;
+        public byte First;
+    }
+
+    private readonly Entry[] _t = new Entry[Lzw.MaxCodes];
     private readonly byte[] _scratch = new byte[Lzw.MaxCodes + 16];
     private int _pendPos;
     private int _pendLen;
@@ -115,10 +121,7 @@ internal sealed class LzwDecoder
         _maxRatio = double.IsFinite(maxExpansionRatio) ? maxExpansionRatio : 0;
         for (int i = 0; i < _clear; i++)
         {
-            _tail[i] = (ulong)i;
-            _chunkPrev[i] = -1;
-            _firstByte[i] = (byte)i;
-            _length[i] = 1;
+            _t[i] = new Entry { Tail = (ulong)i, ChunkPrev = -1, First = (byte)i, Length = 1 };
         }
 
         _pendPos = 0;
@@ -254,19 +257,21 @@ internal sealed class LzwDecoder
                 {
                     // New entry: the previous string plus the first byte of the current one.
                     int e = _next++;
-                    int lp = _length[_prev];
-                    ulong ch = _firstByte[code < e ? code : _prev];
-                    _firstByte[e] = _firstByte[_prev];
-                    _length[e] = (ushort)(lp + 1);
+                    ref Entry p = ref _t[_prev];
+                    int lp = p.Length;
+                    ulong ch = code < e ? _t[code].First : p.First;
+                    ref Entry n = ref _t[e];
+                    n.First = p.First;
+                    n.Length = (ushort)(lp + 1);
                     if ((lp & 7) == 0)
                     {
-                        _chunkPrev[e] = (short)_prev;
-                        _tail[e] = ch;
+                        n.ChunkPrev = (short)_prev;
+                        n.Tail = ch;
                     }
                     else
                     {
-                        _chunkPrev[e] = _chunkPrev[_prev];
-                        _tail[e] = _tail[_prev] | (ch << (8 * (((lp - 1) & 7) + 1)));
+                        n.ChunkPrev = p.ChunkPrev;
+                        n.Tail = p.Tail | (ch << (8 * (((lp - 1) & 7) + 1)));
                     }
 
                     if (_next + _early == (1 << _codeSize) && _codeSize < Lzw.MaxBits)
@@ -277,7 +282,7 @@ internal sealed class LzwDecoder
             }
 
             _prev = code;
-            int len = _length[code];
+            int len = _t[code].Length;
             _total += len;
             if (_total > limit)
             {
@@ -320,13 +325,14 @@ internal sealed class LzwDecoder
     private void Emit(int code, int len, Span<byte> dst)
     {
         int pos = len - (((len - 1) & 7) + 1);
-        BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(pos), _tail[code]);
-        int c = _chunkPrev[code];
+        Entry[] t = _t;
+        BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(pos), t[code].Tail);
+        int c = t[code].ChunkPrev;
         while (c >= 0)
         {
             pos -= 8;
-            BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(pos), _tail[c]);
-            c = _chunkPrev[c];
+            BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(pos), t[c].Tail);
+            c = t[c].ChunkPrev;
         }
     }
 
