@@ -78,6 +78,7 @@ public class WatermarkBenchmarks : IDisposable
     private SharpRgba _sharpOverlay = null!;
     private SKBitmap _skiaBase = null!;
     private SKBitmap _skiaOverlay = null!;
+    private byte[] _sharpOut = null!;
     private VipsImage _vipsBase = null!;
     private VipsImage _vipsOverlay = null!;
 
@@ -118,7 +119,17 @@ public class WatermarkBenchmarks : IDisposable
         System.Runtime.InteropServices.Marshal.Copy(rgba, 0, _skiaBase.GetPixels(), rgba.Length);
         _skiaOverlay = new SKBitmap(new SKImageInfo(OW, OH, SKColorType.Rgba8888, SKAlphaType.Unpremul));
         System.Runtime.InteropServices.Marshal.Copy(ov, 0, _skiaOverlay.GetPixels(), ov.Length);
-        _vipsBase = VipsImage.NewFromMemory(raw, W, H, 3, global::NetVips.Enums.BandFormat.Uchar);
+        _sharpOut = new byte[raw.Length];
+        byte[] rgbaBase = new byte[px.Length * 4];
+        for (int i = 0; i < px.Length; i++)
+        {
+            rgbaBase[4 * i] = px[i].R;
+            rgbaBase[(4 * i) + 1] = px[i].G;
+            rgbaBase[(4 * i) + 2] = px[i].B;
+            rgbaBase[(4 * i) + 3] = 255;
+        }
+
+        _vipsBase = VipsImage.NewFromMemory(rgbaBase, W, H, 4, global::NetVips.Enums.BandFormat.Uchar);
         _vipsOverlay = VipsImage.NewFromMemory(ov, OW, OH, 4, global::NetVips.Enums.BandFormat.Uchar);
     }
 
@@ -143,6 +154,14 @@ public class WatermarkBenchmarks : IDisposable
         return _out[0].R;
     }
 
+    [Benchmark(Description = "OneImage Composite, only the overlay's area read (lazy)")]
+    public int OneImageRegionOnly()
+    {
+        var px = new global::OneImage.Rgb24[OW * OH];
+        _base.Composite(_overlay, 100, 100).CopyPixelsTo<global::OneImage.Rgb24>(px, new ImageRect(100, 100, OW, OH));
+        return px[0].R;
+    }
+
     [Benchmark(Description = "SkiaSharp copy + DrawBitmap", Baseline = true)]
     public int Skia()
     {
@@ -161,6 +180,14 @@ public class WatermarkBenchmarks : IDisposable
     {
         using SharpRgb copy = _sharpBase.Clone(c => c.DrawImage(_sharpOverlay, new Point(100, 100), 1f));
         return copy.Width;
+    }
+
+    [Benchmark(Description = "ImageSharp Clone + DrawImage + CopyPixelDataTo (packed RGB out)")]
+    public int ImageSharpPacked()
+    {
+        using SharpRgb copy = _sharpBase.Clone(c => c.DrawImage(_sharpOverlay, new Point(100, 100), 1f));
+        copy.CopyPixelDataTo(_sharpOut);
+        return _sharpOut[0];
     }
 
     [Benchmark(Description = "NetVips composite2 + write_to_memory")]

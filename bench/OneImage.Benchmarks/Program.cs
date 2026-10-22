@@ -117,5 +117,14 @@ public class SnapshotBenchmarks : IDisposable
 
 public static class Program
 {
-    public static void Main(string[] args) => BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+    public static int Main(string[] args)
+    {
+        if (args.Length > 2 && args[0] == "peak")
+        {
+            return Composite.PeakMemoryRunner.Run(args);
+        }
+
+        BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+        return 0;
+    }
 }
