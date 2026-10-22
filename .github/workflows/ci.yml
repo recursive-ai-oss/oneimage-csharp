@@ -32,4 +32,5 @@ jobs:
         run: dotnet publish tests/OneImage.AotSmoke -c Release -r ${{ matrix.rid }} -o ${{ runner.temp }}/smoke -warnaserror
       - name: Run AOT smoke app
         shell: bash
-        run: ${{ runner.temp }}/smoke/OneImage.AotSmoke
+        # Quoted environment variable: on Windows the inlined path would lose its backslashes in bash.
+        run: "$RUNNER_TEMP/smoke/OneImage.AotSmoke"
