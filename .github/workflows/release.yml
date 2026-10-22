@@ -103,9 +103,11 @@ jobs:
         run: dotnet test --solution OneImage.slnx -c Release --no-build --results-directory "$ONEIMAGE_ARTIFACTS/TestResults"
 
       - name: Pack
-        # Only the library is packed, from the binaries the tests ran on. Symbols come out as a .snupkg.
+        # The two shipped packages (the library and the web middleware), from the binaries the tests ran on.
+        # They share one version. Symbols come out as .snupkg files.
         run: |
           dotnet pack src/OneImage -c Release --no-build -o "$RUNNER_TEMP/packages"
+          dotnet pack src/OneImage.Web -c Release --no-build -o "$RUNNER_TEMP/packages"
           ls -l "$RUNNER_TEMP/packages"
 
       - name: Attest build provenance
