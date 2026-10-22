@@ -13,7 +13,7 @@ public class BidiDebug
             return;
         }
 
-        var (o, t, layout) = BidiHarness.Run(text, 40, x => { x.Origin = new System.Numerics.Vector2(20, 10); x.WrappingLength = float.Parse(Environment.GetEnvironmentVariable("BIDI_WRAP") ?? "0", System.Globalization.CultureInfo.InvariantCulture); }, r => { r.Origin = new System.Numerics.Vector2(20, 10); float w = float.Parse(Environment.GetEnvironmentVariable("BIDI_WRAP") ?? "0", System.Globalization.CultureInfo.InvariantCulture); r.WrappingLength = w > 0 ? w : -1; });
+        var (o, t, layout) = BidiHarness.Run(text, 40, x => { x.Origin = new System.Numerics.Vector2(20, 10); x.TextDirection = Enum.Parse<TextDirection>(Environment.GetEnvironmentVariable("BIDI_DIR") ?? "Auto"); x.WrappingLength = float.Parse(Environment.GetEnvironmentVariable("BIDI_WRAP") ?? "0", System.Globalization.CultureInfo.InvariantCulture); }, r => { r.Origin = new System.Numerics.Vector2(20, 10); float w = float.Parse(Environment.GetEnvironmentVariable("BIDI_WRAP") ?? "0", System.Globalization.CultureInfo.InvariantCulture); r.WrappingLength = w > 0 ? w : -1; });
         var sb = new System.Text.StringBuilder();
         foreach (LayoutLine line in layout.Lines)
         {

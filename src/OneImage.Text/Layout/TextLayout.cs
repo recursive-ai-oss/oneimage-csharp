@@ -131,6 +131,7 @@ internal sealed class TextLayout
     // Bidirectional data of the paragraph being laid out: the level of each UTF-16 offset from its start (null when the paragraph is
     // plain left to right and nothing needs reordering), and the paragraph level.
     private byte[]? _levels;
+    private byte[]? _rawLevels;
     private int _paraLevel;
 
     // Runs: the run that owns each UTF-16 offset (-1 for none), rented while the layout is built.
@@ -790,6 +791,7 @@ internal sealed class TextLayout
             int request = _direction switch { TextDirection.LeftToRight => 0, TextDirection.RightToLeft => 1, _ => -1 };
             _paraLevel = Bidi.ResolveLevels(cps.AsSpan(0, n), request, lev.AsSpan(0, n), lineEndRule: false);
             byte[] levels = ArrayPool<byte>.Shared.Rent(length + 1);
+            byte[] raw = ArrayPool<byte>.Shared.Rent(length + 1);
             byte prev = (byte)_paraLevel;
             for (int k = 0; k < n; k++)
             {
@@ -800,10 +802,12 @@ internal sealed class TextLayout
                 for (int j = at[k]; j < to; j++)
                 {
                     levels[j] = l;
+                    raw[j] = lev[k];
                 }
             }
 
             _levels = levels;
+            _rawLevels = raw;
         }
         finally
         {
@@ -819,13 +823,21 @@ internal sealed class TextLayout
         {
             ArrayPool<byte>.Shared.Return(_levels);
             _levels = null;
+            if (_rawLevels is not null)
+            {
+                ArrayPool<byte>.Shared.Return(_rawLevels);
+                _rawLevels = null;
+            }
         }
     }
 
-    // Rules L1 and L2 for one line of glyphs [g0, g1): white space at the end goes back to the paragraph level, then the glyphs are put
-    // in display order, from the highest level down reversing every run at that level or above. Clusters stay together because a
-    // cluster's glyphs share a level; the cluster flags are recomputed for the new order (a reversed cluster starts at its last glyph).
-    private void ReorderLine(int g0, int g1)
+    // Rules L1 and L2 for one line of glyphs [g0, g1) set from the text [textStart, textEnd): white space at the end of the line goes
+    // back to the paragraph level, then the characters are put in display order, from the highest level down reversing every run
+    // at that level or above. The rules work on characters, including the ones that have no glyph (isolate controls keep
+    // runs apart), so the glyphs follow the display rank of the character they start at. The glyphs of one character or cluster are
+    // reversed with it when its level is odd. The cluster flags are recomputed for the new order: a reversed cluster starts at its
+    // last glyph.
+    private void ReorderLine(int g0, int g1, int textStart, int textEnd)
     {
         int n = g1 - g0;
         if (_levels is null || n == 0)
@@ -833,31 +845,106 @@ internal sealed class TextLayout
             return;
         }
 
-        int[] cps = ArrayPool<int>.Shared.Rent(n);
-        byte[] lev = ArrayPool<byte>.Shared.Rent(n);
-        int[] order = ArrayPool<int>.Shared.Rent(n);
+        bool plain = true;
+        for (int j = 0; j < n && plain; j++)
+        {
+            plain = Glyphs[g0 + j].Level == 0;
+        }
+
+        if (plain)
+        {
+            return;
+        }
+
+        int length = textEnd - textStart;
+        if (length <= 0)
+        {
+            return;
+        }
+
+        int[] cps = ArrayPool<int>.Shared.Rent(length);
+        byte[] lev = ArrayPool<byte>.Shared.Rent(length);
+        int[] order = ArrayPool<int>.Shared.Rent(length);
+        int[] rankAt = ArrayPool<int>.Shared.Rent(length);
+        int[] keyed = ArrayPool<int>.Shared.Rent(n);
+        long[] keys = ArrayPool<long>.Shared.Rent(n);
+        int[] head = ArrayPool<int>.Shared.Rent(n);
         try
         {
-            bool plain = true;
-            for (int j = 0; j < n; j++)
+            int m = 0;
+            for (int i = 0; i < length; m++)
             {
-                ShapedGlyph g = Glyphs[g0 + j];
-                cps[j] = g.CodePoint;
-                lev[j] = g.Level;
-                plain &= g.Level == 0;
+                int at = textStart + i;
+                int cp;
+                int len = 1;
+                if (char.IsHighSurrogate(_text[at]) && i + 1 < length && char.IsLowSurrogate(_text[at + 1]))
+                {
+                    cp = char.ConvertToUtf32(_text[at], _text[at + 1]);
+                    len = 2;
+                }
+                else
+                {
+                    cp = char.IsSurrogate(_text[at]) ? 0xFFFD : _text[at];
+                }
+
+                cps[m] = cp;
+                lev[m] = _rawLevels![at - _paragraphStart];
+                rankAt[i] = m;
+                if (len == 2)
+                {
+                    rankAt[i + 1] = m;
+                }
+
+                i += len;
             }
 
-            if (plain)
+            Bidi.ResetTrailingWhitespace(cps.AsSpan(0, m), lev.AsSpan(0, m), _paraLevel);
+            int shown = Bidi.VisualOrder(lev.AsSpan(0, m), order.AsSpan(0, m));
+
+            // The display rank of every character, then of every glyph by the character it starts at.
+            int[] rankByIndex = ArrayPool<int>.Shared.Rent(m);
+            try
             {
-                return;
+                for (int r = 0; r < shown; r++)
+                {
+                    rankByIndex[order[r]] = r;
+                }
+
+                // A character rule X9 removed has no place of its own: it goes with the one before it.
+                int last = 0;
+                for (int c = 0; c < m; c++)
+                {
+                    if (lev[c] == Bidi.Removed)
+                    {
+                        rankByIndex[c] = last;
+                    }
+                    else
+                    {
+                        last = rankByIndex[c];
+                    }
+                }
+
+                for (int j = 0; j < n; j++)
+                {
+                    ShapedGlyph g = Glyphs[g0 + j];
+                    int rank = rankByIndex[rankAt[Math.Clamp(g.Cluster - textStart, 0, length - 1)]];
+
+                    // Glyphs of one character keep their order, or reverse it in a right-to-left run.
+                    int within = (g.Level & 1) == 1 ? n - j : j;
+                    keys[j] = ((long)rank << 32) | (uint)within;
+                    keyed[j] = j;
+                }
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(rankByIndex);
             }
 
-            Bidi.ResetTrailingWhitespace(cps.AsSpan(0, n), lev.AsSpan(0, n), _paraLevel);
-            int m = Bidi.VisualOrder(lev.AsSpan(0, n), order.AsSpan(0, n));
+            Array.Sort(keys, keyed, 0, n);
             bool moved = false;
-            for (int j = 0; j < m && !moved; j++)
+            for (int v = 0; v < n && !moved; v++)
             {
-                moved = order[j] != j;
+                moved = keyed[v] != v;
             }
 
             if (!moved)
@@ -866,35 +953,27 @@ internal sealed class TextLayout
             }
 
             // The cluster each glyph belongs to, by the logical index of its first glyph, before anything moves.
-            int[] head = ArrayPool<int>.Shared.Rent(n);
-            try
+            int h = 0;
+            for (int j = 0; j < n; j++)
             {
-                int h = 0;
-                for (int j = 0; j < n; j++)
+                if (j == 0 || ClusterStart[g0 + j])
                 {
-                    if (j == 0 || ClusterStart[g0 + j])
-                    {
-                        h = j;
-                    }
-
-                    head[j] = h;
+                    h = j;
                 }
 
-                var glyphs = new ShapedGlyph[n];
-                for (int j = 0; j < n; j++)
-                {
-                    glyphs[j] = Glyphs[g0 + j];
-                }
-
-                for (int v = 0; v < n; v++)
-                {
-                    Glyphs[g0 + v] = glyphs[order[v]];
-                    ClusterStart[g0 + v] = v == 0 || head[order[v]] != head[order[v - 1]];
-                }
+                head[j] = h;
             }
-            finally
+
+            var glyphs = new ShapedGlyph[n];
+            for (int j = 0; j < n; j++)
             {
-                ArrayPool<int>.Shared.Return(head);
+                glyphs[j] = Glyphs[g0 + j];
+            }
+
+            for (int v = 0; v < n; v++)
+            {
+                Glyphs[g0 + v] = glyphs[keyed[v]];
+                ClusterStart[g0 + v] = v == 0 || head[keyed[v]] != head[keyed[v - 1]];
             }
         }
         finally
@@ -902,6 +981,10 @@ internal sealed class TextLayout
             ArrayPool<int>.Shared.Return(cps);
             ArrayPool<byte>.Shared.Return(lev);
             ArrayPool<int>.Shared.Return(order);
+            ArrayPool<int>.Shared.Return(rankAt);
+            ArrayPool<int>.Shared.Return(keyed);
+            ArrayPool<long>.Shared.Return(keys);
+            ArrayPool<int>.Shared.Return(head);
         }
     }
 
@@ -1059,7 +1142,7 @@ internal sealed class TextLayout
     private void AddLine(int g0, int g1, int textStart, int textLength)
     {
         bool rtl = (_paraLevel & 1) == 1;
-        ReorderLine(g0, g1);
+        ReorderLine(g0, g1, textStart, textStart + textLength);
         if (_justification != TextJustification.None && _wrap > 0)
         {
             Justify(g0, g1);
