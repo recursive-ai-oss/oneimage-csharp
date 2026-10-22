@@ -86,6 +86,15 @@ internal abstract class ScriptShaper
     /// <summary>Whether the feature is on unless the user says otherwise.</summary>
     public abstract bool DefaultOn(uint tag);
 
+    /// <summary>Whether the feature is on unless the user says otherwise, for text set in the given direction. Right-to-left runs also turn on rtlm.</summary>
+    public virtual bool DefaultOn(uint tag, bool rtl) => DefaultOn(tag) || (rtl && tag == Tag.Rtlm);
+
+    /// <summary>
+    /// The glyph mask bits a feature is restricted to, or zero when it applies to every glyph. A feature with a mask only runs on
+    /// glyphs whose <see cref="GlyphInfo.Mask"/> shares a bit with it.
+    /// </summary>
+    public virtual uint FeatureMask(uint tag) => 0;
+
     /// <summary>Called on the glyph run before any lookup runs (reordering, mask setup). The generic shaper does nothing.</summary>
     public virtual void PrepareRun(GlyphBuffer buffer)
     {
@@ -113,6 +122,11 @@ internal static class Tag
     public static readonly uint Clig = Be.Tag("clig");
     public static readonly uint Calt = Be.Tag("calt");
     public static readonly uint Rclt = Be.Tag("rclt");
+    public static readonly uint Rtlm = Be.Tag("rtlm");
+    public static readonly uint Arab = Be.Tag("arab");
+    public static readonly uint Hebr = Be.Tag("hebr");
+    public static readonly uint Syrc = Be.Tag("syrc");
+    public static readonly uint Nko = Be.Tag("nko ");
 }
 
 /// <summary>Horizontal left-to-right text in the simple scripts: ccmp and locl first, then the other default substitutions, then positioning.</summary>
@@ -122,7 +136,7 @@ internal sealed class GenericShaper : ScriptShaper
 
     private static readonly uint[][] Stages =
     [
-        [Tag.Ccmp, Tag.Locl],
+        [Tag.Ccmp, Tag.Locl, Tag.Rtlm],
         [Tag.Rlig, Tag.Liga, Tag.Clig, Tag.Calt, Tag.Rclt],
     ];
 
@@ -143,20 +157,24 @@ internal sealed class ShapePlan
     /// <summary>Whether a GPOS lookup came from the kern feature, so the legacy kern table must stay out of the way.</summary>
     public bool HasGposKern { get; private init; }
 
-    public static ShapePlan Build(OtFace face, ScriptShaper shaper, uint script, uint language, FeatureSet features)
+    /// <summary>Whether the font has rtlm lookups for this script, in which case mirrored characters are left to them.</summary>
+    public bool HasRtlm { get; private init; }
+
+    public static ShapePlan Build(OtFace face, ScriptShaper shaper, uint script, uint language, FeatureSet features, bool rtl = false)
     {
         uint[] scripts = shaper.ScriptTags(script);
         uint[][] stages = shaper.GsubStages;
         PlannedLookup[][] gsub = [];
+        bool rtlm = false;
         if (face.Gsub is { } gs)
         {
-            var perStage = new SortedDictionary<int, int>[stages.Length];
+            var perStage = new SortedDictionary<int, (int, uint)>[stages.Length];
             for (int i = 0; i < perStage.Length; i++)
             {
                 perStage[i] = [];
             }
 
-            Collect(gs, scripts, language, shaper, features, stages, perStage, out _);
+            Collect(gs, scripts, language, shaper, features, rtl, stages, perStage, out _, out rtlm);
             gsub = [.. perStage.Select(Flatten)];
         }
 
@@ -164,20 +182,21 @@ internal sealed class ShapePlan
         bool kern = false;
         if (face.Gpos is { } gp)
         {
-            var one = new SortedDictionary<int, int>[1] { [] };
-            Collect(gp, scripts, language, shaper, features, [], one, out kern);
+            var one = new SortedDictionary<int, (int, uint)>[1] { [] };
+            Collect(gp, scripts, language, shaper, features, rtl, [], one, out kern, out _);
             gpos = Flatten(one[0]);
         }
 
-        return new ShapePlan { Gsub = gsub, Gpos = gpos, HasGposKern = kern };
+        return new ShapePlan { Gsub = gsub, Gpos = gpos, HasGposKern = kern, HasRtlm = rtlm };
     }
 
-    private static PlannedLookup[] Flatten(SortedDictionary<int, int> d) => [.. d.Select(kv => new PlannedLookup(kv.Key, kv.Value))];
+    private static PlannedLookup[] Flatten(SortedDictionary<int, (int Value, uint Mask)> d) => [.. d.Select(kv => new PlannedLookup(kv.Key, kv.Value.Value, kv.Value.Mask))];
 
     // Walks the feature list of the selected language system and files each enabled feature's lookups under its stage.
-    private static void Collect(LayoutTable table, uint[] scripts, uint language, ScriptShaper shaper, FeatureSet user, uint[][] stages, SortedDictionary<int, int>[] into, out bool kern)
+    private static void Collect(LayoutTable table, uint[] scripts, uint language, ScriptShaper shaper, FeatureSet user, bool rtl, uint[][] stages, SortedDictionary<int, (int Value, uint Mask)>[] into, out bool kern, out bool rtlm)
     {
         kern = false;
+        rtlm = false;
         try
         {
             List<int>? indices = table.FeatureIndices(scripts, language, out int required);
@@ -200,7 +219,7 @@ internal sealed class ShapePlan
                 }
                 else
                 {
-                    value = shaper.DefaultOn(tag) ? 1 : 0;
+                    value = shaper.DefaultOn(tag, rtl) ? 1 : 0;
                 }
 
                 if (value <= 0)
@@ -218,8 +237,19 @@ internal sealed class ShapePlan
                     }
                 }
 
-                table.AddFeatureLookups(fi, value, into[stage]);
+                var found = new SortedDictionary<int, int>();
+                table.AddFeatureLookups(fi, value, found);
+                uint mask = shaper.FeatureMask(tag);
+                foreach (KeyValuePair<int, int> kv in found)
+                {
+                    // A lookup two features ask for applies to the glyphs of either; one without a mask applies to all.
+                    into[stage][kv.Key] = into[stage].TryGetValue(kv.Key, out (int Value, uint Mask) old)
+                        ? (Math.Max(old.Value, kv.Value), old.Mask == 0 || mask == 0 ? 0 : old.Mask | mask)
+                        : (kv.Value, mask);
+                }
+
                 kern |= tag == Tag.Kern;
+                rtlm |= tag == Tag.Rtlm && found.Count > 0;
             }
         }
         catch (FontFormatException)
@@ -234,7 +264,7 @@ internal sealed class OtFace
 {
     private const int MaxPlans = 128;
 
-    private readonly ConcurrentDictionary<(uint, uint, FeatureSet), ShapePlan> _plans = new();
+    private readonly ConcurrentDictionary<(uint, uint, FeatureSet, ScriptShaper, bool), ShapePlan> _plans = new();
 
     public OtFace(Dictionary<uint, ReadOnlyMemory<byte>> tables, int numGlyphs)
     {
@@ -263,15 +293,15 @@ internal sealed class OtFace
 
     public LayoutTable? Gpos { get; }
 
-    public ShapePlan GetPlan(ScriptShaper shaper, uint script, uint language, FeatureSet features)
+    public ShapePlan GetPlan(ScriptShaper shaper, uint script, uint language, FeatureSet features, bool rtl = false)
     {
-        var key = (script, language, features);
+        var key = (script, language, features, shaper, rtl);
         if (_plans.TryGetValue(key, out ShapePlan? plan))
         {
             return plan;
         }
 
-        plan = ShapePlan.Build(this, shaper, script, language, features);
+        plan = ShapePlan.Build(this, shaper, script, language, features, rtl);
         if (_plans.Count >= MaxPlans)
         {
             _plans.Clear();

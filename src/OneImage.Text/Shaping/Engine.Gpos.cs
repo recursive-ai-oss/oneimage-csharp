@@ -235,9 +235,20 @@ internal sealed partial class Engine
 
         // The pen moves to the exit anchor of the first glyph; the second glyph is shifted back by its entry anchor, and its own
         // advance shrinks by the same amount so what follows it is not displaced.
-        prev.XAdvance = exitX + prev.XOffset;
-        cur.XAdvance -= entryX + cur.XOffset;
-        cur.XOffset -= entryX;
+        if (_rtl)
+        {
+            // Right to left: the first glyph sits to the right, its exit anchor on its left edge, and the second glyph's entry anchor
+            // is on its right edge. The two anchors meet when the first glyph's advance ends where the second glyph's anchor puts
+            // the pen, measured from the glyphs' natural advances.
+            prev.XAdvance += entryX - exitX - cur.XAdvance;
+        }
+        else
+        {
+            prev.XAdvance = exitX + prev.XOffset;
+            cur.XAdvance -= entryX + cur.XOffset;
+            cur.XOffset -= entryX;
+        }
+
         cur.AttachTo = j;
         cur.AttachY = exitY - entryY;
         cur.AttachX = 0;
@@ -479,10 +490,23 @@ internal sealed partial class Engine
     /// finds its base already placed. A mark sits at its base's offset plus the anchor difference, minus the pen travel between the two
     /// (the mark is drawn from the pen position it would have had, not from the base's).
     /// </summary>
+    /// <remarks>
+    /// It also fills <see cref="GlyphPos.RtlShift"/>, the change to each glyph's offset when a right-to-left run is laid out from
+    /// its right edge in display order, glyphs reversed. There a glyph's outline hangs from the edge of its advance box where the pen
+    /// starts (the right edge), not from the left, so a glyph whose advance a lookup changed (kerning) is drawn that far from its box,
+    /// and a mark rides with the outline of the glyph it is attached to, not with the box. For a glyph that is not attached the shift
+    /// is its advance minus the font's advance; an attached glyph adds the pen travel to its target, its own advance, and the shift
+    /// of its target.
+    /// </remarks>
     public static void ResolveAttachments(GlyphBuffer buffer)
     {
         GlyphPos[] pos = buffer.Pos;
         long[]? prefix = null;
+        for (int i = 0; i < buffer.Count; i++)
+        {
+            pos[i].RtlShift = pos[i].XAdvance - pos[i].BaseAdvance;
+        }
+
         for (int i = 0; i < buffer.Count; i++)
         {
             int t = pos[i].AttachTo;
@@ -514,6 +538,7 @@ internal sealed partial class Engine
             long travel = prefix[i] - prefix[t];
             pos[i].XOffset = (int)Math.Clamp(pos[t].XOffset + pos[i].AttachX - travel + pos[i].XOffset, int.MinValue / 2, int.MaxValue / 2);
             pos[i].YOffset += pos[t].YOffset + pos[i].AttachY;
+            pos[i].RtlShift = (int)Math.Clamp(travel + pos[i].XAdvance + pos[t].RtlShift, int.MinValue / 2, int.MaxValue / 2);
         }
     }
 }

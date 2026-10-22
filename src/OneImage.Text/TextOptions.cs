@@ -137,9 +137,18 @@ public sealed class TextOptions
     /// a box as wide as the widest line, and <see cref="HorizontalAlignment"/> puts that box on the origin. Center and End instead
     /// place each line in a box as wide as <see cref="WrappingLength"/> (the widest line when there is none), centered or against
     /// its right edge, and horizontal alignment puts that box on the origin. This is how ImageSharp lays text out; Center and End
-    /// are meant for use with a wrapping length.
+    /// are meant for use with a wrapping length. Start and End follow the direction of each paragraph: in a right-to-left paragraph
+    /// Start lines share the right edge of the box and End lines end at its left edge.
     /// </summary>
     public TextAlignment TextAlignment { get; set; }
+
+    /// <summary>
+    /// Gets or sets the base direction of each paragraph. The default is <see cref="Text.TextDirection.Auto"/>. The direction decides
+    /// how mixed left-to-right and right-to-left text is ordered (Unicode Bidirectional Algorithm, UAX #9), which edge
+    /// <see cref="TextAlignment"/> Start and End mean, and the order of the characters that have no direction of their own (spaces,
+    /// digits, punctuation). Each line is reordered after wrapping.
+    /// </summary>
+    public TextDirection TextDirection { get; set; }
 
     /// <summary>Gets or sets whether the font's kerning is applied. The default is <see cref="KerningMode.Normal"/>.</summary>
     public KerningMode Kerning { get; set; }
@@ -251,6 +260,7 @@ public sealed class TextOptions
         HorizontalAlignment = HorizontalAlignment,
         VerticalAlignment = VerticalAlignment,
         TextAlignment = TextAlignment,
+        TextDirection = TextDirection,
         Kerning = Kerning,
         WordBreaking = WordBreaking,
         TextJustification = TextJustification,

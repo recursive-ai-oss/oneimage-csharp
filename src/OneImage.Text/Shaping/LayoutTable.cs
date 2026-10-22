@@ -27,7 +27,10 @@ internal sealed class Lookup
 }
 
 /// <summary>A lookup chosen by the enabled features, with the value the user gave the feature (1 = on; alternates use it as the 1-based choice).</summary>
-internal readonly record struct PlannedLookup(int Index, int Value);
+/// <param name="Index">The lookup index.</param>
+/// <param name="Value">The feature value.</param>
+/// <param name="Mask">Zero for every glyph, else the glyphs whose <see cref="GlyphInfo.Mask"/> shares a bit with it.</param>
+internal readonly record struct PlannedLookup(int Index, int Value, uint Mask = 0);
 
 /// <summary>
 /// A GSUB or GPOS table: the script, feature and lookup lists of the OpenType layout common header (OpenType spec, "OpenType Layout

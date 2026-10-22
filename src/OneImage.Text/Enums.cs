@@ -42,17 +42,30 @@ public enum VerticalAlignment
     Bottom,
 }
 
-/// <summary>How the lines of a block line up inside it. Text runs left to right in this release.</summary>
+/// <summary>How the lines of a block line up inside it. Start and End follow the direction of each paragraph.</summary>
 public enum TextAlignment
 {
-    /// <summary>Lines keep the position horizontal alignment gave them, sharing a left edge (the default).</summary>
+    /// <summary>Lines share the edge a paragraph starts at: the left edge of a left-to-right paragraph, the right edge of a right-to-left one (the default).</summary>
     Start,
 
     /// <summary>Lines are centered in the block.</summary>
     Center,
 
-    /// <summary>Lines end at the block's end edge.</summary>
+    /// <summary>Lines end at the edge a paragraph ends at: the right edge of a left-to-right paragraph, the left edge of a right-to-left one.</summary>
     End,
+}
+
+/// <summary>The base direction of a paragraph (Unicode Bidirectional Algorithm rules P2 and P3 choose it automatically).</summary>
+public enum TextDirection
+{
+    /// <summary>The direction of the first strong character of each paragraph, left to right when there is none (the default).</summary>
+    Auto,
+
+    /// <summary>Every paragraph is left to right.</summary>
+    LeftToRight,
+
+    /// <summary>Every paragraph is right to left.</summary>
+    RightToLeft,
 }
 
 /// <summary>Whether pair kerning from the font is applied.</summary>

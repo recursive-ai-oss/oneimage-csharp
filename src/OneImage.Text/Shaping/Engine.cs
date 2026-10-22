@@ -29,6 +29,8 @@ internal sealed partial class Engine
     private readonly long _maxOps;
     private readonly int _maxGlyphs;
     private readonly int[][] _match = new int[MaxDepth + 2][];
+    private readonly bool _rtl;
+    private uint _mask;
     private int _flags;
     private int _markSet;
     private int _value;
@@ -36,8 +38,9 @@ internal sealed partial class Engine
     private long _ops;
     private ushort _ligCounter;
 
-    public Engine(LayoutTable table, Gdef? gdef, GlyphBuffer buffer, int numGlyphs, int textLength)
+    public Engine(LayoutTable table, Gdef? gdef, GlyphBuffer buffer, int numGlyphs, int textLength, bool rtl = false)
     {
+        _rtl = rtl;
         _table = table;
         _gdef = gdef;
         _buf = buffer;
@@ -67,6 +70,7 @@ internal sealed partial class Engine
             }
 
             _value = pl.Value;
+            _mask = pl.Mask;
             _flags = lk.Flags;
             _markSet = lk.MarkSet;
             _depth = 0;
@@ -89,7 +93,7 @@ internal sealed partial class Engine
         {
             for (int i = _buf.Count - 1; i >= 0 && !Exhausted; i--)
             {
-                if (i < _buf.Count && !Skip(i))
+                if (i < _buf.Count && !Skip(i) && !Masked(i))
                 {
                     TrySubtables(lk, i, out _);
                 }
@@ -101,9 +105,12 @@ internal sealed partial class Engine
         for (int i = 0; i < _buf.Count && !Exhausted;)
         {
             // A rule moves on past what it matched; only a deletion leaves the position where it was, and that shrinks the run.
-            i = !Skip(i) && TrySubtables(lk, i, out int next) ? next : i + 1;
+            i = !Skip(i) && !Masked(i) && TrySubtables(lk, i, out int next) ? next : i + 1;
         }
     }
+
+    // A planned lookup with a mask only starts at glyphs that carry one of its bits; contexts and nested lookups are not masked.
+    private bool Masked(int i) => _mask != 0 && (_buf.Info[i].Mask & _mask) == 0;
 
     private bool TrySubtables(Lookup lk, int i, out int next)
     {

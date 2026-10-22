@@ -1,5 +1,6 @@
 using System.Globalization;
 using OneImage.Text.Fonts;
+using OneImage.Text.Unicode;
 
 namespace OneImage.Text.Shaping;
 
@@ -27,7 +28,12 @@ internal struct ShapedRunGlyph
 internal static class TextShaper
 {
     /// <summary>Shapes <paramref name="codePoints"/> (with the UTF-16 index of each) and appends the glyphs to <paramref name="output"/>.</summary>
-    public static void Shape(FontFace face, ReadOnlySpan<int> codePoints, ReadOnlySpan<int> clusters, uint language, FeatureSet features, List<ShapedRunGlyph> output)
+    /// <remarks>
+    /// The code points are in logical order. With <paramref name="rtl"/> the run is right to left: mirrored characters are replaced
+    /// by their mirror image (unless the font's rtlm lookups do it), and each glyph's offset is given for display order, which the
+    /// caller produces by reversing the glyphs (see <see cref="GlyphPos.RtlShift"/>).
+    /// </remarks>
+    public static void Shape(FontFace face, ReadOnlySpan<int> codePoints, ReadOnlySpan<int> clusters, uint language, FeatureSet features, List<ShapedRunGlyph> output, bool rtl = false)
     {
         int n = codePoints.Length;
         int start = 0;
@@ -72,7 +78,7 @@ internal static class TextShaper
                 buffer.Add(new GlyphInfo { Glyph = glyph, Cluster = clusters[k], CodePoint = cp, Class = cls });
             }
 
-            ShapeBuffer(face, buffer, runScript, language, features, end - start, output);
+            ShapeBuffer(face, buffer, runScript, language, features, end - start, output, rtl);
             start = end;
         }
     }
@@ -88,19 +94,40 @@ internal static class TextShaper
             buffer.Add(new GlyphInfo { Glyph = glyphs[k], Cluster = k, CodePoint = 0x41, Class = cls });
         }
 
-        ShapeBuffer(face, buffer, Tag.Latn, language, features, glyphs.Length, output);
+        ShapeBuffer(face, buffer, Tag.Latn, language, features, glyphs.Length, output, false);
     }
 
-    private static void ShapeBuffer(FontFace face, GlyphBuffer buffer, uint script, uint language, FeatureSet features, int textLength, List<ShapedRunGlyph> output)
+    private static ScriptShaper ShaperFor(uint script) =>
+        script == Tag.Arab || script == Tag.Syrc || script == Tag.Nko ? ArabicShaper.Instance : GenericShaper.Instance;
+
+    private static void ShapeBuffer(FontFace face, GlyphBuffer buffer, uint script, uint language, FeatureSet features, int textLength, List<ShapedRunGlyph> output, bool rtl)
     {
         OtFace layout = face.Layout;
-        ScriptShaper shaper = GenericShaper.Instance;
-        ShapePlan plan = layout.GetPlan(shaper, script, language, features);
+        ScriptShaper shaper = ShaperFor(script);
+        ShapePlan plan = layout.GetPlan(shaper, script, language, features, rtl);
+        if (rtl && !plan.HasRtlm)
+        {
+            // Characters with a mirror image show it in right-to-left text (UAX #9 L4); a font that has the mirror glyph is
+            // asked for it directly. A font with its own rtlm lookups does this through them instead.
+            for (int i = 0; i < buffer.Count; i++)
+            {
+                int mirror = UnicodeBidi.Mirror(buffer.Info[i].CodePoint);
+                if (mirror != buffer.Info[i].CodePoint)
+                {
+                    int g = face.GetGlyphIndex(mirror);
+                    if (g != 0)
+                    {
+                        buffer.Info[i].Glyph = g;
+                    }
+                }
+            }
+        }
+
         shaper.PrepareRun(buffer);
 
         if (layout.Gsub is { } gsub)
         {
-            var engine = new Engine(gsub, layout.Gdef, buffer, face.NumGlyphs, textLength);
+            var engine = new Engine(gsub, layout.Gdef, buffer, face.NumGlyphs, textLength, rtl);
             foreach (PlannedLookup[] stage in plan.Gsub)
             {
                 if (stage.Length > 0)
@@ -115,11 +142,12 @@ internal static class TextShaper
         for (int i = 0; i < count; i++)
         {
             buffer.Pos[i].XAdvance = face.GetAdvance(buffer.Info[i].Glyph);
+            buffer.Pos[i].BaseAdvance = buffer.Pos[i].XAdvance;
         }
 
         if (layout.Gpos is { } gpos && plan.Gpos.Length > 0)
         {
-            new Engine(gpos, layout.Gdef, buffer, face.NumGlyphs, textLength).Run(plan.Gpos);
+            new Engine(gpos, layout.Gdef, buffer, face.NumGlyphs, textLength, rtl).Run(plan.Gpos);
             Engine.ResolveAttachments(buffer);
         }
 
@@ -138,13 +166,19 @@ internal static class TextShaper
         {
             ref GlyphInfo info = ref buffer.Info[i];
             ref GlyphPos pos = ref buffer.Pos[i];
+            if (info.CodePoint == 0x200D)
+            {
+                // A zero width joiner only shapes its neighbors; it is not drawn.
+                continue;
+            }
+
             output.Add(new ShapedRunGlyph
             {
                 GlyphId = info.Glyph,
                 Cluster = info.Cluster,
                 CodePoint = info.CodePoint,
                 XAdvance = pos.XAdvance,
-                XOffset = pos.XOffset,
+                XOffset = rtl ? pos.XOffset + pos.RtlShift : pos.XOffset,
                 YOffset = pos.YOffset,
             });
         }
@@ -202,6 +236,27 @@ internal static class Scripts
             or (>= 0xFF21 and <= 0xFF3A) or (>= 0xFF41 and <= 0xFF5A))
         {
             return Tag.Latn;
+        }
+
+        if (cp is (>= 0x590 and <= 0x5FF) or (>= 0xFB1D and <= 0xFB4F))
+        {
+            return Tag.Hebr;
+        }
+
+        if (cp is (>= 0x600 and <= 0x6FF) or (>= 0x750 and <= 0x77F) or (>= 0x870 and <= 0x8FF) or (>= 0xFB50 and <= 0xFDFF)
+            or (>= 0xFE70 and <= 0xFEFF) or (>= 0x10EC0 and <= 0x10EFF) or (>= 0x1EE00 and <= 0x1EEFF))
+        {
+            return Tag.Arab;
+        }
+
+        if (cp is (>= 0x700 and <= 0x74F) or (>= 0x860 and <= 0x86F))
+        {
+            return Tag.Syrc;
+        }
+
+        if (cp is >= 0x7C0 and <= 0x7FF)
+        {
+            return Tag.Nko;
         }
 
         if (cp is (>= 0x370 and <= 0x3FF and not 0x37E and not 0x385 and not 0x387) or (>= 0x1F00 and <= 0x1FFF) or 0x2126)

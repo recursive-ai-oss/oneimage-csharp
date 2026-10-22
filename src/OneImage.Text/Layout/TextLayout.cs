@@ -24,6 +24,9 @@ internal struct ShapedGlyph
     public float YOffset;
     public bool IsSpace;
 
+    /// <summary>The bidirectional embedding level of the glyph's character (0 when the paragraph has no right-to-left text and is not right to left).</summary>
+    public byte Level;
+
     /// <summary>Index into <see cref="TextLayout.Styles"/>: the face, scale and run the glyph is set in.</summary>
     public int Style;
 }
@@ -87,6 +90,19 @@ internal sealed class LayoutLine
 
     /// <summary>Absolute y of the baseline, in pixels.</summary>
     public float Baseline;
+
+    /// <summary>Whether the line belongs to a right-to-left paragraph.</summary>
+    public bool Rtl;
+
+    /// <summary>
+    /// The glyphs without the white space that hangs past the line's end: it ends the line in reading order, so it sits at the right
+    /// of a left-to-right line and at the left of a right-to-left one. Equal to the whole range for a line of only white space.
+    /// </summary>
+    public int VisStart;
+    public int VisEnd;
+
+    /// <summary>Advance of the hanging white space at the left of a right-to-left line, which <see cref="Left"/> already allows for.</summary>
+    public float Hang;
 }
 
 /// <summary>
@@ -110,6 +126,12 @@ internal sealed class TextLayout
     private readonly TextJustification _justification;
     private readonly Font _baseFont;
     private readonly IList<FontFamily> _fallbacks;
+    private readonly TextDirection _direction;
+
+    // Bidirectional data of the paragraph being laid out: the level of each UTF-16 offset from its start (null when the paragraph is
+    // plain left to right and nothing needs reordering), and the paragraph level.
+    private byte[]? _levels;
+    private int _paraLevel;
 
     // Runs: the run that owns each UTF-16 offset (-1 for none), rented while the layout is built.
     private RunInfo[] _runs = [];
@@ -147,6 +169,7 @@ internal sealed class TextLayout
         }
 
         _features = FeatureSet.Create(settings);
+        _direction = o.TextDirection;
         _wordBreaking = o.WordBreaking;
         _justification = o.TextJustification;
         _fallbacks = o.FallbackFontFamilies;
@@ -437,6 +460,7 @@ internal sealed class TextLayout
     {
         _pending = 0;
         _runStyle = -1;
+        _runRtl = false;
         int face = 0;
         int i = start;
         while (i < end)
@@ -455,7 +479,7 @@ internal sealed class TextLayout
             }
 
             int run = RunAt(i);
-            bool ignorable = IsIgnorable(cp) || cp == '\t';
+            bool ignorable = (IsIgnorable(cp) && !(cp == 0x200D && JoinerMatters(text, i, start, end))) || cp == '\t';
             if (_fallbacks.Count > 0 && !ignorable && _clusters[i - start] != 0)
             {
                 // The first code point of a grapheme cluster picks the face for the whole cluster.
@@ -467,10 +491,15 @@ internal sealed class TextLayout
             }
 
             int style = StyleOf(run, face);
-            if (style != _runStyle)
+
+            // A shaping run keeps one direction: glyphs are substituted and positioned in reading order, and the run is turned
+            // around as a whole when the line is reordered.
+            bool rtl = _levels is not null && (_levels[i - start] & 1) == 1;
+            if (style != _runStyle || rtl != _runRtl)
             {
                 FlushRun(end);
                 _runStyle = style;
+                _runRtl = rtl;
             }
 
             if (cp == '\t')
@@ -478,7 +507,7 @@ internal sealed class TextLayout
                 FlushRun(end);
                 GlyphStyle st = Styles[style];
                 int gid = st.Face.GetGlyphIndex(' ');
-                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = st.TabAdvance, IsSpace = true, Style = style });
+                Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = st.TabAdvance, IsSpace = true, Style = style, Level = LevelAt(i - start) });
             }
             else if (cp is 0x200C or 0x200B or 0x00AD)
             {
@@ -522,6 +551,36 @@ internal sealed class TextLayout
     private int[] _runClusters = new int[64];
     private int _pending;
     private int _runStyle = -1;
+    private bool _runRtl;
+
+    private byte LevelAt(int offset) => _levels is null ? (byte)0 : _levels[offset];
+
+    // A zero width joiner is kept for the shaper only where it sits next to a letter that can join through it.
+    private static bool JoinerMatters(string text, int i, int start, int end)
+    {
+        int before = 0;
+        if (i > start)
+        {
+            before = text[i - 1];
+            if (char.IsLowSurrogate(text[i - 1]) && i - 2 >= start && char.IsHighSurrogate(text[i - 2]))
+            {
+                before = char.ConvertToUtf32(text[i - 2], text[i - 1]);
+            }
+        }
+
+        int after = 0;
+        if (i + 1 < end)
+        {
+            after = text[i + 1];
+            if (char.IsHighSurrogate(text[i + 1]) && i + 2 < end && char.IsLowSurrogate(text[i + 2]))
+            {
+                after = char.ConvertToUtf32(text[i + 1], text[i + 2]);
+            }
+        }
+
+        return (before >= 0x600 && UnicodeBidi.GetJoiningType(before) is JoiningType.Dual or JoiningType.Left)
+            || (after >= 0x600 && UnicodeBidi.GetJoiningType(after) is JoiningType.Dual or JoiningType.Right);
+    }
 
     private void FlushRun(int paragraphEnd)
     {
@@ -532,7 +591,7 @@ internal sealed class TextLayout
 
         GlyphStyle st = Styles[_runStyle];
         _run.Clear();
-        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run);
+        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run, _runRtl);
         for (int k = 0; k < _run.Count; k++)
         {
             ShapedRunGlyph r = _run[k];
@@ -547,6 +606,7 @@ internal sealed class TextLayout
                 XOffset = r.XOffset * st.Sx,
                 YOffset = (r.YOffset * st.Sy) + st.Shift,
                 IsSpace = IsBreakingSpace(r.CodePoint),
+                Level = LevelAt(r.Cluster - _paragraphStart),
                 Style = _runStyle,
             });
         }
@@ -639,6 +699,7 @@ internal sealed class TextLayout
         PrepareBreaks(text, start, end);
         try
         {
+            PrepareBidi(text, start, end);
             Shape(text, start, end);
             int g1 = Glyphs.Count;
             if (g1 == g0)
@@ -660,6 +721,183 @@ internal sealed class TextLayout
         finally
         {
             ReleaseBreaks();
+            ReleaseBidi();
+        }
+    }
+
+    // ---- Bidirectional text (UAX #9) ----
+
+    // Whether a paragraph can contain anything that is ordered differently from plain left to right: right-to-left letters, Arabic
+    // digits, and the explicit direction controls. The ranges are conservative; the algorithm decides.
+    private static bool MayNeedBidi(ReadOnlySpan<char> s)
+    {
+        foreach (char c in s)
+        {
+            if (c < 0x590)
+            {
+                continue;
+            }
+
+            if (c <= 0x8FF || (c >= 0x200E && c <= 0x200F) || (c >= 0x202A && c <= 0x202E) || (c >= 0x2066 && c <= 0x2069)
+                || (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFF) || char.IsSurrogate(c))
+            {
+                // Surrogates stand for the right-to-left letters of the supplementary planes (Adlam, Hanifi Rohingya and others).
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Resolves the embedding levels of the paragraph (rules P2 to I2) into a per-UTF-16-offset table. Rules L1 and L2 are applied
+    // per line once the lines are known.
+    private void PrepareBidi(string text, int start, int end)
+    {
+        _levels = null;
+        _paraLevel = 0;
+        int length = end - start;
+        ReadOnlySpan<char> span = text.AsSpan(start, length);
+        if (length == 0 || (_direction != TextDirection.RightToLeft && !MayNeedBidi(span)))
+        {
+            return;
+        }
+
+        int[] cps = ArrayPool<int>.Shared.Rent(length);
+        byte[] lev = ArrayPool<byte>.Shared.Rent(length);
+        int[] at = ArrayPool<int>.Shared.Rent(length);
+        try
+        {
+            int n = 0;
+            for (int i = 0; i < length; n++)
+            {
+                at[n] = i;
+                if (char.IsHighSurrogate(span[i]) && i + 1 < length && char.IsLowSurrogate(span[i + 1]))
+                {
+                    cps[n] = char.ConvertToUtf32(span[i], span[i + 1]);
+                    i += 2;
+                }
+                else
+                {
+                    cps[n] = char.IsSurrogate(span[i]) ? 0xFFFD : span[i];
+                    i++;
+                }
+            }
+
+            int request = _direction switch { TextDirection.LeftToRight => 0, TextDirection.RightToLeft => 1, _ => -1 };
+            _paraLevel = Bidi.ResolveLevels(cps.AsSpan(0, n), request, lev.AsSpan(0, n), lineEndRule: false);
+            byte[] levels = ArrayPool<byte>.Shared.Rent(length + 1);
+            byte prev = (byte)_paraLevel;
+            for (int k = 0; k < n; k++)
+            {
+                // A character removed by rule X9 (an embedding control) takes the level of the one before it.
+                byte l = lev[k] == Bidi.Removed ? prev : lev[k];
+                prev = l;
+                int to = k + 1 < n ? at[k + 1] : length;
+                for (int j = at[k]; j < to; j++)
+                {
+                    levels[j] = l;
+                }
+            }
+
+            _levels = levels;
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(cps);
+            ArrayPool<byte>.Shared.Return(lev);
+            ArrayPool<int>.Shared.Return(at);
+        }
+    }
+
+    private void ReleaseBidi()
+    {
+        if (_levels is not null)
+        {
+            ArrayPool<byte>.Shared.Return(_levels);
+            _levels = null;
+        }
+    }
+
+    // Rules L1 and L2 for one line of glyphs [g0, g1): white space at the end goes back to the paragraph level, then the glyphs are put
+    // in display order, from the highest level down reversing every run at that level or above. Clusters stay together because a
+    // cluster's glyphs share a level; the cluster flags are recomputed for the new order (a reversed cluster starts at its last glyph).
+    private void ReorderLine(int g0, int g1)
+    {
+        int n = g1 - g0;
+        if (_levels is null || n == 0)
+        {
+            return;
+        }
+
+        int[] cps = ArrayPool<int>.Shared.Rent(n);
+        byte[] lev = ArrayPool<byte>.Shared.Rent(n);
+        int[] order = ArrayPool<int>.Shared.Rent(n);
+        try
+        {
+            bool plain = true;
+            for (int j = 0; j < n; j++)
+            {
+                ShapedGlyph g = Glyphs[g0 + j];
+                cps[j] = g.CodePoint;
+                lev[j] = g.Level;
+                plain &= g.Level == 0;
+            }
+
+            if (plain)
+            {
+                return;
+            }
+
+            Bidi.ResetTrailingWhitespace(cps.AsSpan(0, n), lev.AsSpan(0, n), _paraLevel);
+            int m = Bidi.VisualOrder(lev.AsSpan(0, n), order.AsSpan(0, n));
+            bool moved = false;
+            for (int j = 0; j < m && !moved; j++)
+            {
+                moved = order[j] != j;
+            }
+
+            if (!moved)
+            {
+                return;
+            }
+
+            // The cluster each glyph belongs to, by the logical index of its first glyph, before anything moves.
+            int[] head = ArrayPool<int>.Shared.Rent(n);
+            try
+            {
+                int h = 0;
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == 0 || ClusterStart[g0 + j])
+                    {
+                        h = j;
+                    }
+
+                    head[j] = h;
+                }
+
+                var glyphs = new ShapedGlyph[n];
+                for (int j = 0; j < n; j++)
+                {
+                    glyphs[j] = Glyphs[g0 + j];
+                }
+
+                for (int v = 0; v < n; v++)
+                {
+                    Glyphs[g0 + v] = glyphs[order[v]];
+                    ClusterStart[g0 + v] = v == 0 || head[order[v]] != head[order[v - 1]];
+                }
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(head);
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(cps);
+            ArrayPool<byte>.Shared.Return(lev);
+            ArrayPool<int>.Shared.Return(order);
         }
     }
 
@@ -771,8 +1009,9 @@ internal sealed class TextLayout
             return;
         }
 
+        // White space hanging at the left of a right-to-left line does not count, as white space at the right of the other kind does not.
         float width = 0;
-        for (int k = g0; k < last; k++)
+        for (int k = (_paraLevel & 1) == 1 ? first : g0; k < last; k++)
         {
             width += Glyphs[k].Advance;
         }
@@ -815,6 +1054,8 @@ internal sealed class TextLayout
 
     private void AddLine(int g0, int g1, int textStart, int textLength)
     {
+        bool rtl = (_paraLevel & 1) == 1;
+        ReorderLine(g0, g1);
         if (_justification != TextJustification.None && _wrap > 0)
         {
             Justify(g0, g1);
@@ -847,14 +1088,47 @@ internal sealed class TextLayout
             ascent = st.Ascent;
         }
 
+        // White space that ends the line hangs past it: at the right of a left-to-right line, at the left of a right-to-left one. A line
+        // of only white space keeps its full width.
+        int vs = g0;
         int last = g1;
-        while (last > g0 && Glyphs[last - 1].IsSpace)
+        if (rtl)
         {
-            last--;
+            while (vs < g1 && Glyphs[vs].IsSpace)
+            {
+                vs++;
+            }
+
+            if (vs == g1)
+            {
+                vs = g0;
+                last = g0;
+            }
+        }
+        else
+        {
+            while (last > g0 && Glyphs[last - 1].IsSpace)
+            {
+                last--;
+            }
         }
 
-        float width = last > g0 ? PenXOf(last - 1) + Glyphs[last - 1].Advance : x;
-        Lines.Add(new LayoutLine { GlyphStart = g0, GlyphEnd = g1, TextStart = textStart, TextLength = textLength, Width = width, Height = height, Ascent = ascent });
+        float hang = rtl && last > g0 ? PenXOf(vs) : 0;
+        float width = last > g0 ? PenXOf(last - 1) + Glyphs[last - 1].Advance - hang : x;
+        Lines.Add(new LayoutLine
+        {
+            GlyphStart = g0,
+            GlyphEnd = g1,
+            TextStart = textStart,
+            TextLength = textLength,
+            Width = width,
+            Height = height,
+            Ascent = ascent,
+            Rtl = rtl,
+            VisStart = last > g0 ? vs : g0,
+            VisEnd = last,
+            Hang = hang,
+        });
         MaxWidth = Math.Max(MaxWidth, width);
         TotalHeight += height;
     }
@@ -883,12 +1157,14 @@ internal sealed class TextLayout
         {
             LayoutLine l = Lines[i];
             float w = l.Width;
+            // Start and End are relative to the paragraph's direction: a right-to-left line starts at the right edge of its box. The
+            // hanging white space of a right-to-left line (at its left) lies outside the box.
             l.Left = o.TextAlignment switch
             {
                 TextAlignment.Center => left - (haFraction * alignW) + ((alignW - w) / 2),
-                TextAlignment.End => left - (haFraction * alignW) + (alignW - w),
-                _ => left - (haFraction * blockW),
-            };
+                TextAlignment.End => l.Rtl ? left - (haFraction * alignW) : left - (haFraction * alignW) + (alignW - w),
+                _ => l.Rtl ? left - (haFraction * blockW) + (blockW - w) : left - (haFraction * blockW),
+            } - l.Hang;
             l.Baseline = top + l.Ascent;
             top += l.Height;
         }
@@ -969,10 +1245,16 @@ internal sealed class TextLayout
                 {
                     // A combining mark or other continuation: one box for the whole grapheme cluster, never split.
                     GlyphBounds head = list[^1];
+
+                    // In a right-to-left run the glyphs of a cluster are reversed: the base comes last, and the cluster is named by
+                    // its first character, the one with the lowest offset.
+                    bool earlier = g.Cluster < head.Index;
                     list[^1] = head with
                     {
                         Bounds = System.Drawing.RectangleF.Union(head.Bounds, box),
                         Ink = head.Ink.IsEmpty ? ink : ink.IsEmpty ? head.Ink : System.Drawing.RectangleF.Union(head.Ink, ink),
+                        Index = earlier ? g.Cluster : head.Index,
+                        CodePoint = earlier ? g.CodePoint : head.CodePoint,
                     };
                     continue;
                 }
@@ -1167,13 +1449,9 @@ internal sealed class TextLayout
 
     private void AddDecorations(LayoutLine l, PathRoute? route, Func<PaintKey, PathBuilder> builderFor)
     {
-        int visibleEnd = l.GlyphEnd;
-        while (visibleEnd > l.GlyphStart && Glyphs[visibleEnd - 1].IsSpace)
-        {
-            visibleEnd--;
-        }
-
-        if (visibleEnd == l.GlyphStart)
+        int visibleStart = l.VisStart;
+        int visibleEnd = l.VisEnd;
+        if (visibleEnd == visibleStart)
         {
             return;
         }
@@ -1186,7 +1464,7 @@ internal sealed class TextLayout
             float offset = 0;
             float thick = 0;
             int run = -2;
-            for (int k = l.GlyphStart; k < visibleEnd; k++)
+            for (int k = visibleStart; k < visibleEnd; k++)
             {
                 GlyphStyle st = Styles[Glyphs[k].Style];
                 if ((st.Decorations & kind) == 0)
