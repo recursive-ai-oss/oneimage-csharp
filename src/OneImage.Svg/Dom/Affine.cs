@@ -64,3 +64,13 @@ internal readonly record struct Affine(double A, double B, double C, double D, d
             Math.Max(Math.Max(ax, bx), Math.Max(cx, dx)), Math.Max(Math.Max(ay, by), Math.Max(cy, dy)));
     }
 }
+
+/// <summary>Conversions that keep document numbers inside the range the drawing code accepts.</summary>
+internal static class Coord
+{
+    /// <summary>The largest magnitude a coordinate, length or transform component may have; larger values are clamped (or the element dropped).</summary>
+    public const double Limit = 1e15;
+
+    /// <summary>Narrows a document number to a finite float; numbers beyond <see cref="Limit"/> are clamped so the drawing code never sees infinity.</summary>
+    public static float F(double v) => (float)Math.Clamp(v, -Limit, Limit);
+}

@@ -70,7 +70,7 @@ internal static class PathData
                     {
                         cx = sx = x + ox;
                         cy = sy = y + oy;
-                        b.MoveTo((float)cx, (float)cy);
+                        b.MoveTo(Coord.F(cx), Coord.F(cy));
                         cmd = rel ? 'l' : 'L';
                     }
 
@@ -81,7 +81,7 @@ internal static class PathData
                     {
                         cx = x + ox;
                         cy = y + oy;
-                        b.LineTo((float)cx, (float)cy);
+                        b.LineTo(Coord.F(cx), Coord.F(cy));
                     }
 
                     break;
@@ -90,7 +90,7 @@ internal static class PathData
                     if (good)
                     {
                         cx = x + ox;
-                        b.LineTo((float)cx, (float)cy);
+                        b.LineTo(Coord.F(cx), Coord.F(cy));
                     }
 
                     break;
@@ -99,7 +99,7 @@ internal static class PathData
                     if (good)
                     {
                         cy = y + oy;
-                        b.LineTo((float)cx, (float)cy);
+                        b.LineTo(Coord.F(cx), Coord.F(cy));
                     }
 
                     break;
@@ -127,7 +127,7 @@ internal static class PathData
                         y2 += oy;
                         x += ox;
                         y += oy;
-                        b.CubicBezierTo((float)x1, (float)y1, (float)x2, (float)y2, (float)x, (float)y);
+                        b.CubicBezierTo(Coord.F(x1), Coord.F(y1), Coord.F(x2), Coord.F(y2), Coord.F(x), Coord.F(y));
                         lastCx = x2;
                         lastCy = y2;
                         cx = x;
@@ -159,7 +159,7 @@ internal static class PathData
                     {
                         x += ox;
                         y += oy;
-                        b.QuadraticBezierTo((float)x1, (float)y1, (float)x, (float)y);
+                        b.QuadraticBezierTo(Coord.F(x1), Coord.F(y1), Coord.F(x), Coord.F(y));
                         lastCx = x1;
                         lastCy = y1;
                         cx = x;
@@ -177,7 +177,7 @@ internal static class PathData
                     {
                         x += ox;
                         y += oy;
-                        b.ArcTo((float)x1, (float)y1, (float)x2, large, sweep, (float)x, (float)y);
+                        b.ArcTo(Coord.F(x1), Coord.F(y1), Coord.F(x2), large, sweep, Coord.F(x), Coord.F(y));
                         cx = x;
                         cy = y;
                     }

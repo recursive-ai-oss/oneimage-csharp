@@ -16,6 +16,12 @@ internal abstract class RNode
     public double X1 { get; set; }
 
     public double Y1 { get; set; }
+
+    /// <summary>Gets or sets the right edge of the painted content, stroke width included but not miters or anti-aliasing slack (what the natural size of a document without a size is measured from).</summary>
+    public double ContentX1 { get; set; }
+
+    /// <summary>Gets or sets the bottom edge of the painted content; see <see cref="ContentX1"/>.</summary>
+    public double ContentY1 { get; set; }
 }
 
 /// <summary>Fill and stroke of one geometry. All transforms and viewport clips are already resolved; the style is final.</summary>

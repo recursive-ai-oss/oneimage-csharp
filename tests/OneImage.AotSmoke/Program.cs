@@ -486,7 +486,7 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
-// SVG: registration, detection (plain and gzip) and the natural size.
+// SVG: registration, detection (plain and gzip), the natural size and drawing at a requested size.
 {
     var svgConfig = new ImageConfiguration().Add(OneImage.Svg.SvgFormat.Instance);
     byte[] svg = System.Text.Encoding.UTF8.GetBytes("<svg xmlns='http://www.w3.org/2000/svg' width='30mm' viewBox='0 0 40 20'/>");
@@ -501,6 +501,18 @@ foreach (bool lossless in new[] { true, false })
     if (plain.Width != 114 || plain.Height != 57 || svgZipped.Width != 114 || plain.Format.Name != "svg")
     {
         Console.Error.WriteLine("svg smoke failed");
+        return 1;
+    }
+
+    byte[] drawing = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 20 20' width='20' height='20'>"
+        + "<defs><rect id='r' width='8' height='8' fill='#ff0000'/></defs><g opacity='0.5'><use xlink:href='#r' x='2' y='2'/></g>"
+        + "<circle cx='14' cy='14' r='4' fill='none' stroke='blue' stroke-width='2' stroke-dasharray='3 1'/></svg>");
+    Image sized = Image.Load(drawing, new LoadOptions { Configuration = svgConfig }).Resize(width: 80);
+    Rgba32[] svgPixels = sized.ToArray<Rgba32>();
+    if (sized.Width != 80 || sized.Height != 80 || svgPixels[(24 * 80) + 24].A is < 120 or > 135 || svgPixels[(24 * 80) + 24].R != 255 || svgPixels[(10 * 80) + 70].A != 0)
+    {
+        Console.Error.WriteLine("svg render smoke failed");
         return 1;
     }
 }

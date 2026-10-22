@@ -5,9 +5,14 @@ namespace OneImage.Svg;
 /// <see cref="ImageConfiguration.Add"/>; <see cref="ImageConfiguration.Default"/> does not include it, so the package trims away when unused.
 /// </summary>
 /// <remarks>
-/// Reading the size (<see cref="Image.Identify(string, LoadOptions?)"/>) parses only the root element's start tag. The rest of the
-/// document is read, and malformed content reported, when pixels are first pulled. Rendering is not available yet:
-/// pulling pixels fails with <see cref="ImageOperationException"/>.
+/// Reading the size (<see cref="Image.Identify(string, LoadOptions?)"/>) parses only the root element's start tag, unless the root gives no
+/// usable size, in which case the whole document is read to measure its content. The rest of the document is read, and malformed content
+/// reported, when pixels are first pulled. Output is 8-bit sRGB straight RGBA, transparent where nothing is drawn.
+/// <para>
+/// When a resize sits directly on the loaded image, the document is drawn at the final size (see <see cref="DecoderCapabilities.RenderAtSize"/>)
+/// rather than drawn at its natural size and scaled; <see cref="Image.Thumbnail(Image, int?, int?, Fit, Anchor, bool, ResamplingFilter, bool)"/>
+/// never enlarges unless <c>upscale</c> is set. Only the shapes under a requested region are drawn for it.
+/// </para>
 /// </remarks>
 public sealed class SvgFormat : IImageFormat
 {

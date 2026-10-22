@@ -124,6 +124,9 @@ internal static class SceneRenderer
         }
     }
 
+    private static bool IsFinite(Matrix3x2 m) =>
+        float.IsFinite(m.M11) && float.IsFinite(m.M12) && float.IsFinite(m.M21) && float.IsFinite(m.M22) && float.IsFinite(m.M31) && float.IsFinite(m.M32);
+
     private static void DrawPath(Canvas canvas, RPath p, Affine dev)
     {
         Affine full = dev.Multiply(p.Ctm);
@@ -133,7 +136,13 @@ internal static class SceneRenderer
         }
 
         Matrix3x2 m = full.ToMatrix3x2();
-        Path? clip = p.Clip?.Transform(dev.ToMatrix3x2());
+        Matrix3x2 d = dev.ToMatrix3x2();
+        if (!IsFinite(m) || !IsFinite(d))
+        {
+            return;
+        }
+
+        Path? clip = p.Clip?.Transform(d);
         IntersectionRule rule = p.EvenOdd ? IntersectionRule.EvenOdd : IntersectionRule.NonZero;
         if (p.HasFill)
         {

@@ -137,17 +137,16 @@ internal sealed class SceneBuilder
         double x1 = 0, y1 = 0;
         foreach (RNode n in nodes)
         {
-            x1 = Math.Max(x1, n.X1);
-            y1 = Math.Max(y1, n.Y1);
+            x1 = Math.Max(x1, n.ContentX1);
+            y1 = Math.Max(y1, n.ContentY1);
         }
 
-        // Node boxes carry a little slack for anti-aliasing that is not content: take it off for the content size.
-        double width = w ?? Math.Max(Math.Ceiling(x1 - AntialiasPad - 1e-6), 1);
-        double height = h ?? Math.Max(Math.Ceiling(y1 - AntialiasPad - 1e-6), 1);
+        double width = w ?? Math.Max(x1, 1e-3);
+        double height = h ?? Math.Max(y1, 1e-3);
         if (root.Prop("background-color") is { } bg && CssColor.TryParse(bg, out Rgba32 bgColor) && bgColor.A > 0)
         {
             // The root's background paints the whole output, under everything.
-            var fillRect = new RPath { Geometry = Path.Rectangle(0, 0, (float)width, (float)height), Ctm = Affine.Identity, HasFill = true, FillColor = bgColor, X0 = 0, Y0 = 0, X1 = width, Y1 = height };
+            var fillRect = new RPath { Geometry = Path.Rectangle(0, 0, (float)width, (float)height), Ctm = Affine.Identity, HasFill = true, FillColor = bgColor, X0 = 0, Y0 = 0, X1 = width, Y1 = height, ContentX1 = width, ContentY1 = height };
             nodes = [fillRect, .. nodes];
         }
 
@@ -193,8 +192,11 @@ internal sealed class SceneBuilder
     private static void Union(RNode into, List<RNode> children)
     {
         double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+        double cx = 0, cy = 0;
         foreach (RNode c in children)
         {
+            cx = Math.Max(cx, c.ContentX1);
+            cy = Math.Max(cy, c.ContentY1);
             x0 = Math.Min(x0, c.X0);
             y0 = Math.Min(y0, c.Y0);
             x1 = Math.Max(x1, c.X1);
@@ -205,6 +207,8 @@ internal sealed class SceneBuilder
         into.Y0 = y0;
         into.X1 = x1;
         into.Y1 = y1;
+        into.ContentX1 = cx;
+        into.ContentY1 = cy;
     }
 
     private void Count()
@@ -264,7 +268,9 @@ internal sealed class SceneBuilder
             ctm = ctm.Multiply(t);
         }
 
-        return true;
+        // Numbers beyond what the drawing code takes (or that overflowed while composing) draw nothing.
+        return ctm.IsFinite && Math.Abs(ctm.A) <= Coord.Limit && Math.Abs(ctm.B) <= Coord.Limit && Math.Abs(ctm.C) <= Coord.Limit
+            && Math.Abs(ctm.D) <= Coord.Limit && Math.Abs(ctm.E) <= Coord.Limit && Math.Abs(ctm.F) <= Coord.Limit;
     }
 
     private static void Open(Stack<Frame> stack, Frame parent, IReadOnlyList<SvgElement> kids, in SvgStyle st, Affine ctm, Viewport vp, Path? clip, bool layered, SvgElement? useTarget = null, Length? useW = null, Length? useH = null, int useDepth = -1, int maxLayers = 0)
@@ -410,7 +416,7 @@ internal sealed class SceneBuilder
         string? overflow = e.Prop("overflow");
         if (overflow is not ("visible" or "auto"))
         {
-            Path rect = Path.Rectangle((float)x, (float)y, (float)w, (float)h).Transform(ctm.ToMatrix3x2());
+            Path rect = Path.Rectangle(Coord.F(x), Coord.F(y), Coord.F(w), Coord.F(h)).Transform(ctm.ToMatrix3x2());
             clip = clip is null ? rect : clip.Intersect(rect);
         }
 
@@ -455,7 +461,7 @@ internal sealed class SceneBuilder
         Rgba32 strokeColor = default;
         if (st.Visible && ResolvePaint(st.Stroke))
         {
-            width = (float)Resolve(st.StrokeWidth, Axis.Other, st, f.Vp);
+            width = Math.Min(Coord.F(Resolve(st.StrokeWidth, Axis.Other, st, f.Vp)), Pen.MaxWidth);
             stroke = width > 0 && float.IsFinite(width);
             strokeColor = ResolveColor(st.Stroke, st);
         }
@@ -471,8 +477,8 @@ internal sealed class SceneBuilder
         }
 
         float[]? dash = stroke ? ResolveDash(st, f.Vp) : null;
-        float dashOffset = dash is null ? 0 : (float)Resolve(st.DashOffset, Axis.Other, st, f.Vp);
-        float miter = (float)Math.Max(1, st.MiterLimit);
+        float dashOffset = dash is null ? 0 : Coord.F(Resolve(st.DashOffset, Axis.Other, st, f.Vp));
+        float miter = (float)Math.Clamp(st.MiterLimit, 1, 1e6);
         StrokeJoin join = st.LineJoin switch { 1 => StrokeJoin.Round, 2 => StrokeJoin.Bevel, _ => StrokeJoin.Miter };
         StrokeCap cap = st.LineCap switch { 1 => StrokeCap.Round, 2 => StrokeCap.Square, _ => StrokeCap.Butt };
 
@@ -509,6 +515,9 @@ internal sealed class SceneBuilder
             pad += reach * ctm.MaxScale;
         }
 
+        double half = stroke ? width / 2 * ctm.MaxScale : 0;
+        node.ContentX1 = bx1 + half;
+        node.ContentY1 = by1 + half;
         node.X0 = bx0 - pad;
         node.Y0 = by0 - pad;
         node.X1 = bx1 + pad;
@@ -528,7 +537,7 @@ internal sealed class SceneBuilder
 
         if (layered)
         {
-            var layer = new RLayer { Children = [node], Opacity = (float)st.Opacity, X0 = node.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1 };
+            var layer = new RLayer { Children = [node], Opacity = (float)st.Opacity, X0 = node.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1, ContentX1 = node.ContentX1, ContentY1 = node.ContentY1 };
             f.Out.Add(layer);
         }
         else
@@ -574,7 +583,7 @@ internal sealed class SceneBuilder
                 return null;
             }
 
-            list[i] = (float)v;
+            list[i] = Coord.F(v);
             sum += v;
         }
 
@@ -618,21 +627,21 @@ internal sealed class SceneBuilder
             case "circle":
             {
                 double r = Num(e, "r", Axis.Other, st, vp);
-                return r > 0 ? Path.Circle((float)Num(e, "cx", Axis.X, st, vp), (float)Num(e, "cy", Axis.Y, st, vp), (float)r) : null;
+                return r > 0 ? Path.Circle(Coord.F(Num(e, "cx", Axis.X, st, vp)), Coord.F(Num(e, "cy", Axis.Y, st, vp)), Coord.F(r)) : null;
             }
 
             case "ellipse":
             {
                 (double rx, double ry) = Radii(e, st, vp, "rx", "ry", false);
-                return rx > 0 && ry > 0 ? Path.Ellipse((float)Num(e, "cx", Axis.X, st, vp), (float)Num(e, "cy", Axis.Y, st, vp), (float)rx, (float)ry) : null;
+                return rx > 0 && ry > 0 ? Path.Ellipse(Coord.F(Num(e, "cx", Axis.X, st, vp)), Coord.F(Num(e, "cy", Axis.Y, st, vp)), Coord.F(rx), Coord.F(ry)) : null;
             }
 
             case "line":
             {
                 var pb = new PathBuilder();
-                pb.MoveTo((float)Num(e, "x1", Axis.X, st, vp), (float)Num(e, "y1", Axis.Y, st, vp));
-                float lx2 = (float)Num(e, "x2", Axis.X, st, vp);
-                float ly2 = (float)Num(e, "y2", Axis.Y, st, vp);
+                pb.MoveTo(Coord.F(Num(e, "x1", Axis.X, st, vp)), Coord.F(Num(e, "y1", Axis.Y, st, vp)));
+                float lx2 = Coord.F(Num(e, "x2", Axis.X, st, vp));
+                float ly2 = Coord.F(Num(e, "y2", Axis.Y, st, vp));
                 pb.LineTo(lx2, ly2);
                 Path line = pb.Build();
                 if (line.Bounds.Width == 0 && line.Bounds.Height == 0)
@@ -658,10 +667,10 @@ internal sealed class SceneBuilder
                 }
 
                 var pb = new PathBuilder();
-                pb.MoveTo((float)n[0], (float)n[1]);
+                pb.MoveTo(Coord.F(n[0]), Coord.F(n[1]));
                 for (int i = 1; i < count; i++)
                 {
-                    pb.LineTo((float)n[2 * i], (float)n[(2 * i) + 1]);
+                    pb.LineTo(Coord.F(n[2 * i]), Coord.F(n[(2 * i) + 1]));
                 }
 
                 if (e.Name == "polygon")
@@ -722,19 +731,19 @@ internal sealed class SceneBuilder
         ry = Math.Min(ry, h / 2);
         if (!(rx > 0) || !(ry > 0))
         {
-            return Path.Rectangle((float)x, (float)y, (float)w, (float)h);
+            return Path.Rectangle(Coord.F(x), Coord.F(y), Coord.F(w), Coord.F(h));
         }
 
         var b = new PathBuilder();
-        b.MoveTo((float)(x + rx), (float)y);
-        b.LineTo((float)(x + w - rx), (float)y);
-        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)(x + w), (float)(y + ry));
-        b.LineTo((float)(x + w), (float)(y + h - ry));
-        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)(x + w - rx), (float)(y + h));
-        b.LineTo((float)(x + rx), (float)(y + h));
-        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)x, (float)(y + h - ry));
-        b.LineTo((float)x, (float)(y + ry));
-        b.ArcTo((float)rx, (float)ry, 0, false, true, (float)(x + rx), (float)y);
+        b.MoveTo(Coord.F(x + rx), Coord.F(y));
+        b.LineTo(Coord.F(x + w - rx), Coord.F(y));
+        b.ArcTo(Coord.F(rx), Coord.F(ry), 0, false, true, Coord.F(x + w), Coord.F(y + ry));
+        b.LineTo(Coord.F(x + w), Coord.F(y + h - ry));
+        b.ArcTo(Coord.F(rx), Coord.F(ry), 0, false, true, Coord.F(x + w - rx), Coord.F(y + h));
+        b.LineTo(Coord.F(x + rx), Coord.F(y + h));
+        b.ArcTo(Coord.F(rx), Coord.F(ry), 0, false, true, Coord.F(x), Coord.F(y + h - ry));
+        b.LineTo(Coord.F(x), Coord.F(y + ry));
+        b.ArcTo(Coord.F(rx), Coord.F(ry), 0, false, true, Coord.F(x + rx), Coord.F(y));
         b.Close();
         return b.Build();
     }

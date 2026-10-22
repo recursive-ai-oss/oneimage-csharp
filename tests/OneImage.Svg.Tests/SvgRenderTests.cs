@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using OneImage.Svg;
 
@@ -9,6 +10,8 @@ public class SvgRenderTests
     internal static readonly LoadOptions Options = new() { Configuration = Config };
 
     internal const string Ns = "xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'";
+
+    internal static string RepoRoot { get; } = typeof(SvgRenderTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().First(a => a.Key == "RepoRoot").Value!;
 
     internal static Image Load(string svg) => Image.Load(Encoding.UTF8.GetBytes(svg), Options);
 
@@ -202,6 +205,41 @@ public class SvgRenderTests
         string star = "M 10 1 L 4 19 L 19 8 L 1 8 L 16 19 Z";
         Assert.Equal(255, Px($"<path d='{star}' fill='red' fill-rule='nonzero'/>", 10, 10).A);
         Assert.Equal(0, Px($"<path d='{star}' fill='red' fill-rule='evenodd'/>", 10, 10).A);
+    }
+
+    /// <summary>Documents that once crashed or hung the renderer (found by fuzzing): each must now draw, or fail with a typed error.</summary>
+    [Fact]
+    public void FuzzRepros()
+    {
+        string[] files = Directory.GetFiles(Path.Combine(RepoRoot, "tests", "testdata", "svg"), "*.svg");
+        Assert.NotEmpty(files);
+        foreach (string file in files)
+        {
+            try
+            {
+                _ = Image.Load(file, Options).Resize(40, 24, Fit.Stretch).ToArray<Rgba32>();
+            }
+            catch (ImageException)
+            {
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("icon-24.svg", 256)]
+    [InlineData("illustration.svg", 1024)]
+    [InlineData("illustration.svg", 1000)]
+    public void RendersTheSampleDocuments(string name, int width)
+    {
+        Image img = Image.Load(Path.Combine(RepoRoot, "tests", "testdata", "svg", name), Options).Resize(width: width);
+        Rgba32[] px = img.ToArray<Rgba32>();
+        Assert.Equal(width, img.Width);
+        Assert.True(px.Count(p => p.A == 255) > px.Length / 2);
+        if (Environment.GetEnvironmentVariable("ONEIMAGE_SVG_DUMP") is { Length: > 0 } dump)
+        {
+            Directory.CreateDirectory(dump);
+            img.Save(Path.Combine(dump, $"sample-{Path.GetFileNameWithoutExtension(name)}-{width}.png"));
+        }
     }
 }
 

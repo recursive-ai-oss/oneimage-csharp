@@ -1,6 +1,6 @@
 # SVG
 
-Design of `RecursiveAI.OneImage.Svg` (assembly and namespace `OneImage.Svg`): SVG as an image format that renders directly at the size you ask for. This page describes what the package is, how it is built, and where it stands. The package currently detects SVG and reads its natural size; rendering arrives in the order given under [Roadmap](#roadmap).
+Design of `RecursiveAI.OneImage.Svg` (assembly and namespace `OneImage.Svg`): SVG as an image format that renders directly at the size you ask for. This page describes what the package is, how it is built, and where it stands. The package detects SVG, reads its natural size and draws shapes, paths, strokes, groups with opacity, transforms, viewports, `use` and `symbol` at any size and one region at a time; the rest of the feature list arrives in the order given under [Roadmap](#roadmap). It is not published yet.
 
 ```csharp
 using OneImage;
@@ -10,7 +10,7 @@ var config = new ImageConfiguration().Add(SvgFormat.Instance);   // not part of 
 var load = new LoadOptions { Configuration = config };
 
 ImageInfo info = Image.Identify("logo.svg", load);                // natural size, nothing rendered
-Image.Load("logo.svg", load).Resize(width: 400).Save("logo-400.png");   // planned: rasterized at 400 px, not scaled up from the natural size
+Image.Load("logo.svg", load).Resize(width: 400).Save("logo-400.png");   // rasterized at 400 px, not scaled up from the natural size
 ```
 
 ## Scope
@@ -72,20 +72,20 @@ Deliberate deviations from a full XML processor: no DTDs of any kind (so documen
 `Identify` reads only the root element's start tag (within the first 1 MiB), so it stays cheap on huge files. The natural size in CSS pixels (96 per inch) is:
 
 - `width` and `height` when both are absolute lengths (`px`, `pt`, `pc`, `mm`, `cm`, `in`; `em` and `ex` at 16 and 8 px);
-- percentages count as absent; a missing side is derived from the other through the `viewBox` aspect ratio; with neither, the `viewBox` size is used;
-- the pixel size is the size rounded **up**, at least 1; zero, negative or malformed values fail with `ImageFormatException`.
+- percentages, zero and negative values count as absent; a missing side is derived from the other through the `viewBox` aspect ratio; with neither, the `viewBox` size is used;
+- the pixel size is the size rounded **up**, at least 1; a malformed or non-finite value fails with `ImageFormatException`.
 
-A document with no usable width, height or `viewBox` takes the size of its content's bounding box; that needs geometry, so until the document model exists it fails with a format error.
+A side that nothing fixes takes the extent of the painted content: the far edge of the bounding box of all shapes, stroke width included (resvg measures it the same way). That needs the whole document, so `Identify` then reads and builds it (once; the render tree is kept for the pixels), and a document that has neither a size nor anything to draw fails with `ImageFormatException`. Zero and negative sizes follow the same rule where resvg's reference rendering is empty; this renders the content instead, which is the more useful answer.
 
 ## Rendering at the requested size
 
 Rasterizing an SVG and then scaling the bitmap throws away exactly what makes SVG worth having. The core already treats this kind of thing like JPEG shrink-on-load: a decoder advertises what it can do and the graph pushes the request down. SVG gets the same treatment.
 
-**Core changes** (small, additive; made when rendering lands):
+**Core changes** (small and additive; made):
 
-- `DecoderCapabilities.RenderAtSize` (a new flag): the decoder can produce its frame at any pixel size, not only 1/2, 1/4, 1/8.
-- `DecodeRequest` gains optional `TargetWidth` and `TargetHeight` (0 = the natural size). The `Region` of the request is then expressed in target pixels. The SVG decoder also sets `RandomAccess`: a 128×128 region is cheap to render because only the render-tree nodes that touch it are drawn.
-- A graph rewrite beside the existing shrink-on-load one: when `Resize`/`Thumbnail` sits directly above an undisturbed decode of a `RenderAtSize` decoder (through the orient node, as for JPEG), the decode is re-created at the final size. `Fit.Stretch`/`Contain` map to the target directly; `Cover` renders at the covering size and crops (the crop is then pushed down as a region); `Pad` renders at the contained size and pads. Upscaling is honored (`upscale: true` renders sharper, not blurrier). Rotation, `Affine` and other geometry ops keep working on the natural-size raster and are not rewritten.
+- `DecoderCapabilities.RenderAtSize` (a new flag): the decoder can produce its frame at any pixel size, not only 1/2, 1/4, 1/8. It is meant to be combined with `RandomAccess`, which the SVG decoder also sets: a 128×128 region is cheap to render because only the render-tree nodes that touch it are drawn.
+- `DecodeRequest` gains `TargetWidth` and `TargetHeight` (0 = the natural size; the existing two-argument constructor is kept). The `Region` of the request is then expressed in target pixels.
+- A graph rewrite beside the existing shrink-on-load one (`DecodeSourceNode.TryPushRenderSize`, tried first in the resampling step): when `Resize`/`Thumbnail` sits directly on an undisturbed decode of a `RenderAtSize` decoder, the decode is re-created at the final size and no resample node is added. `Fit.Stretch` and `Contain` map to the target directly; `Cover` renders at the covering size and its crop is now pushed down as a region of the decode; `Pad` renders at the contained size and pads. Upscaling follows the fit rules: `Resize` enlarges by default, `Thumbnail` only with `upscale: true`, and an enlarged render is sharper, not blurrier. Rotation, `Affine` and other geometry ops keep working on the natural-size raster and are not rewritten. The rewrite does not look through an orientation node (SVG has no orientation, so none is added).
 
 Without the rewrite, loading still works: the image has its natural size and downstream operations act on that raster. Output is always sRGB 8-bit straight RGBA, with a transparent background unless the caller flattens it.
 
@@ -95,7 +95,7 @@ Without the rewrite, loading still works: the image has its natural size and dow
 2. paints into a `Canvas` the size of the region, with the region offset folded into the transform;
 3. writes rows to the sink.
 
-Whole-frame requests are cut into bands/tiles of at most 512×512 so offscreen layers stay small; the frame itself is never held in layers. Filter regions larger than a tile get their own bounded region (see [Limits](#limits)). Results do not depend on how the frame is cut: a tile's pixels equal the same pixels of a whole render (tested by comparing both).
+Each request is cut into bands of full region width and at most 128 rows (fewer for very wide regions, so a band stays under 4 megapixels), drawn one after another into a band-sized canvas; layers are band-sized too, and the frame itself is never held in layers. The core asks for one 128×128 tile at a time, so a tile is one band. Filter regions larger than a tile get their own bounded region (see [Limits](#limits)). Results do not depend on how the frame is cut: shapes are rasterized by exact area per pixel, and a 256² region of a 4096² render equals the same pixels of the whole render (tested; differences are at most 1 level, in practice zero). The bounding-box grid is a 64×64 grid over the natural area; a node covering more than 16 cells is kept in a short list every query checks.
 
 ## Mapping to existing operations
 
@@ -165,20 +165,35 @@ Every bound is checked before the allocation or work it guards; breaking one rai
 | CSS rules | 20,000 | styles |
 | Selector matching work | 100 million steps | styles; rules are indexed by id, class and type to keep honest documents far below this |
 | Path data per attribute / segments per document | 8 MiB / 4 million | document |
-| Instantiated render nodes (`use`, `symbol`, markers, pattern and mask contents, text glyphs) | 1,000,000 | render tree: each `use` is charged the memoized size of what it instantiates, so nested `use` cannot multiply |
-| Reference depth (`use`→`use`, `clip-path`→`clip-path`, `mask`→`mask`, `pattern`/`marker`/`filter` chains) | 32 | render tree; cycles are detected separately and resolved to the dangling-reference fallback |
+| Instantiated render nodes (`use`, `symbol`, markers, pattern and mask contents, text glyphs) | 500,000 (`MaxInstances`) | render tree — implemented for elements reached through `use`, `symbol` and nested content: every instantiated element is counted as it is created, so a fan-out that multiplies stops at the budget (500,000 fan-out copies cost about 0.4 s and 75 MiB before the refusal, measured), and the refusal is remembered. Memoizing a `use`'s size is not done |
+| Reference depth (`use`→`use`, `clip-path`→`clip-path`, `mask`→`mask`, `pattern`/`marker`/`filter` chains) | 32 (`MaxReferenceDepth`) | render tree; `use` chains implemented; cycles are detected separately and draw nothing |
+| Nested isolated layers (groups with `opacity`) | 32 (`MaxLayerDepth`) | render tree and renderer — implemented; deeper nesting fails closed |
 | Nested image documents | 3 levels | `image` of an SVG data URI; they share the budgets above |
 | `data:` payload per image / per document | 16 MiB / 64 MiB | render tree; decoded under `ImageLimits` |
 | Text characters | 1 million | render tree |
 | Pattern tile size | 16 megapixels | renderer, after scaling to device pixels |
-| Offscreen layer | 512×512 per tile | renderer |
+| Offscreen layer | one band: region width × at most 128 rows, under 4 megapixels | renderer — implemented |
 | Filter region | 64 megapixels | renderer, in device pixels after clipping to what is needed |
 | Filter primitives per filter / filter nesting | 256 / 4 | render tree |
 | Convolution order, morphology radius, blur σ, turbulence octaves | 64×64, 1024 px, 1024 px, 16 | renderer; larger values are clamped, not errors |
 
 Cancellation is observed at least once per tile and per filter primitive. Rendering errors that are not limits (a malformed path, an unusable gradient) follow the SVG error-handling rules — the element is not rendered — and never raise.
 
-Lazy behavior follows the rest of the library: `Identify` and `Load` read the root start tag; the rest of the document is read when pixels are first pulled, so a malformed body fails then with `ImageFormatException`. `Load(..., validate: true)` is meant to parse the whole document up front; until rendering lands it only reads the root start tag.
+Lazy behavior follows the rest of the library: `Identify` and `Load` read the root start tag (the whole document when the root gives no size); the rest of the document is read when pixels are first pulled, so a malformed body fails then with `ImageFormatException`. The render tree is built once per loaded image, under a lock, from the first request; a document that fails (a malformed body, a limit) fails the same way on every later request without redoing the work. `Load(..., validate: true)` decodes the frame once at its natural size, which parses and builds the document.
+
+### What is drawn so far
+
+- **Document and style.** A typed element tree of the SVG-namespace elements (non-SVG elements and their content are skipped); presentation attributes, then the `style` attribute's declarations on top (comments, `!important` and quoted or parenthesized semicolons handled); `inherit`; inherited and non-inherited properties computed per element; `currentColor` kept as a keyword and resolved against the element's own `color`. An invalid value is ignored as if unwritten, except a negative `stroke-width`, which drops the stroke.
+- **Colors.** Keywords, `transparent`, `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()` and `hwb()` in the comma and the space syntax, with percentages, angle units and `/` alpha. Integers and percentages may not be mixed among the three channels of `rgb()`.
+- **Geometry.** `rect` (with `rx`/`ry` and the auto rule), `circle`, `ellipse` (SVG 2 `auto` radii), `line`, `polyline`, `polygon`, and `path` with the whole grammar. Path data is read by the package's own parser, which draws what precedes the first error (the core's parser rejects the whole path) and reads arc flags without separators. A zero-length subpath draws a dot under round and square caps. Numbers beyond ±10¹⁵ are clamped, so hostile coordinates cannot reach the drawing code as infinities.
+- **Paint.** `fill`, `stroke` with solid colors, `fill-rule`, `fill-opacity`, `stroke-opacity`, `opacity`; a `url(#id)` paint uses its fallback color or draws nothing until paint servers exist. `shape-rendering` crisp values turn anti-aliasing off. `visibility` and `display`.
+- **Stroke.** Width, caps, joins (`miter-clip` and `arcs` fall back to miter), miter limit, dash array (an odd count is repeated) and offset, through the core stroker; the stroke outline is made once per scale and reused by every tile.
+- **Structure.** Transforms (attribute and style property), `viewBox` and `preserveAspectRatio` on the root and nested `svg`, `g`, `a`, `defs` (not drawn), `use` (with `x`, `y`, `width`, `height`), `symbol` (viewBox, size from the `use`, its own `transform` ignored as in SVG 1.1), nested `svg` with the default clip (`overflow: visible` or `auto` removes it). The root's `transform` takes its origin at the center of the viewport, and the root's `background-color` paints the whole output.
+- **Layers.** A group with `opacity` below 1, and a shape with both fill and stroke and `opacity` below 1, is drawn to a band-sized layer and composited once, so overlaps inside it do not show through.
+- **Units.** `px`, `pt`, `pc`, `mm`, `cm`, `in`, `em`, `ex` (half the font size), `rem` and `%` of the viewport (width, height, or the diagonal measure for lengths that follow neither). The default font size is 16.
+- **References** (`use`) are instantiated under budgets (see [Limits](#limits)); a `use` of itself, of an ancestor, or around a cycle draws nothing; a dangling or external reference draws nothing.
+
+Seams for the following steps: a style sheet adds its declarations between the presentation attributes and the `style` attribute in `SvgDocument.Build`; paint servers replace `ResolvePaint` in `SceneBuilder` and add brush fields to `RPath`; markers, clip, mask and filters wrap or add `RNode`s where `EmitShape` and `Open` create them (the frame already carries an inherited viewport clip path in scene space and decides when a group needs a layer); text becomes `RPath`s from outlines.
 
 ## Testing against resvg's suite
 
@@ -192,11 +207,46 @@ Correctness is measured against the public test collection of the resvg project:
 
 Behavior is specified from the SVG and CSS specifications and checked against the reference images; no renderer's source is consulted.
 
+### Results
+
+Committed subset, 1,748 files (42 excluded), run on the render-at-size path. "Before" is the skeleton, which could not draw.
+
+| category | rendered | pass before | pass now | rate now |
+|---|---:|---:|---:|---:|
+| shapes | 133 | 0 | 128 | 96.2% |
+| painting | 307 | 0 | 138 | 45.0% |
+| structure | 230 | 0 | 124 | 53.9% |
+| paint-servers | 154 | 0 | 11 | 7.1% |
+| masking | 93 | 0 | 7 | 7.5% |
+| filters | 406 | 0 | 77 | 19.0% |
+| text | 383 | 0 | 16 | 4.2% |
+| **all** | 1,706 | 0 | 501 | 29.4% |
+
+The paint-server, masking, filter and text passes are tests whose result happens not to need the feature (an empty result, or an element that is skipped). Subcategories in scope for this step:
+
+| subcategory | pass |
+|---|---:|
+| shapes: rect, circle, ellipse, line, polyline, polygon | 75 / 76 |
+| shapes: path | 53 / 57 |
+| painting: stroke-width, stroke-linecap, stroke-linejoin, stroke-miterlimit, fill-rule | 25 / 26 |
+| painting: stroke (solid paint) | 13 / 20 |
+| painting: stroke-dasharray, stroke-dashoffset | 10 / 23 |
+| painting: fill, fill-opacity, stroke-opacity, opacity, color | 74 / 91 |
+| painting: display, visibility, shape-rendering, overflow | 10 / 29 |
+| structure: svg (viewBox, preserveAspectRatio, nested svg, sizes) | 34 / 43 |
+| structure: use, symbol, g, defs | 59 / 67 |
+| structure: transform, style-attribute | 17 / 23 |
+
+Of the 85 failures in these subcategories (and `fill`/`opacity`/`display` and so on), 27 are anti-aliasing borderlines: 0.25–1% of the pixels differ by more than the 24-level tolerance, all on thin strokes, dash ends and edges where two shapes share an edge. This renderer rasterizes by exact area; the reference comes from a supersampling rasterizer that treats strokes thinner than a pixel as hairlines, so edge pixels differ by 10–15% coverage. On a 1000×800 drawing of about 3,000 shapes (the benchmark document), 0.39% of the pixels differ by more than 24 levels from resvg 0.48.1 run as an external program (mean difference 1.4 levels). The rest, by reason:
+
+- later steps: `fill`/`stroke` with gradients and patterns (painting fill, stroke, fill-opacity, stroke-opacity, defs, `funcIRI` tests), `context-fill`/`context-stroke`, markers, `paint-order`, `mix-blend-mode`, `isolation`, `image`, `<style>` rules (`use/cSS-rules`, `use/complex-style-resolving-order`), `switch`/`systemLanguage`, `transform-origin` (`svg/root-transform-origin-with-viewbox`), `clipPath`/`mask`, filters and text (`display`/`visibility` on `tspan`, text in `defs`);
+- deliberate differences: `shapes/rect/rem-values` (resvg does not support `rem`, so its reference shows nothing; this renders it as CSS defines), `painting/fill/rgba-0-127-0-50percent` (CSS Color 4 accepts a percentage alpha in the comma syntax; the reference rejects it), `structure/svg/zero-size` and `negative-size` (resvg's reference is empty; this renders the content at its measured size), `structure/svg/not-UTF-8-encoding` (Windows-1251 is not a supported encoding), `painting/shape-rendering/on-horizontal-line` (the pixel rows a non-anti-aliased line covers when its edge falls exactly on a pixel center), `structure/svg/preserveAspectRatio=none` (a 0.75 px frame stroke that the reference draws as a hairline).
+
 ## Roadmap
 
 Planned order. Each step is a coherent piece with its own observable claim, measured by the conformance table above and the stated tests.
 
-1. **Document model and shapes.** The core render-at-size hook and rewrite; typed document; presentation attributes and the `style` attribute; the render tree for `g`, shapes and `path`; solid fill and stroke with all stroke properties; transforms, `viewBox`, `preserveAspectRatio`, nested `svg`, basic `use`/`symbol`; region rendering; bounding-box natural size. Claim: `shapes` and the stroke/fill groups of `painting` pass at a stated rate, and `Thumbnail` of an SVG renders at the target size (compared against rasterizing then resizing).
+1. **Document model and shapes** (done). The core render-at-size hook and rewrite; typed document; presentation attributes and the `style` attribute; the render tree for `g`, shapes and `path`; solid fill and stroke with all stroke properties; transforms, `viewBox`, `preserveAspectRatio`, nested `svg`, basic `use`/`symbol`; region rendering; bounding-box natural size. Claim: `shapes` and the stroke/fill groups of `painting` pass at a stated rate, and `Thumbnail` of an SVG renders at the target size (compared against rasterizing then resizing). Result: 96.2% of `shapes`; the render-at-size output equals a direct render within 1 level and differs from a raster downscale (see [Results](#results)).
 2. **CSS and structure.** `<style>`, selectors, cascade, inheritance, `currentColor`, `switch`, `systemLanguage`, `use` budgets and cycle handling, `data:` images, `transform-origin`. Claim: `structure` passes at a stated rate; the CSS cost limits are tested with hostile stylesheets.
 3. **Paint servers.** Gradients (including focal radial and gradient transforms), patterns, `paint-order`, `context-fill`/`context-stroke`, plus the brush additions in the core. Claim: `paint-servers` pass rate.
 4. **Painting extras.** Markers, `mix-blend-mode`, `isolation`, group opacity layers, `shape-rendering`, `image-rendering`, `visibility`, `display`. Claim: `painting` pass rate.
@@ -208,4 +258,19 @@ Planned order. Each step is a coherent piece with its own observable claim, meas
 
 ## Status
 
-Done: package skeleton, format detection (plain and gzip), natural size, the strict bounded XML parser (fuzzed), the SVG limits that exist so far, and the conformance harness with the committed test files. Rendering is not available yet: pulling pixels fails with `ImageOperationException`.
+Done: package skeleton, format detection (plain and gzip), natural size (including the content-bounds fallback), the strict bounded XML parser, the typed document and styles, the render tree and region renderer for shapes, strokes, layers, transforms, viewports and `use`/`symbol`, render-at-size in the core, the limits listed above, and the conformance harness with the committed test files. Fuzzed: `svg-xml` (3.9 million executions in 150 s) and `svg-render` (0.7 million in 150 s after fixing one crash, a path whose coordinates overflowed a float, whose repro is in `tests/testdata/svg`).
+
+Measured on a shared host (local smoke, load 7, .NET 10.0.400, BenchmarkDotNet short job), a 24×24 icon at 256 px and a 1000×800 illustration of about 3,000 shapes at 1024 px wide:
+
+| row | mean | allocated |
+|---|---:|---:|
+| icon, OneImage load + render | 0.67 ms | 615 KB |
+| icon, Svg.Skia 5.2.3 load + render | 0.32 ms | 78 KB |
+| illustration, OneImage load + render | 40 ms | 58 MB |
+| illustration, OneImage render (loaded) | 30 ms | 38 MB |
+| illustration, Svg.Skia load + render | 73 ms | 21 MB |
+| illustration, Svg.Skia render (loaded) | 40 ms | managed 188 B |
+| illustration, resvg 0.48.1 CLI (process, parse, render, PNG write) | 112 ms | — |
+| icon, resvg 0.48.1 CLI (same) | 3.0 ms | — |
+
+The small icon is twice Svg.Skia's time: the fixed cost of four tile renders (canvas, layer and fill setup) dominates a drawing this small. Paint servers, markers, clipping, masks, filters, text and `image` are not drawn yet.

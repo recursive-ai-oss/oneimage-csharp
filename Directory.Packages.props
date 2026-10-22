@@ -10,6 +10,7 @@
     <PackageVersion Include="Magick.NET-Q8-AnyCPU" Version="15.0.0" />
     <PackageVersion Include="SkiaSharp" Version="4.153.1" />
     <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
+    <PackageVersion Include="Svg.Skia" Version="5.2.3" />
     <PackageVersion Include="NetVips" Version="3.2.0" />
     <PackageVersion Include="NetVips.Native" Version="8.18.7" />
     <PackageVersion Include="SharpFuzz" Version="2.2.0" />
