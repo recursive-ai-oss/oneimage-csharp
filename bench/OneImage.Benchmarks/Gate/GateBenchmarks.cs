@@ -164,13 +164,13 @@ public class PngGateBenchmarks : IDisposable
     private MagickImage _raw = null!;
     private OI.Image _ours = null!;
 
-    [Params("photo", "screenshot")]
+    [Params("photo", "natural", "screenshot")]
     public string Content { get; set; } = "photo";
 
     [GlobalSetup]
     public void Setup()
     {
-        byte[] rgb = Content == "photo" ? PngBenchData.Photo() : PngBenchData.Screenshot();
+        byte[] rgb = PngBenchData.For(Content);
         _png = PngBenchData.SkiaPng(rgb);
         _raw = new MagickImage(rgb, new PixelReadSettings(PngBenchData.W, PngBenchData.H, StorageType.Char, "RGB"));
         _ours = OI.Image.FromPixels<OI.Rgb24>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, OI.Rgb24>(rgb), PngBenchData.W, PngBenchData.H);

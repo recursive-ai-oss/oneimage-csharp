@@ -32,6 +32,9 @@ internal static class GatePeak
         "bmp-decode", "bmp-encode", "upscale-2x", "watermark", "cmyk-jpeg-to-srgb",
     ];
 
+    // PNG tasks default to the noisy photo input; GATE_PNG_CONTENT=natural|screenshot measures the others.
+    private static readonly string PngContent = Environment.GetEnvironmentVariable("GATE_PNG_CONTENT") ?? "photo";
+
     public static int Run(string[] args)
     {
         string task = args[1];
@@ -107,7 +110,7 @@ internal static class GatePeak
 
             case "png-to-webp":
             {
-                var g = new PngGateBenchmarks { Content = "photo" };
+                var g = new PngGateBenchmarks { Content = PngContent };
                 g.Setup();
                 return new() { ["oneimage"] = () => g.PngToWebPOneImage(), ["skia"] = () => g.PngToWebPSkia(), ["imagesharp"] = () => g.PngToWebPImageSharp(), ["netvips"] = () => g.PngToWebPNetVips(), ["magick"] = () => g.PngToWebPMagick() };
             }
@@ -132,18 +135,18 @@ internal static class GatePeak
 
             case "png-decode":
             {
-                var b = new PngDecodeBenchmarks { Content = "photo" };
+                var b = new PngDecodeBenchmarks { Content = PngContent };
                 b.Setup();
-                var g = new PngGateBenchmarks { Content = "photo" };
+                var g = new PngGateBenchmarks { Content = PngContent };
                 g.Setup();
                 return new() { ["oneimage"] = () => b.OneImageDecode(), ["skia"] = () => b.SkiaDecode(), ["imagesharp"] = () => b.ImageSharpDecode(), ["netvips"] = () => b.NetVipsDecode(), ["magick"] = () => g.MagickDecode() };
             }
 
             case "png-encode":
             {
-                var b = new PngEncodeBenchmarks { Content = "photo" };
+                var b = new PngEncodeBenchmarks { Content = PngContent };
                 b.Setup();
-                var g = new PngGateBenchmarks { Content = "photo" };
+                var g = new PngGateBenchmarks { Content = PngContent };
                 g.Setup();
                 return new() { ["oneimage"] = () => b.Ours(), ["skia"] = () => b.Skia(), ["imagesharp"] = () => b.Sharp(), ["netvips"] = () => b.Vips(), ["magick"] = () => g.MagickEncode() };
             }

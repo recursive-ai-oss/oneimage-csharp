@@ -29,6 +29,56 @@ internal static class PngBenchData
         return b;
     }
 
+    /// <summary>The input for a <c>Content</c> parameter: noisy synthetic photo, natural-photo stand-in or screenshot.</summary>
+    public static byte[] For(string content) => content switch
+    {
+        "photo" => Photo(),
+        "natural" => Natural(),
+        _ => Screenshot(),
+    };
+
+    /// <summary>
+    /// A photo stand-in with the statistics of a camera image after denoising: smooth multi-scale tone variation,
+    /// a few hard edges and about one level of sensor noise, so PNG filters leave small residuals. The <c>Photo</c>
+    /// input carries +-4 levels of white noise per channel, which makes it far less compressible than most photographs.
+    /// </summary>
+    public static byte[] Natural()
+    {
+        var rnd = new Random(11);
+        byte[] b = new byte[W * H * 3];
+        const int Cell = 40;
+        int gw = (W / Cell) + 2, gh = (H / Cell) + 2;
+        double[] g = new double[gw * gh * 3];
+        for (int i = 0; i < g.Length; i++)
+        {
+            g[i] = rnd.NextDouble();
+        }
+
+        for (int y = 0; y < H; y++)
+        {
+            for (int x = 0; x < W; x++)
+            {
+                double fx = (double)x / Cell, fy = (double)y / Cell;
+                int ix = (int)fx, iy = (int)fy;
+                double ax = fx - ix, ay = fy - iy;
+                ax = ax * ax * (3 - (2 * ax));
+                ay = ay * ay * (3 - (2 * ay));
+                bool edge = ((x / 350) + (y / 270)) % 3 == 0;
+                double luma = rnd.NextDouble() + rnd.NextDouble() - 1;
+                for (int c = 0; c < 3; c++)
+                {
+                    double v00 = g[(((iy * gw) + ix) * 3) + c], v10 = g[(((iy * gw) + ix + 1) * 3) + c];
+                    double v01 = g[((((iy + 1) * gw) + ix) * 3) + c], v11 = g[((((iy + 1) * gw) + ix + 1) * 3) + c];
+                    double n = (v00 * (1 - ax) * (1 - ay)) + (v10 * ax * (1 - ay)) + (v01 * (1 - ax) * ay) + (v11 * ax * ay);
+                    double v = 40 + (130 * n) + (35 * Math.Sin((x + (c * 30)) / 211.0) * Math.Cos(y / 157.0)) + (edge ? 40 : 0) + (luma * 1.2);
+                    b[(((y * W) + x) * 3) + c] = (byte)Math.Clamp((int)v, 0, 255);
+                }
+            }
+        }
+
+        return b;
+    }
+
     public static byte[] Screenshot()
     {
         var rnd = new Random(6);
@@ -106,13 +156,13 @@ public class PngDecodeBenchmarks
     private byte[] _file = null!;
     private SharpRgb24[] _sink = null!;
 
-    [Params("photo", "screenshot")]
+    [Params("photo", "natural", "screenshot")]
     public string Content { get; set; } = "photo";
 
     [GlobalSetup]
     public void Setup()
     {
-        _file = PngBenchData.SkiaPng(Content == "photo" ? PngBenchData.Photo() : PngBenchData.Screenshot());
+        _file = PngBenchData.SkiaPng(PngBenchData.For(Content));
         _sink = new SharpRgb24[PngBenchData.W * PngBenchData.H];
         Console.WriteLine($"{Content}: PNG file {_file.Length} bytes");
     }
@@ -209,13 +259,13 @@ public class PngEncodeBenchmarks : IDisposable
     private SkiaSharp.SKBitmap _skia = null!;
     private NetVips.Image _vips = null!;
 
-    [Params("photo", "screenshot")]
+    [Params("photo", "natural", "screenshot")]
     public string Content { get; set; } = "photo";
 
     [GlobalSetup]
     public void Setup()
     {
-        _rgb = Content == "photo" ? PngBenchData.Photo() : PngBenchData.Screenshot();
+        _rgb = PngBenchData.For(Content);
         _ours = Image.FromPixels<OneImage.Rgb24>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, OneImage.Rgb24>(_rgb), PngBenchData.W, PngBenchData.H);
         _sharp = SixLabors.ImageSharp.Image.LoadPixelData<SharpRgb24>(_rgb, PngBenchData.W, PngBenchData.H);
         byte[] rgba = new byte[PngBenchData.W * PngBenchData.H * 4];
