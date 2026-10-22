@@ -10,7 +10,7 @@ internal static class AffineFilterTable
     /// <summary>Table entries per unit of distance. The interpolation error stays below 1e-5, far under half a code at 16 bits.</summary>
     public const int Resolution = 2048;
 
-    private static readonly float[][] s_tables = new float[8][];
+    private static readonly float[][] s_tables = new float[16][];
 
     /// <summary>Taps on each side of the sample position: 1 for bilinear, 2 for cubic and Lanczos2, 3 for Lanczos3, 0 for nearest.</summary>
     public static int Support(ResamplingFilter filter) => filter switch
@@ -18,8 +18,14 @@ internal static class AffineFilterTable
         ResamplingFilter.Nearest or ResamplingFilter.Box => 0,
         ResamplingFilter.Bilinear => 1,
         ResamplingFilter.Lanczos3 => 3,
+        ResamplingFilter.Lanczos5 => 5,
+        ResamplingFilter.Lanczos8 => 8,
+        ResamplingFilter.Welch => 3,
         _ => 2,
     };
+
+    private static readonly (float B, float C) s_robidoux = ((float)FilterFunctions.CubicParameters(ResamplingFilter.Robidoux)!.Value.B, (float)FilterFunctions.CubicParameters(ResamplingFilter.Robidoux)!.Value.C);
+    private static readonly (float B, float C) s_robidouxSharp = ((float)FilterFunctions.CubicParameters(ResamplingFilter.RobidouxSharp)!.Value.B, (float)FilterFunctions.CubicParameters(ResamplingFilter.RobidouxSharp)!.Value.C);
 
     public static float[] Get(ResamplingFilter filter)
     {
@@ -59,6 +65,18 @@ internal static class AffineFilterTable
                 return;
             case ResamplingFilter.Mitchell:
                 Cubic(1f / 3f, 1f / 3f, frac, w);
+                return;
+            case ResamplingFilter.Hermite:
+                Cubic(0f, 0f, frac, w);
+                return;
+            case ResamplingFilter.Spline:
+                Cubic(1f, 0f, frac, w);
+                return;
+            case ResamplingFilter.Robidoux:
+                Cubic(s_robidoux.B, s_robidoux.C, frac, w);
+                return;
+            case ResamplingFilter.RobidouxSharp:
+                Cubic(s_robidouxSharp.B, s_robidouxSharp.C, frac, w);
                 return;
             default:
                 for (int t = 0; t < 2 * support; t++)
@@ -111,7 +129,7 @@ internal static class AffineFilterTable
 /// </summary>
 internal static class AffineKernel
 {
-    public const int MaxTaps = 6;
+    public const int MaxTaps = 16;
 
     /// <summary>Maps a possibly out-of-range index into [0, n), or returns -1 for <see cref="EdgeMode.Constant"/> outside the source.</summary>
     public static int MapIndex(int i, int n, EdgeMode mode)
@@ -140,7 +158,8 @@ internal static class AffineKernel
     /// Computes <paramref name="count"/> output pixels of one row starting at absolute output column <paramref name="x0"/>.
     /// The source position of column x is (rowX + x * stepX, rowY + x * stepY) in pixel-index space. The region holds source
     /// pixels [regionX, regionX + regionWidth) x [regionY, regionY + regionHeight) as float pixels of <paramref name="stride"/>
-    /// floats.
+    /// floats. When <paramref name="positions"/> is not empty it holds (x, y) source positions for the <paramref name="count"/> columns
+    /// instead (a projective map is not a straight line in source space); NaN marks a pixel with no source, which gets the background.
     /// </summary>
     public static void SampleRow(
         ReadOnlySpan<float> region,
@@ -160,9 +179,11 @@ internal static class AffineKernel
         double stepY,
         int x0,
         int count,
-        Span<float> output)
+        Span<float> output,
+        ReadOnlySpan<double> positions = default)
     {
-        if (stride is not (1 or 2 or 4) || background.Length < stride || output.Length < (long)count * stride || region.Length < (long)regionWidth * regionHeight * stride)
+        if (stride is not (1 or 2 or 4) || background.Length < stride || output.Length < (long)count * stride || region.Length < (long)regionWidth * regionHeight * stride
+            || (positions.Length != 0 && positions.Length < 2L * count))
         {
             throw new ArgumentException("Sampler buffers do not match the layout.");
         }
@@ -191,6 +212,17 @@ internal static class AffineKernel
             double fx = x0 + x;
             double px = rowX + (fx * stepX);
             double py = rowY + (fx * stepY);
+            if (positions.Length != 0)
+            {
+                px = positions[2 * x];
+                py = positions[(2 * x) + 1];
+                if (double.IsNaN(px) || double.IsNaN(py))
+                {
+                    background[..stride].CopyTo(output.Slice(x * stride, stride));
+                    continue;
+                }
+            }
+
             if (support == 0)
             {
                 wx[0] = 1f;

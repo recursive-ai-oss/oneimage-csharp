@@ -339,17 +339,7 @@ internal sealed class ResampleNode : Node
         }
     }
 
-    private static string Name(ResamplingFilter f) => f switch
-    {
-        ResamplingFilter.Nearest => "nearest",
-        ResamplingFilter.Box => "box",
-        ResamplingFilter.Bilinear => "bilinear",
-        ResamplingFilter.CatmullRom => "catmull-rom",
-        ResamplingFilter.Mitchell => "mitchell",
-        ResamplingFilter.Lanczos2 => "lanczos2",
-        ResamplingFilter.Lanczos3 => "lanczos3",
-        _ => "auto",
-    };
+    private static string Name(ResamplingFilter f) => FilterFunctions.Name(f);
 
     private void Horizontal(ReadOnlySpan<float> row, int firstCol, ImageRect o, Span<float> dst) =>
         ResampleKernel.HorizontalFilter(

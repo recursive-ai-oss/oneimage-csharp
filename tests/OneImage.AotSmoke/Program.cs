@@ -57,6 +57,17 @@ if (geo.Width != 204 || turned.ToArray<Rgba32>().Length != turned.Width * turned
     return 1;
 }
 
+// Perspective: a taper from the builder, pinned corners, the added resize modes and resamplers.
+Image tapered = snapshot.Perspective(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Left, TaperCorner.Both, 0.6).AppendRotationDegrees(5), filter: ResamplingFilter.Lanczos5);
+Image pinned = snapshot.Perspective([(5, 2), (190, 10), (180, 120), (0, 100)]);
+Image boxPadded = snapshot.Resize(300, 300, Fit.BoxPad, filter: ResamplingFilter.Robidoux);
+Image manual = snapshot.ResizeInto(120, 90, new ImageRect(10, 10, 80, 60), ResamplingFilter.Welch);
+if (tapered.ToArray<Rgba32>().Length != tapered.Width * tapered.Height || pinned.Width < 1 || boxPadded.Width != 300 || manual.ToArray<Rgba32>().Length != 120 * 90)
+{
+    Console.Error.WriteLine("perspective smoke failed");
+    return 1;
+}
+
 // Filters and analysis: blur (exact and wide), sharpen, median, Sobel, convolution, histogram and statistics.
 Image blurred = snapshot.GaussianBlur(2.5);
 Image wide = snapshot.GaussianBlur(30);

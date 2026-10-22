@@ -8,8 +8,45 @@ internal static class FilterFunctions
     {
         ResamplingFilter.Nearest or ResamplingFilter.Box => 0.5,
         ResamplingFilter.Bilinear => 1,
-        ResamplingFilter.Lanczos3 => 3,
+        ResamplingFilter.Lanczos5 => 5,
+        ResamplingFilter.Lanczos8 => 8,
+        ResamplingFilter.Hermite => 1,
+        ResamplingFilter.Lanczos3 or ResamplingFilter.Welch => 3,
         _ => 2,
+    };
+
+    /// <summary>Language-neutral name of a filter, used in op descriptors.</summary>
+    public static string Name(ResamplingFilter f) => f switch
+    {
+        ResamplingFilter.Nearest => "nearest",
+        ResamplingFilter.Box => "box",
+        ResamplingFilter.Bilinear => "bilinear",
+        ResamplingFilter.CatmullRom => "catmull-rom",
+        ResamplingFilter.Mitchell => "mitchell",
+        ResamplingFilter.Lanczos2 => "lanczos2",
+        ResamplingFilter.Lanczos3 => "lanczos3",
+        ResamplingFilter.Hermite => "hermite",
+        ResamplingFilter.Lanczos5 => "lanczos5",
+        ResamplingFilter.Lanczos8 => "lanczos8",
+        ResamplingFilter.Robidoux => "robidoux",
+        ResamplingFilter.RobidouxSharp => "robidoux-sharp",
+        ResamplingFilter.Spline => "spline",
+        ResamplingFilter.Welch => "welch",
+        _ => "auto",
+    };
+
+    /// <summary>The (B, C) pair of the Mitchell–Netravali cubic a filter is, or null when it is not one.</summary>
+    public static (double B, double C)? CubicParameters(ResamplingFilter f) => f switch
+    {
+        ResamplingFilter.CatmullRom => (0, 0.5),
+        ResamplingFilter.Mitchell => (1.0 / 3, 1.0 / 3),
+        ResamplingFilter.Hermite => (0, 0),
+        ResamplingFilter.Spline => (1, 0),
+        // N. Robidoux's optimal cubics, as published with ImageMagick's resize filters: B = 12 / (19 + 9 sqrt 2), C = 113 / (58 + 216 sqrt 2).
+        ResamplingFilter.Robidoux => (12 / (19 + (9 * Math.Sqrt(2))), 113 / (58 + (216 * Math.Sqrt(2)))),
+        // Sharp variant: B = 6 / (13 + 7 sqrt 2), C = 7 / (2 + 12 sqrt 2).
+        ResamplingFilter.RobidouxSharp => (6 / (13 + (7 * Math.Sqrt(2))), 7 / (2 + (12 * Math.Sqrt(2)))),
+        _ => null,
     };
 
     /// <summary>Evaluates the kernel at distance <paramref name="x"/> from the sample center. Box and nearest are 1 on [-0.5, 0.5).</summary>
@@ -23,15 +60,23 @@ internal static class FilterFunctions
                 return x >= -0.5 && x < 0.5 ? 1 : 0;
             case ResamplingFilter.Bilinear:
                 return ax < 1 ? 1 - ax : 0;
-            case ResamplingFilter.CatmullRom:
-                return Cubic(ax, 0, 0.5);
-            case ResamplingFilter.Mitchell:
-                return Cubic(ax, 1.0 / 3, 1.0 / 3);
             case ResamplingFilter.Lanczos2:
                 return Lanczos(ax, 2);
             case ResamplingFilter.Lanczos3:
                 return Lanczos(ax, 3);
+            case ResamplingFilter.Lanczos5:
+                return Lanczos(ax, 5);
+            case ResamplingFilter.Lanczos8:
+                return Lanczos(ax, 8);
+            case ResamplingFilter.Welch:
+                // Sinc windowed by a Welch parabola over its three lobes: sinc(x) * (1 - (x/3)^2).
+                return ax >= 3 ? 0 : Sinc(ax) * (1 - (ax * ax / 9));
             default:
+                if (CubicParameters(filter) is var (b, c))
+                {
+                    return Cubic(ax, b, c);
+                }
+
                 throw new ArgumentOutOfRangeException(nameof(filter));
         }
     }
@@ -50,6 +95,17 @@ internal static class FilterFunctions
         }
 
         return 0;
+    }
+
+    private static double Sinc(double ax)
+    {
+        if (ax == 0)
+        {
+            return 1;
+        }
+
+        double px = Math.PI * ax;
+        return Math.Sin(px) / px;
     }
 
     private static double Lanczos(double ax, int lobes)

@@ -110,6 +110,25 @@ public sealed class DocsExamples : IDisposable
     }
 
     [Fact]
+    public void PerspectiveAndResizeModes()
+    {
+        Image img = Image.Load(MakePhoto(exif: false)); // 600x400
+
+        Image tapered = img.Perspective(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Top, TaperCorner.Both, 0.7));
+        Assert.Equal((600, 400), (tapered.Width, tapered.Height));
+        Image pinned = img.Perspective([(30, 10), (150, 40), (120, 130), (10, 100)]);
+        Assert.Equal((140, 120), (pinned.Width, pinned.Height));
+
+        Image min = img.Resize(width: 300, height: 300, fit: Fit.Min);
+        Assert.Equal((450, 300), (min.Width, min.Height));
+        Image boxed = img.Resize(width: 800, height: 800, fit: Fit.BoxPad);
+        Assert.Equal((800, 800), (boxed.Width, boxed.Height));
+        Image manual = img.ResizeInto(200, 200, new ImageRect(10, 20, 100, 50));
+        Assert.Equal((200, 200), (manual.Width, manual.Height));
+        Assert.Equal(300, img.Resize(width: 300, filter: ResamplingFilter.Robidoux).Width);
+    }
+
+    [Fact]
     public void FormatsAndQuality()
     {
         Image img = Image.Load(MakePhoto(exif: false));

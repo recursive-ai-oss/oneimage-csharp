@@ -38,6 +38,13 @@ internal static class Snippets
         image.Save(output);
     }
 
+    public static void Perspective(string input, string output)
+    {
+        using Image image = Image.Load(input);
+        image.Mutate(x => x.Transform(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Left, TaperCorner.Both, 0.6f)));
+        image.Save(output);
+    }
+
     public static void Convert(string input, string output)
     {
         using Image image = Image.Load(input);

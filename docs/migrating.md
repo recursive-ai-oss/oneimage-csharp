@@ -73,15 +73,19 @@ Image.Load(input).Resize(width: 200, height: 200, fit: Fit.Cover, anchor: Anchor
 Image.Thumbnail(input, 200, 200, fit: Fit.Cover).Save(output);
 ```
 
-| ImageSharp `ResizeMode` | OneImage `Fit` |
+| ImageSharp `ResizeMode` | OneImage |
 |---|---|
-| `Max` | `Contain` (default) |
-| `Crop` | `Cover` |
-| `Stretch` | `Stretch` |
-| `Pad`, `BoxPad` | `Pad` (with `background:`) |
-| `Min` | no direct equivalent; `Cover` with `anchor` comes closest |
+| `Max` | `Fit.Contain` (default), also spelled `Fit.Max` |
+| `Crop` | `Fit.Cover`, also spelled `Fit.Crop` |
+| `Stretch` | `Fit.Stretch` |
+| `Pad` | `Fit.Pad` (with `background:`) |
+| `BoxPad` | `Fit.BoxPad`: like `Pad`, but an image that already fits keeps its size |
+| `Min` | `Fit.Min`: covers the box without cropping, never enlarges |
+| `Manual` with `TargetRectangle` | `ResizeInto(canvasWidth, canvasHeight, new ImageRect(x, y, width, height))` |
 
-`Resize` enlarges unless you pass `upscale: false`; `Image.Thumbnail` never enlarges unless you pass `upscale: true`. ImageSharp's `KnownResamplers` map to `ResamplingFilter`: `Lanczos3`, `CatmullRom`, `Bicubic`≈`CatmullRom`, `Triangle` → `Bilinear`, `NearestNeighbor` → `Nearest`. The default `Auto` picks Lanczos3 when shrinking and Catmull-Rom when enlarging.
+Sizes and placement match ImageSharp 3.1.12 in the cases we compared (all of them within one pixel, nearly all identical). Three small differences remain: a derived side that lands exactly on .5 rounds up here and to even in ImageSharp, an odd leftover when centering goes to the bottom/right here and to the top/left there, and `Min` or `Max` with only one side given use that side exactly.
+
+`Resize` enlarges unless you pass `upscale: false`; `Image.Thumbnail` never enlarges unless you pass `upscale: true`. ImageSharp's `KnownResamplers` map to `ResamplingFilter`: `Lanczos3`, `CatmullRom`, `Bicubic`≈`CatmullRom`, `Triangle` → `Bilinear`, `NearestNeighbor` → `Nearest`, and `Hermite`, `Lanczos5`, `Lanczos8`, `Robidoux`, `RobidouxSharp`, `Spline` and `Welch` have the same names (ResamplingFilter.Bicubic and .Triangle exist as aliases). Our resize output with these is within 0.3 of a level on average of ImageSharp's. The default `Auto` picks Lanczos3 when shrinking and Catmull-Rom when enlarging.
 
 ### Crop
 
@@ -134,6 +138,37 @@ Image.Load(input).Rotate(90).Flip(FlipAxis.Horizontal).Save(output);
 ```
 
 Both libraries rotate clockwise for positive angles. Multiples of 90 are exact pixel moves. Other angles grow the canvas to the bounding box (`expand: true`); pass `background:` for the corners. System.Drawing's EXIF auto-rotation, which you did by hand, is the default at load here.
+
+### Perspective transforms
+
+ImageSharp:
+
+```csharp
+using Image image = Image.Load(input);
+image.Mutate(x => x.Transform(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Left, TaperCorner.Both, 0.6f)));
+image.Save(output);
+```
+
+OneImage:
+
+```csharp
+Image.Load(input)
+    .Perspective(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Left, TaperCorner.Both, 0.6))
+    .Save(output);
+
+// Pin the four corners (top-left, top-right, bottom-right, bottom-left) to chosen points:
+Image.Load(input).Perspective([(30, 10), (150, 40), (120, 130), (10, 100)]).Save(output);
+
+// Or a 3x3 matrix directly (column vectors; the top two rows are the same as Affine's a, b, tx and c, d, ty):
+Image.Load(input).Perspective(new ProjectiveMatrix(1, 0.1, 0, 0, 1, 0, 0.001, 0, 1)).Save(output);
+```
+
+`ProjectiveTransformBuilder` has the same steps as ImageSharp's (`AppendTaper`, `AppendRotationDegrees`, `AppendScale`, `AppendSkewDegrees`, `AppendTranslation`, `AppendMatrix` and the `Prepend` forms) and takes `double` rather than `float`. Tapers give the same corner positions as ImageSharp's, and the default Catmull-Rom output is within about 1.5 levels on average of ImageSharp's `Transform` on smooth images. Differences to know about:
+
+- ImageSharp's matrices are `Matrix4x4` with row vectors; `ProjectiveMatrix` is 3×3 with column vectors. To convert: `M11 = m11, M12 = m21, M13 = m41, M21 = m12, M22 = m22, M23 = m42, M31 = m14, M32 = m24, M33 = m44`.
+- The output is the bounding box of the transformed image with its top-left corner at the origin (`expand: true`, as in `Rotate` and `Affine`), so a translation does not shift the picture; ImageSharp keeps the offset. Pass `expand: false` to apply the matrix in the input frame.
+- A matrix that sends part of the image through the horizon (where `w` is zero) throws `ImageOperationException` instead of producing a picture.
+- Interpolation runs in linear light on premultiplied alpha by default; pass `linear: false` to filter stored values as ImageSharp does.
 
 ### Convert format and set quality
 
@@ -392,14 +427,7 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 | `EntropyCrop(threshold)` | None. `Trim` removes a uniform border, and `Anchor.Smart` picks a crop by detail when resizing. | `Trim` for borders, `Resize(..., anchor: Anchor.Smart)` for content-aware crops. |
 | `CalculateIntegralImage()` | None. | `Histogram` and `Statistics` cover the common uses. |
 
-`BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`. `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.
-
-### Transforms: coming soon
-
-| ImageSharp | As of 1.0 | Closest workaround |
-|---|---|---|
-| `Transform(ProjectiveTransformBuilder)`: perspective, `AppendTaperMatrix`, arbitrary 3×3 projective matrices | None. `Affine` covers rotate, scale, skew and translate. | None for true perspective. |
-| Resize extras: `ResizeMode.BoxPad` and `Min`/`Max`, `ResizeOptions.Sampler` choices `Hermite`, `Lanczos5`, `Lanczos8`, `Robidoux`, `RobidouxSharp`, `Spline`, `Welch` | `Fit` offers Contain, Cover, Stretch and Pad. Filters are nearest, box, bilinear, Catmull-Rom, Mitchell, Lanczos2 and Lanczos3. | Pick the closest filter; compute Min/Max sizes yourself and pass them. |
+`BackgroundColor` is covered by `Flatten(color)`, `Skew` and `AffineTransformBuilder` by `Affine(a, b, c, d, tx, ty)`, and `ProjectiveTransformBuilder` by `Perspective` (see [Perspective transforms](#perspective-transforms)). `Rotate`, `Pad`, `Trim`, `Grayscale`, `Invert`, `GaussianBlur`, `BoxBlur`, `Median`, `Convolve`, brightness/contrast, hue/saturation/lightness and the rest of the list under [Side by side](#side-by-side) do exist.
 
 ### Web middleware: coming soon
 

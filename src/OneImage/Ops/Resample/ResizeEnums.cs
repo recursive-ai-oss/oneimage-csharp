@@ -14,6 +14,31 @@ public enum Fit
 
     /// <summary>Like <see cref="Contain"/>, then pad with the background color to exactly the box size, placing the image by <see cref="Anchor"/>.</summary>
     Pad = 3,
+
+    /// <summary>
+    /// Like <see cref="Pad"/> but never enlarges: an image that fits inside the box keeps its size and sits in the box at the
+    /// <see cref="Anchor"/>; a larger one is shrunk to fit first. The result is exactly the box size. The <c>upscale</c> argument is
+    /// ignored. When only one side is given the other follows the aspect ratio and the same rules apply. This is ImageSharp's
+    /// <c>ResizeMode.BoxPad</c>.
+    /// </summary>
+    BoxPad = 4,
+
+    /// <summary>
+    /// Scale so the image covers the box, keeping the aspect ratio, without cropping, so the result is at least the box size on
+    /// both axes (the shortest side matches the box). Never enlarges: when the box is wider or taller than the image, the image is
+    /// returned at its own size. The <c>upscale</c> argument is ignored. When only one side is given the other follows the aspect
+    /// ratio. This is ImageSharp's <c>ResizeMode.Min</c>.
+    /// </summary>
+    Min = 5,
+
+    /// <summary>
+    /// Alias of <see cref="Contain"/>: scale so the whole image fits inside the box, keeping the aspect ratio, and enlarge when the
+    /// image is smaller (with the default <c>upscale: true</c>). This is ImageSharp's <c>ResizeMode.Max</c>.
+    /// </summary>
+    Max = Contain,
+
+    /// <summary>Alias of <see cref="Cover"/> under ImageSharp's name for the default mode (<c>ResizeMode.Crop</c>).</summary>
+    Crop = Cover,
 }
 
 /// <summary>Where the image sits when a <see cref="Fit"/> crops (<see cref="Fit.Cover"/>) or pads (<see cref="Fit.Pad"/>) it.</summary>
@@ -81,4 +106,31 @@ public enum ResamplingFilter
 
     /// <summary>Lanczos windowed sinc with three lobes.</summary>
     Lanczos3 = 7,
+
+    /// <summary>Hermite cubic (B = 0, C = 0): <c>2|x|³ − 3|x|² + 1</c> on |x| &lt; 1. Support radius 1. Smooth but soft; no negative lobes.</summary>
+    Hermite = 8,
+
+    /// <summary>Lanczos windowed sinc with five lobes (support radius 5).</summary>
+    Lanczos5 = 9,
+
+    /// <summary>Lanczos windowed sinc with eight lobes (support radius 8).</summary>
+    Lanczos8 = 10,
+
+    /// <summary>Robidoux cubic (Mitchell–Netravali family with B ≈ 0.3782, C ≈ 0.3109), the "Keys-like" filter tuned for minimal blur and ringing on axis-aligned scaling. Support radius 2.</summary>
+    Robidoux = 11,
+
+    /// <summary>Robidoux Sharp cubic (B ≈ 0.2620, C ≈ 0.3690): a sharper variant of <see cref="Robidoux"/>. Support radius 2.</summary>
+    RobidouxSharp = 12,
+
+    /// <summary>Cubic B-spline (B = 1, C = 0): very smooth and blurry, never rings. Support radius 2.</summary>
+    Spline = 13,
+
+    /// <summary>Sinc windowed by a Welch parabola: <c>sinc(x)·(1 − (x/3)²)</c> on |x| &lt; 3, the kernel ImageSharp calls Welch. Support radius 3.</summary>
+    Welch = 14,
+
+    /// <summary>Alias of <see cref="CatmullRom"/> under the name ImageSharp and System.Drawing users know (<c>Bicubic</c>).</summary>
+    Bicubic = CatmullRom,
+
+    /// <summary>Alias of <see cref="Bilinear"/> under ImageSharp's name (<c>Triangle</c>).</summary>
+    Triangle = Bilinear,
 }

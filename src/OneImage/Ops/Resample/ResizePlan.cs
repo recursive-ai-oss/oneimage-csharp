@@ -29,12 +29,25 @@ internal readonly record struct ResizePlan(int ResampleWidth, int ResampleHeight
             throw new ArgumentOutOfRangeException(nameof(fit));
         }
 
+        // BoxPad and Min keep their rules when one side is missing: the missing side is derived, then the fit applies.
+        bool keepFit = fit is Fit.BoxPad or Fit.Min;
+        if (fit == Fit.BoxPad)
+        {
+            fit = Fit.Pad;
+            upscale = false;
+        }
+
         long tw;
         long th;
-        if (width is null || height is null)
+        if (!keepFit && (width is null || height is null))
         {
             // One side given: the other follows the aspect ratio, and fit does not matter.
             fit = Fit.Stretch;
+            tw = width ?? Scale(sw, height!.Value, sh);
+            th = height ?? Scale(sh, width!.Value, sw);
+        }
+        else if (width is null || height is null)
+        {
             tw = width ?? Scale(sw, height!.Value, sh);
             th = height ?? Scale(sh, width!.Value, sw);
         }
@@ -51,6 +64,14 @@ internal readonly record struct ResizePlan(int ResampleWidth, int ResampleHeight
             case Fit.Stretch:
                 rw = upscale ? tw : Math.Min(tw, sw);
                 rh = upscale ? th : Math.Min(th, sh);
+                return Check(rw, rh, rw, rh, rw, rh);
+            case Fit.Min:
+                if (tw > sw || th > sh)
+                {
+                    return Check(sw, sh, sw, sh, sw, sh);
+                }
+
+                (rw, rh) = tw * sh >= th * sw ? (tw, Scale(sh, tw, sw)) : (Scale(sw, th, sh), th);
                 return Check(rw, rh, rw, rh, rw, rh);
             case Fit.Cover:
                 bool widthLimited = tw * sh >= th * sw;

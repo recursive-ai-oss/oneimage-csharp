@@ -107,7 +107,6 @@ Compared with ImageSharp 3.1.12 and its Drawing 2.1.7, Fonts 2.1.3 and Web 3.2.0
 
 - **Drawing and text:** shapes and paths with boolean operations, fills and strokes (dashes, joins, caps), solid, gradient, pattern and image brushes, clipping to a path, and text (OpenType shaping, bidirectional layout, font fallback, COLR color fonts, text along a path). Coming soon.
 - **Effects:** pixelate, oil paint, vignette, glow, bokeh blur, preset filters (sepia, Kodachrome, Lomograph, Polaroid), color-blindness filters, histogram equalization, adaptive threshold, the other edge detectors and dither matrices. Coming soon.
-- **Perspective transforms.** Coming soon. Affine transforms exist.
 - **ASP.NET Core resizing middleware:** URL-command resizing, file-system and web-root providers, a disk cache, HMAC-signed URLs and Razor tag helpers. Coming soon.
 - **Formats:** TGA, PBM and QOI. Not planned.
 

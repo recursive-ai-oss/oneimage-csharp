@@ -9,7 +9,13 @@ public sealed partial class Image
     /// least 1) and <paramref name="fit"/> is ignored. With both, <paramref name="fit"/> decides: <see cref="Fit.Contain"/> fits inside
     /// the box, <see cref="Fit.Cover"/> fills it and crops by <paramref name="anchor"/>, <see cref="Fit.Stretch"/> ignores the aspect
     /// ratio, <see cref="Fit.Pad"/> is Contain plus padding to the full box. For Contain, Cover and Pad the limiting axis lands exactly
-    /// on the box size and the other is rounded half up (at least 1).
+    /// on the box size and the other is rounded half up (at least 1). <see cref="Fit.BoxPad"/> and <see cref="Fit.Min"/> never enlarge
+    /// and keep their rules when only one side is given (the other side is derived first).
+    /// <para>
+    /// <b>ImageSharp's <c>ResizeMode</c>.</b> Crop = <see cref="Fit.Cover"/>, Pad = <see cref="Fit.Pad"/>, BoxPad = <see cref="Fit.BoxPad"/>,
+    /// Max = <see cref="Fit.Contain"/> (with <c>upscale: true</c>, the default), Min = <see cref="Fit.Min"/>, Stretch = <see cref="Fit.Stretch"/>,
+    /// Manual = <see cref="ResizeInto"/>. Sizes and placement match ImageSharp 3.1.12 for each.
+    /// </para>
     /// <para>
     /// <b>Filters.</b> <see cref="ResamplingFilter.Auto"/> uses Lanczos3 on an axis that shrinks and Catmull-Rom on one that grows or
     /// stays. When shrinking, kernels are widened by the scale factor. Source positions use pixel centers. Taps beyond the image edge
@@ -79,30 +85,103 @@ public sealed partial class Image
             (width, height, fit, anchor, upscale, filter, linear, background));
     }
 
+    /// <summary>
+    /// Resizes the whole image to the size of <paramref name="target"/> and places it there inside a canvas of
+    /// <paramref name="canvasWidth"/> x <paramref name="canvasHeight"/> (lazy); ImageSharp's <c>ResizeMode.Manual</c>.
+    /// The part of the target rectangle outside the canvas is cut off and uncovered canvas is filled with <paramref name="background"/>.
+    /// Filtering, color handling and shrink-on-load are as in <see cref="Resize"/>; every frame of an animation is treated alike.
+    /// </summary>
+    /// <param name="canvasWidth">Output width, at least 1.</param>
+    /// <param name="canvasHeight">Output height, at least 1.</param>
+    /// <param name="target">Where the resized image goes, in output pixels. Its size (at least 1 x 1) is the size the image is scaled to;
+    /// it may start at negative coordinates or reach past the canvas but must overlap it.</param>
+    /// <param name="filter">The reconstruction filter. Defaults to <see cref="ResamplingFilter.Auto"/>.</param>
+    /// <param name="linear">Filter in linear light. Defaults to <see langword="true"/>.</param>
+    /// <param name="background">Fill for uncovered canvas, straight sRGB; defaults to transparent black.</param>
+    /// <returns>The canvas-sized image.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">A size is not positive, the target does not overlap the canvas or the filter is undefined.</exception>
+    public Image ResizeInto(int canvasWidth, int canvasHeight, ImageRect target, ResamplingFilter filter = ResamplingFilter.Auto, bool linear = true, Rgba32 background = default)
+    {
+        if (canvasWidth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(canvasWidth), "Canvas width must be positive.");
+        }
+
+        if (canvasHeight <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(canvasHeight), "Canvas height must be positive.");
+        }
+
+        if (target.Width <= 0 || target.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(target), "The target rectangle must have a positive size.");
+        }
+
+        if (!Enum.IsDefined(filter))
+        {
+            throw new ArgumentOutOfRangeException(nameof(filter));
+        }
+
+        long vx0 = Math.Max(0L, target.X);
+        long vy0 = Math.Max(0L, target.Y);
+        long vx1 = Math.Min(canvasWidth, (long)target.X + target.Width);
+        long vy1 = Math.Min(canvasHeight, (long)target.Y + target.Height);
+        if (vx0 >= vx1 || vy0 >= vy1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(target), "The target rectangle does not overlap the canvas.");
+        }
+
+        return Map(
+            static (n, a) =>
+            {
+                Node cur = ResampleTo(n, a.Target.Width, a.Target.Height, a.Filter, a.Linear);
+                int px = Math.Max(0, a.Target.X);
+                int py = Math.Max(0, a.Target.Y);
+                int cutLeft = px - a.Target.X;
+                int cutTop = py - a.Target.Y;
+                int vw = (int)(Math.Min(a.W, (long)a.Target.X + a.Target.Width) - px);
+                int vh = (int)(Math.Min(a.H, (long)a.Target.Y + a.Target.Height) - py);
+                if (vw != cur.Width || vh != cur.Height)
+                {
+                    cur = new CropNode(cur, new ImageRect(cutLeft, cutTop, vw, vh));
+                }
+
+                return px == 0 && py == 0 && vw == a.W && vh == a.H ? cur : new ExtendNode(cur, px, py, a.W, a.H, EdgeMode.Constant, a.Background);
+            },
+            (W: canvasWidth, H: canvasHeight, Target: target, Filter: filter, Linear: linear, Background: background));
+    }
+
+    // Resamples to exactly width x height. A decoder that can shrink on load is asked for a smaller frame first (also when an
+    // auto-orient node sits on top of it); the filter then runs on the reduced frame.
+    private static Node ResampleTo(Node cur, int width, int height, ResamplingFilter filter, bool linear)
+    {
+        if (width == cur.Width && height == cur.Height)
+        {
+            return cur;
+        }
+
+        DecodeSourceNode? decoder = cur as DecodeSourceNode ?? (cur as OrientNode)?.Inputs[0] as DecodeSourceNode;
+        if (decoder != null && filter != ResamplingFilter.Nearest)
+        {
+            foreach (int denominator in (ReadOnlySpan<int>)[8, 4, 2])
+            {
+                if (((cur.Width + denominator - 1) / denominator) >= width
+                    && ((cur.Height + denominator - 1) / denominator) >= height
+                    && decoder.TryPushScale(denominator) is { } shrunk)
+                {
+                    cur = cur is OrientNode o ? o.WithInput(shrunk) : shrunk;
+                    break;
+                }
+            }
+        }
+
+        return ResampleNode.Create(cur, width, height, filter, linear);
+    }
+
     private static Node BuildResize(Node node, (int? Width, int? Height, Fit Fit, Anchor Anchor, bool Upscale, ResamplingFilter Filter, bool Linear, Rgba32 Background) a)
     {
         ResizePlan plan = ResizePlan.Compute(node.Width, node.Height, a.Width, a.Height, a.Fit, a.Upscale);
-        Node cur = node;
-        if (plan.ResampleWidth != cur.Width || plan.ResampleHeight != cur.Height)
-        {
-            // Shrink-on-load: ask the decoder for a smaller frame when it can, also when an auto-orient node sits on top of it.
-            DecodeSourceNode? decoder = cur as DecodeSourceNode ?? (cur as OrientNode)?.Inputs[0] as DecodeSourceNode;
-            if (decoder != null && a.Filter != ResamplingFilter.Nearest)
-            {
-                foreach (int denominator in (ReadOnlySpan<int>)[8, 4, 2])
-                {
-                    if (((cur.Width + denominator - 1) / denominator) >= plan.ResampleWidth
-                        && ((cur.Height + denominator - 1) / denominator) >= plan.ResampleHeight
-                        && decoder.TryPushScale(denominator) is { } shrunk)
-                    {
-                        cur = cur is OrientNode o ? o.WithInput(shrunk) : shrunk;
-                        break;
-                    }
-                }
-            }
-
-            cur = ResampleNode.Create(cur, plan.ResampleWidth, plan.ResampleHeight, a.Filter, a.Linear);
-        }
+        Node cur = ResampleTo(node, plan.ResampleWidth, plan.ResampleHeight, a.Filter, a.Linear);
 
         if (plan.NeedsCrop)
         {

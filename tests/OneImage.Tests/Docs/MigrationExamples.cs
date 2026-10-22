@@ -74,6 +74,21 @@ public sealed class MigrationExamples : IDisposable
     }
 
     [Fact]
+    public void PerspectiveTaper()
+    {
+        global::ImageSharpSide.Snippets.Perspective(_photo, P("is-p.png"));
+
+        Image.Load(_photo)
+            .Perspective(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Left, TaperCorner.Both, 0.6))
+            .Save(P("oi-p.png"));
+        Image.Load(_photo).Perspective([(30, 10), (150, 40), (120, 130), (10, 100)]).Save(P("oi-q.png"));
+        Image.Load(_photo).Perspective(new ProjectiveMatrix(1, 0.1, 0, 0, 1, 0, 0.001, 0, 1)).Save(P("oi-m.png"));
+
+        Assert.Equal(Image.Identify(P("is-p.png")).Width, Image.Identify(P("oi-p.png")).Width);
+        Assert.Equal(Image.Identify(P("is-p.png")).Height, Image.Identify(P("oi-p.png")).Height);
+    }
+
+    [Fact]
     public void ConvertAndQuality()
     {
         global::ImageSharpSide.Snippets.Convert(_photo, P("is.jpg"));

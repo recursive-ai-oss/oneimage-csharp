@@ -38,7 +38,7 @@ internal sealed class AffineNode : Node
                 new OpParameter("origin_y", originY),
                 new OpParameter("width", (long)width),
                 new OpParameter("height", (long)height),
-                new OpParameter("filter", filter.ToString().ToLowerInvariant()),
+                new OpParameter("filter", FilterFunctions.Name(filter)),
                 new OpParameter("edge", edge.ToString().ToLowerInvariant()),
                 new OpParameter("linear", linear),
                 new OpParameter("red", (long)background.R),
@@ -84,7 +84,7 @@ internal sealed class AffineNode : Node
     // Written exactly like the sampler's per-pixel expression so corner bounds and pixel positions agree bit for bit.
     private (double X, double Y) Position(int x, int y) => (_baseX + (y * _ib) + (x * _ia), _baseY + (y * _id) + (x * _ic));
 
-    private static (int Lo, int Hi) Tap(double minPos, double maxPos, int support) =>
+    internal static (int Lo, int Hi) Tap(double minPos, double maxPos, int support) =>
         support == 0
             ? ((int)Math.Floor(minPos + 0.5), (int)Math.Floor(maxPos + 0.5))
             : ((int)Math.Floor(minPos) - support + 1, (int)Math.Floor(maxPos) + support);
@@ -106,21 +106,21 @@ internal sealed class AffineNode : Node
         }
 
         int support = AffineFilterTable.Support(_filter);
-        (int x0, int x1) = Hull(Tap(minX, maxX, support), input.Width);
-        (int y0, int y1) = Hull(Tap(minY, maxY, support), input.Height);
+        (int x0, int x1) = Hull(_edge, Tap(minX, maxX, support), input.Width);
+        (int y0, int y1) = Hull(_edge, Tap(minY, maxY, support), input.Height);
         return x0 > x1 || y0 > y1 ? new ImageRect(0, 0, 0, 0) : new ImageRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
     }
 
     // Input indices that taps in [range.Lo, range.Hi] resolve to, as an inclusive range (empty when Lo > Hi).
-    private (int Lo, int Hi) Hull((int Lo, int Hi) range, int n)
+    internal static (int Lo, int Hi) Hull(EdgeMode edge, (int Lo, int Hi) range, int n)
     {
         (int lo, int hi) = range;
-        switch (_edge)
+        switch (edge)
         {
             case EdgeMode.Constant:
                 return (Math.Max(lo, 0), Math.Min(hi, n - 1));
             case EdgeMode.Clamp:
-                return (AffineKernel.MapIndex(lo, n, _edge), AffineKernel.MapIndex(hi, n, _edge));
+                return (AffineKernel.MapIndex(lo, n, edge), AffineKernel.MapIndex(hi, n, edge));
             default:
                 if (lo >= 0 && hi < n)
                 {
@@ -136,7 +136,7 @@ internal sealed class AffineNode : Node
                 int b = -1;
                 for (int i = lo; i <= hi; i++)
                 {
-                    int m = AffineKernel.MapIndex(i, n, _edge);
+                    int m = AffineKernel.MapIndex(i, n, edge);
                     a = Math.Min(a, m);
                     b = Math.Max(b, m);
                 }

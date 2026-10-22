@@ -7,6 +7,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Added
 
 - `Image.Composite(..., blend:, alpha:)`: all 24 Photoshop/W3C blend modes (`BlendMode`: Multiply, Screen, Overlay, Darken, Lighten, Color Dodge/Burn, Hard/Soft/Vivid/Linear/Pin Light, Hard Mix, Difference, Exclusion, Add, Subtract, Linear Burn, Divide, Hue, Saturation, Color, Luminosity) and the twelve Porter-Duff operators (`AlphaComposition`). Normal source-over output is unchanged.
+- `Image.Perspective`: a projective (perspective) transform from a `ProjectiveMatrix`, a `ProjectiveTransformBuilder` (taper, rotation, scale, skew, translation, matrices, with `Append` and `Prepend` forms) or four corner points. `ProjectiveMatrix` also builds quad-to-quad maps.
+- `Fit.BoxPad` and `Fit.Min` (ImageSharp's `ResizeMode.BoxPad` and `Min`), the aliases `Fit.Max` and `Fit.Crop`, and `Image.ResizeInto` for resizing into a rectangle of a canvas (`ResizeMode.Manual`).
+- Resampling filters `Hermite`, `Lanczos5`, `Lanczos8`, `Robidoux`, `RobidouxSharp`, `Spline` and `Welch`, with the aliases `Bicubic` and `Triangle`, in `Resize` and in the rotate, affine and perspective samplers.
 
 ## [1.0.0] - 2026-10-22
 

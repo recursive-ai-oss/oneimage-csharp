@@ -98,7 +98,7 @@ public sealed partial class Image
     /// </para>
     /// <para>
     /// <b>Sampling.</b> Each output pixel center is mapped back into the source and reconstructed with a separable filter (2 taps for
-    /// bilinear, 4 for Catmull-Rom, Mitchell and Lanczos2, 6 for Lanczos3), weights normalized to 1, positions computed in double
+    /// bilinear, 4 for the cubics and Lanczos2, 6 for Lanczos3 and Welch, 10 for Lanczos5, 16 for Lanczos8), weights normalized to 1, positions computed in double
     /// precision, summation in float32 in a fixed order. <see cref="ResamplingFilter.Nearest"/> and <see cref="ResamplingFilter.Box"/>
     /// pick the single nearest source pixel; <see cref="ResamplingFilter.Auto"/> is Catmull-Rom. The kernels are not widened, so there
     /// is no prefiltering: for reductions beyond about 2× resize first. Taps beyond the source follow <paramref name="edge"/>; with

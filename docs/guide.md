@@ -136,8 +136,8 @@ img.Resize(width: 200, height: 200, fit: Fit.Pad, background: new Rgba32(255, 25
 img.Resize(width: 100, filter: ResamplingFilter.Mitchell);
 ```
 
-- `Fit`: `Contain` (default; fits inside the box), `Cover` (fills the box, crops), `Stretch`, `Pad`. `Anchor`: nine positions plus `Smart`, an entropy/edge heuristic that picks the crop window.
-- Default filter `Auto`: Lanczos3 on an axis that shrinks, Catmull-Rom on one that grows. Others: `Nearest`, `Box`, `Bilinear`, `CatmullRom`, `Mitchell`, `Lanczos2`, `Lanczos3`.
+- `Fit`: `Contain` (default; fits inside the box), `Cover` (fills the box, crops), `Stretch`, `Pad`, `BoxPad` (like `Pad`, but never enlarges) and `Min` (covers the box without cropping, never enlarges). `ResizeInto(canvasWidth, canvasHeight, target)` scales the image into a given rectangle of a canvas. `Anchor`: nine positions plus `Smart`, an entropy/edge heuristic that picks the crop window.
+- Default filter `Auto`: Lanczos3 on an axis that shrinks, Catmull-Rom on one that grows. Others: `Nearest`, `Box`, `Bilinear`, `CatmullRom`, `Mitchell`, `Lanczos2`, `Lanczos3`, `Lanczos5`, `Lanczos8`, `Hermite`, `Robidoux`, `RobidouxSharp`, `Spline`, `Welch`.
 - Resampling runs in linear light on premultiplied alpha and treats untagged RGB as sRGB. Pass `linear: false` to filter the stored values.
 - **Upscale defaults differ on purpose.** `Resize` enlarges by default (`upscale: true`): you asked for that size. `Image.Thumbnail` never enlarges unless you pass `upscale: true`: a thumbnail is not bigger than the original. With `Resize(..., upscale: false)` Contain, Cover and Pad stop at scale 1.
 
@@ -154,7 +154,14 @@ img.Pad(left: 10, top: 10, right: 10, bottom: 10, mode: EdgeMode.Mirror);
 img.Trim();                                   // remove a uniform border (eager: it looks at the pixels)
 ```
 
-`Orient(1..8)`, `AutoOrient()` and `Affine(...)` are also there. `Trim` is the one geometry op that computes immediately, because it must scan for the border.
+`Orient(1..8)`, `AutoOrient()` and `Affine(...)` are also there. `Perspective(...)` applies a 3×3 projective transform, given as a `ProjectiveMatrix`, a `ProjectiveTransformBuilder` (tapers, rotation, scale, skew, translation) or four corner points:
+
+```csharp
+img.Perspective(new ProjectiveTransformBuilder().AppendTaper(TaperSide.Top, TaperCorner.Both, 0.7));
+img.Perspective([(30, 10), (150, 40), (120, 130), (10, 100)]);   // corners: top-left, top-right, bottom-right, bottom-left
+```
+
+Like `Rotate` and `Affine` it grows the canvas to the transformed bounding box by default. `Trim` is the one geometry op that computes immediately, because it must scan for the border.
 
 **Color and tone**: `Grayscale`, `BrightnessContrast`, `Exposure`, `Gamma`, `Levels`, `Curves`, `HueSaturationLightness`, `Invert`, `Threshold`, `Posterize`, `ChannelMixer`, `CombineChannels`, `AddAlpha`, `RemoveAlpha`, `Flatten`, `ConvertTo(PixelFormat)`. Adjacent tone ops fuse into one pass. Identity parameters return the input unchanged. Tone ops act on straight (not premultiplied) color and leave alpha alone; most work on encoded values, while `Grayscale` and `Exposure` default to linear light.
 
