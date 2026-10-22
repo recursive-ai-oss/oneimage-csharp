@@ -26,6 +26,8 @@ public class SvgBenchmarks
     private Image _illustrationLoaded = null!;
     private SKPicture _iconPicture = null!;
     private SKPicture _illustrationPicture = null!;
+    private byte[] _cssHeavy = null!;
+    private byte[] _cssFree = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -39,6 +41,7 @@ public class SvgBenchmarks
         _options = new LoadOptions { Configuration = new ImageConfiguration().Add(SvgFormat.Instance) };
         _iconLoaded = Image.Load(_icon, _options);
         _illustrationLoaded = Image.Load(_illustration, _options);
+        (_cssHeavy, _cssFree) = CssDocuments();
         _iconPicture = Parse(_iconText);
         _illustrationPicture = Parse(_illustrationText);
     }
@@ -84,4 +87,56 @@ public class SvgBenchmarks
 
     [Benchmark(Description = "illustration -> 1024, Svg.Skia: render")]
     public int IllustrationSkiaRender() => Draw(_illustrationPicture, 1024);
+
+    // 20,000 shapes in 400 nested groups of classes, with 400 style rules over them (type, class, id, attribute, child, descendant and
+    // structural selectors), against the same drawing with every declaration written on the element.
+    private static (byte[] WithSheet, byte[] Inline) CssDocuments()
+    {
+        var rules = new System.Text.StringBuilder();
+        var withSheet = new System.Text.StringBuilder("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' width='1000' height='1000'><style>");
+        var inline = new System.Text.StringBuilder("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' width='1000' height='1000'>");
+        for (int c = 0; c < 100; c++)
+        {
+            rules.Append(FormattableString.Invariant($".c{c} {{ fill: #{(c * 2654435 & 0xFFFFFF):x6}; stroke: #333 }} g.row{c} > rect:nth-child(odd) {{ opacity: 0.{1 + (c % 9)} }} #r{c * 200} {{ stroke-width: 2 }} svg g.row{c} rect[data-k='{c % 7}'] {{ stroke: black }}\n"));
+        }
+
+        withSheet.Append(rules).Append("</style>");
+        for (int g = 0; g < 100; g++)
+        {
+            withSheet.Append(FormattableString.Invariant($"<g class='row{g}'>"));
+            inline.Append("<g>");
+            for (int r = 0; r < 200; r++)
+            {
+                int id = (g * 200) + r;
+                int x = r * 5 % 990;
+                int y = g * 10 % 990;
+                withSheet.Append(FormattableString.Invariant($"<rect id='r{id}' class='c{(g + r) % 100}' data-k='{r % 7}' x='{x}' y='{y}' width='4' height='4'/>"));
+                string fill = $"#{(((g + r) % 100) * 2654435 & 0xFFFFFF):x6}";
+                string opacity = r % 2 == 0 ? $" opacity='0.{1 + (g % 9)}'" : string.Empty;
+                string sw = id % 200 == 0 && id / 200 < 100 ? " stroke-width='2'" : string.Empty;
+                inline.Append(FormattableString.Invariant($"<rect x='{x}' y='{y}' width='4' height='4' fill='{fill}' stroke='#333'{opacity}{sw}/>"));
+            }
+
+            withSheet.Append("</g>");
+            inline.Append("</g>");
+        }
+
+        withSheet.Append("</svg>");
+        inline.Append("</svg>");
+        return (System.Text.Encoding.UTF8.GetBytes(withSheet.ToString()), System.Text.Encoding.UTF8.GetBytes(inline.ToString()));
+    }
+
+    private Rgba32 FirstPixel(byte[] doc)
+    {
+        // One pixel is enough to make the load parse the document, run the cascade and build the render tree.
+        var one = new Rgba32[1];
+        Image.Load(doc, _options).CopyPixelsTo<Rgba32>(one, new ImageRect(0, 0, 1, 1));
+        return one[0];
+    }
+
+    [Benchmark(Description = "CSS-heavy, 20k shapes + 400 rules: parse, cascade, render tree")]
+    public Rgba32 CssHeavy() => FirstPixel(_cssHeavy);
+
+    [Benchmark(Description = "same drawing without a style sheet: parse, render tree")]
+    public Rgba32 CssFree() => FirstPixel(_cssFree);
 }

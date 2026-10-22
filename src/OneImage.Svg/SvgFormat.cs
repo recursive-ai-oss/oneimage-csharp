@@ -18,14 +18,23 @@ public sealed class SvgFormat : IImageFormat
 {
     /// <summary>Initializes the format with custom limits.</summary>
     /// <param name="limits">The document limits, or <see langword="null"/> for <see cref="SvgLimits.Default"/>.</param>
-    public SvgFormat(SvgLimits? limits = null)
+    /// <param name="languages">
+    /// The languages the <c>systemLanguage</c> attribute is tested against, most preferred first (BCP 47 tags, compared ignoring case).
+    /// A tag in the attribute matches a language that equals it or is a prefix of it before a hyphen, so <c>en</c> matches <c>en-GB</c>.
+    /// <see langword="null"/> means <c>en</c>.
+    /// </param>
+    public SvgFormat(SvgLimits? limits = null, IEnumerable<string>? languages = null)
     {
         Limits = limits ?? SvgLimits.Default;
+        Languages = languages is null ? ["en"] : [.. languages];
         Decoder = new SvgDecoder(this);
     }
 
     /// <summary>Gets a shared instance with the default limits.</summary>
     public static SvgFormat Instance { get; } = new();
+
+    /// <summary>Gets the languages <c>systemLanguage</c> is matched against.</summary>
+    public IReadOnlyList<string> Languages { get; }
 
     /// <summary>Gets the document limits of this registration.</summary>
     public SvgLimits Limits { get; }

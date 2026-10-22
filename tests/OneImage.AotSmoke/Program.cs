@@ -570,6 +570,32 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// SVG style sheets, switch with systemLanguage, and an image with a data: URI (a PNG made here, and a nested SVG).
+{
+    var svgConfig = new ImageConfiguration().Add(new OneImage.Svg.SvgFormat(languages: ["en"]));
+    byte[] png;
+    using (var pngStream = new MemoryStream())
+    {
+        Image.FromPixels<Rgba32>([new Rgba32(255, 0, 0, 255), new Rgba32(0, 255, 0, 255), new Rgba32(0, 0, 255, 255), new Rgba32(255, 255, 255, 255)], 2, 2).Save(pngStream, PngFormat.Instance);
+        png = pngStream.ToArray();
+    }
+
+    string nested = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'><rect width='4' height='4' fill='#0000ff'/></svg>"));
+    byte[] styled = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20' width='40' height='20'>"
+        + "<style>.a > rect:first-child { fill: #00ff00 !important } rect { fill: #ff0000 }</style>"
+        + "<g class='a'><rect width='10' height='10'/></g>"
+        + "<switch><rect x='10' width='10' height='10' systemLanguage='de' fill='black'/><rect x='10' width='10' height='10' style='fill: #ffff00'/></switch>"
+        + "<image x='20' width='10' height='10' image-rendering='pixelated' href='data:image/png;base64," + Convert.ToBase64String(png) + "'/>"
+        + "<image x='30' width='10' height='10' href='data:image/svg+xml;base64," + nested + "'/></svg>");
+    Rgba32[] sp = Image.Load(styled, new LoadOptions { Configuration = svgConfig }).ToArray<Rgba32>();
+    if (sp[(5 * 40) + 5] != new Rgba32(0, 255, 0, 255) || sp[(5 * 40) + 15] != new Rgba32(255, 255, 0, 255) || sp[(2 * 40) + 22] != new Rgba32(255, 0, 0, 255) || sp[(5 * 40) + 35] != new Rgba32(0, 0, 255, 255))
+    {
+        Console.Error.WriteLine("svg style, switch and image smoke failed");
+        return 1;
+    }
+}
+
 // Right-to-left text: joined Arabic, Hebrew and a mixed-direction line through the bidirectional algorithm and the Arabic shaper.
 {
     var fonts = new OneImage.Text.FontCollection();

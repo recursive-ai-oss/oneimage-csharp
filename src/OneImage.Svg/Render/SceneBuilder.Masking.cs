@@ -396,7 +396,7 @@ internal sealed partial class SceneBuilder
         var pieces = new List<Path>();
         foreach (SvgElement child in cp.Children)
         {
-            _instances += ClipChildCost - 1;
+            _budget.Instances += ClipChildCost - 1;
             Count();
             Path? piece = ClipChild(child, cpStyle, m, vp, depth);
             if (piece is { IsEmpty: false })
@@ -424,7 +424,7 @@ internal sealed partial class SceneBuilder
         SvgElement? useEl = null;
         if (child.Name == "use")
         {
-            if (!BeginIn(parentStyle, m, child, out SvgStyle ust, out Affine ucm, false) || child.Attr("href") is not { Length: > 1 } href || href[0] != '#'
+            if (!BeginIn(parentStyle, m, vp, child, out SvgStyle ust, out Affine ucm, false) || child.Attr("href") is not { Length: > 1 } href || href[0] != '#'
                 || !_doc.Ids.TryGetValue(href[1..], out SvgElement? target) || !IsShape(target) || IsAncestorOrSelf(target, child))
             {
                 return null;
@@ -440,14 +440,14 @@ internal sealed partial class SceneBuilder
             }
 
             shape = target;
-            if (!BeginIn(ust, ucm, shape, out st, out cm, false))
+            if (!BeginIn(ust, ucm, vp, shape, out st, out cm, false))
             {
                 return null;
             }
         }
         else
         {
-            if (!IsShape(child) || !BeginIn(parentStyle, m, child, out st, out cm, false))
+            if (!IsShape(child) || !BeginIn(parentStyle, m, vp, child, out st, out cm, false))
             {
                 return null;
             }

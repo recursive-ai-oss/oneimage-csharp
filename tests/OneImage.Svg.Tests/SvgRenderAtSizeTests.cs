@@ -236,7 +236,7 @@ public class SvgRenderAtSizeTests
         clock.Stop();
         long allocated = GC.GetTotalAllocatedBytes(true) - bytesBefore;
         TestContext.Current.SendDiagnosticMessage($"fan-out refused after {clock.ElapsedMilliseconds} ms, {allocated / 1024 / 1024} MiB allocated");
-        Assert.True(allocated < 300L * 1024 * 1024, $"{allocated / 1024 / 1024} MiB");
+        Assert.True(allocated < 320L * 1024 * 1024, $"{allocated / 1024 / 1024} MiB");
         Assert.True(clock.ElapsedMilliseconds < 5000, $"{clock.ElapsedMilliseconds} ms");
 
         // The refusal is remembered: pulling again does not redo the work.

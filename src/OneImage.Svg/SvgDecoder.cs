@@ -102,7 +102,7 @@ internal sealed class SvgDecoder : IImageDecoder
         source.Position = 0;
         byte[] bytes = SvgSource.Read(source, svg, limits, 0, out _);
         XmlDocument xml = XmlParser.Parse(bytes, svg);
-        SvgDocument doc = SvgDocument.Build(xml);
-        return SceneBuilder.Build(doc, svg, cancellationToken);
+        SvgDocument doc = SvgDocument.Build(xml, svg);
+        return SceneBuilder.Build(doc, svg, cancellationToken, limits, _format.Languages);
     }
 }

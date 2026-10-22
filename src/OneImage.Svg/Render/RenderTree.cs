@@ -113,6 +113,104 @@ internal sealed class RLayer : RNode
     public bool MaskAlpha { get; init; }
 }
 
+/// <summary>
+/// A raster picture read from a <c>data:</c> URI: the decoded-on-demand image and its pixels as the renderer samples them, shared by every
+/// node that draws it (a picture reached through many <c>use</c> elements is decoded once).
+/// </summary>
+internal sealed class RasterSource
+{
+    private readonly object _gate = new();
+    private SampledPixels? _prepared;
+    private bool _failed;
+
+    public RasterSource(Image image) => Image = image;
+
+    /// <summary>Gets the picture; its pixels are not read until <see cref="Prepared"/> asks.</summary>
+    public Image Image { get; }
+
+    /// <summary>
+    /// Returns the raster as 8-bit straight RGBA, in sRGB, shrunk to <paramref name="width"/> x <paramref name="height"/> when that is smaller than
+    /// the picture (so a picture drawn small is filtered, not skipped over), kept for the next tile at the same size. A picture that cannot be
+    /// decoded draws nothing (<see langword="null"/>), now and for every later tile.
+    /// </summary>
+    public SampledPixels? Prepared(int width, int height)
+    {
+        lock (_gate)
+        {
+            if (_failed)
+            {
+                return null;
+            }
+
+            if (_prepared is not null && _prepared.Width == width && _prepared.Height == height)
+            {
+                return _prepared;
+            }
+
+            try
+            {
+                Image src = Image;
+                if (src.Metadata.EmbeddedColorProfile is not null || src.Format.Model == ColorModel.Cmyk)
+                {
+                    try
+                    {
+                        src = src.ConvertColor(ColorProfile.Srgb);
+                    }
+                    catch (ImageException)
+                    {
+                        // A profile that cannot be used: the pixels are taken as they are.
+                    }
+                }
+
+                if (width != src.Width || height != src.Height)
+                {
+                    // Shrinking uses the library's default filter, wide enough not to alias; on encoded values, like the rest of the drawing.
+                    src = src.Resize(width, height, Fit.Stretch, linear: false);
+                }
+
+                return _prepared = new SampledPixels(src.ToArray<Rgba32>(), width, height);
+            }
+            catch (ImageFormatException)
+            {
+                // A truncated or corrupt picture is a dangling image: nothing is drawn.
+                _failed = true;
+                return null;
+            }
+        }
+    }
+}
+
+/// <summary>
+/// A picture: a raster image or a nested SVG document placed by <see cref="Ctm"/>, which maps the picture's own coordinates (pixels for a
+/// raster, user units for a nested document) to scene space.
+/// </summary>
+internal sealed class RImage : RNode
+{
+    /// <summary>Gets the picture's size in its own coordinates.</summary>
+    public required double Width { get; init; }
+
+    public required double Height { get; init; }
+
+    public required Dom.Affine Ctm { get; init; }
+
+    /// <summary>Gets the raster; <see langword="null"/> for a nested document.</summary>
+    public RasterSource? Raster { get; init; }
+
+    /// <summary>Gets the nested document's render tree; <see langword="null"/> for a raster.</summary>
+    public SvgScene? Nested { get; init; }
+
+    /// <summary>The region the picture is limited to (a viewport that cuts a sliced picture), in scene space, or <see langword="null"/>.</summary>
+    public Path? Clip { get; init; }
+
+    public float Opacity { get; init; } = 1;
+
+    /// <summary>Gets whether the picture is sampled without smoothing (<c>image-rendering: optimizeSpeed</c>, <c>pixelated</c>, <c>crisp-edges</c>).</summary>
+    public bool Pixelated { get; init; }
+}
+
+/// <summary>The pixels of a raster picture ready to be sampled.</summary>
+internal sealed record SampledPixels(Rgba32[] Pixels, int Width, int Height);
+
 /// <summary>The render tree of one document, independent of the output size.</summary>
 internal sealed class SvgScene
 {

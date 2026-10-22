@@ -9,7 +9,20 @@ internal static class StyleDeclarations
     /// </summary>
     public static List<(string Name, string Value)> Parse(string style)
     {
-        var result = new List<(string, string)>();
+        var full = ParseFull(style);
+        var result = new List<(string, string)>(full.Count);
+        foreach ((string name, string value, bool _) in full)
+        {
+            result.Add((name, value));
+        }
+
+        return result;
+    }
+
+    /// <summary>As <see cref="Parse"/>, and says which declarations carry <c>!important</c>.</summary>
+    public static List<(string Name, string Value, bool Important)> ParseFull(string style)
+    {
+        var result = new List<(string, string, bool)>();
         if (style.Contains("/*", StringComparison.Ordinal))
         {
             style = StripComments(style);
@@ -60,7 +73,7 @@ internal static class StyleDeclarations
         return result;
     }
 
-    private static string StripComments(string s)
+    internal static string StripComments(string s)
     {
         var sb = new System.Text.StringBuilder(s.Length);
         int i = 0;
@@ -85,7 +98,7 @@ internal static class StyleDeclarations
         return sb.ToString();
     }
 
-    private static void Add(List<(string, string)> result, ReadOnlySpan<char> decl)
+    private static void Add(List<(string, string, bool)> result, ReadOnlySpan<char> decl)
     {
         int colon = decl.IndexOf(':');
         if (colon <= 0)
@@ -96,14 +109,16 @@ internal static class StyleDeclarations
         string name = decl[..colon].Trim().ToString().ToLowerInvariant();
         ReadOnlySpan<char> value = decl[(colon + 1)..].Trim();
         int bang = value.LastIndexOf('!');
+        bool important = false;
         if (bang >= 0 && value[(bang + 1)..].Trim().Equals("important", StringComparison.OrdinalIgnoreCase))
         {
             value = value[..bang].TrimEnd();
+            important = true;
         }
 
         if (name.Length > 0 && value.Length > 0)
         {
-            result.Add((name, value.ToString()));
+            result.Add((name, value.ToString(), important));
         }
     }
 }

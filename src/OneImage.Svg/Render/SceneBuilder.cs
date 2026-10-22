@@ -19,7 +19,7 @@ internal sealed partial class SceneBuilder
         Other,
     }
 
-    private readonly record struct Viewport(double Width, double Height);
+    private readonly record struct Viewport(double Width, double Height, double X = 0, double Y = 0);
 
     private sealed class Frame
     {
@@ -73,27 +73,49 @@ internal sealed partial class SceneBuilder
 
     private const double AntialiasPad = 0.5;
 
+    /// <summary>What a document and the documents nested in it share: the instance count and the bytes of embedded images.</summary>
+    private sealed class Budget
+    {
+        public int Instances;
+        public long ImageBytes;
+    }
+
+    private static readonly string[] DefaultLanguages = ["en"];
+
     private readonly SvgDocument _doc;
     private readonly SvgLimits _limits;
     private readonly CancellationToken _cancel;
+    private readonly ImageLimits _imageLimits;
+    private readonly IReadOnlyList<string> _languages;
+    private readonly int _imageDepth;
+    private readonly Budget _budget;
+    private readonly Dictionary<SvgElement, Picture?> _pictures = [];
     private readonly HashSet<SvgElement> _active = [];
     private readonly Dictionary<SvgElement, (Path? Path, Path? Dotted)> _pathCache = [];
     private double _rootFontSize = SvgStyle.DefaultFontSize;
-    private int _instances;
     private bool _hasContent;
 
-    private SceneBuilder(SvgDocument doc, SvgLimits limits, CancellationToken cancel)
+    private SceneBuilder(SvgDocument doc, SvgLimits limits, ImageLimits imageLimits, IReadOnlyList<string> languages, int imageDepth, Budget budget, CancellationToken cancel)
     {
         _doc = doc;
         _limits = limits;
         _cancel = cancel;
+        _imageLimits = imageLimits;
+        _languages = languages;
+        _imageDepth = imageDepth;
+        _budget = budget;
     }
 
     /// <summary>Builds the scene of a document.</summary>
     /// <exception cref="ImageFormatException">The root size is malformed.</exception>
     /// <exception cref="ImageLimitException">An instantiation, depth or size limit is exceeded.</exception>
-    public static SvgScene Build(SvgDocument doc, SvgLimits limits, CancellationToken cancel) =>
-        new SceneBuilder(doc, limits, cancel).BuildRoot();
+    /// <param name="doc">The styled document.</param>
+    /// <param name="limits">The document limits.</param>
+    /// <param name="cancel">Cancellation.</param>
+    /// <param name="imageLimits">The limits that bound the decoding of embedded raster images; the defaults when <see langword="null"/>.</param>
+    /// <param name="languages">The languages <c>systemLanguage</c> is matched against; <c>en</c> when <see langword="null"/>.</param>
+    public static SvgScene Build(SvgDocument doc, SvgLimits limits, CancellationToken cancel, ImageLimits? imageLimits = null, IReadOnlyList<string>? languages = null) =>
+        new SceneBuilder(doc, limits, imageLimits ?? ImageLimits.Default, languages ?? DefaultLanguages, 0, new Budget(), cancel).BuildRoot();
 
     private SvgScene BuildRoot()
     {
@@ -108,7 +130,7 @@ internal sealed partial class SceneBuilder
         Viewport vp;
         if (hasViewBox)
         {
-            vp = new Viewport(vw, vh);
+            vp = new Viewport(vw, vh, vx, vy);
             if (w is { } ww && h is { } hh)
             {
                 ctm = AspectRatio.Parse(root.Attr("preserveAspectRatio")).Fit(vx, vy, vw, vh, ww, hh);
@@ -121,7 +143,7 @@ internal sealed partial class SceneBuilder
 
         _rootVp = vp;
 
-        if (!st.Displayed)
+        if (!st.Displayed || !Conditions(root))
         {
             return new SvgScene(w ?? 1, h ?? 1, [], false);
         }
@@ -133,9 +155,15 @@ internal sealed partial class SceneBuilder
                 return new SvgScene(w ?? 1, h ?? 1, [], false);
             }
 
-            // CSS gives the root element's transform an origin at the center of its box.
+            // CSS gives the root element's transform an origin at the center of its box, unless transform-origin says otherwise;
+            // percentages in it refer to the viewport.
             double ox = (w ?? vp.Width) / 2;
             double oy = (h ?? vp.Height) / 2;
+            if (root.Prop("transform-origin") is { } rootOrigin)
+            {
+                _ = TryOrigin(rootOrigin, 0, 0, w ?? vp.Width, h ?? vp.Height, st, out ox, out oy);
+            }
+
             ctm = Affine.Translate(ox, oy).Multiply(t).Multiply(Affine.Translate(-ox, -oy)).Multiply(ctm);
         }
 
@@ -191,7 +219,7 @@ internal sealed partial class SceneBuilder
             }
 
             SvgElement child = f.Kids[f.Next++];
-            if ((_instances & 0x3FF) == 0)
+            if ((_budget.Instances & 0x3FF) == 0)
             {
                 _cancel.ThrowIfCancellationRequested();
             }
@@ -252,7 +280,7 @@ internal sealed partial class SceneBuilder
 
     private void Count()
     {
-        if (++_instances > _limits.MaxInstances)
+        if (++_budget.Instances > _limits.MaxInstances)
         {
             throw new ImageLimitException($"The SVG instantiates more than {_limits.MaxInstances} elements (check use references that multiply).");
         }
@@ -260,8 +288,21 @@ internal sealed partial class SceneBuilder
 
     private void Process(Stack<Frame> stack, Frame f, SvgElement e)
     {
+        if (e.Attrs.Count > 0 && !Conditions(e))
+        {
+            return;
+        }
+
         switch (e.Name)
         {
+            case "switch":
+                Count();
+                PushSwitch(stack, f, e);
+                break;
+            case "image":
+                Count();
+                EmitImage(f, e);
+                break;
             case "g" or "a":
                 Count();
                 PushGroup(stack, f, e);
@@ -287,9 +328,9 @@ internal sealed partial class SceneBuilder
 
     // Style, display and transform of an element about to open or draw: false when it renders nothing.
     private bool Begin(Frame f, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false) =>
-        BeginIn(f.Style, f.Ctm, e, out st, out ctm, ignoreTransform);
+        BeginIn(f.Style, f.Ctm, f.Vp, e, out st, out ctm, ignoreTransform);
 
-    private bool BeginIn(in SvgStyle parent, Affine parentCtm, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false)
+    private bool BeginIn(in SvgStyle parent, Affine parentCtm, Viewport vp, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false)
     {
         st = SvgStyle.Compute(e, parent, _rootFontSize);
         ctm = parentCtm;
@@ -305,6 +346,12 @@ internal sealed partial class SceneBuilder
             if (!t.IsInvertible)
             {
                 return false;
+            }
+
+            // transform-origin moves the point the transform acts around; its reference box is the nearest viewBox.
+            if (e.Prop("transform-origin") is { } origin && TryOrigin(origin, vp.X, vp.Y, vp.Width, vp.Height, st, out double ox, out double oy) && (ox != 0 || oy != 0))
+            {
+                t = Affine.Translate(ox, oy).Multiply(t).Multiply(Affine.Translate(-ox, -oy));
             }
 
             ctm = ctm.Multiply(t);
@@ -469,7 +516,7 @@ internal sealed partial class SceneBuilder
         if (SvgValues.TryViewBox(e.Attr("viewBox"), out double vx, out double vy, out double vw, out double vh))
         {
             inner = inner.Multiply(AspectRatio.Parse(e.Attr("preserveAspectRatio")).Fit(vx, vy, vw, vh, w, h));
-            vp = new Viewport(vw, vh);
+            vp = new Viewport(vw, vh, vx, vy);
         }
 
         Path? clip = f.Clip;
@@ -495,6 +542,321 @@ internal sealed partial class SceneBuilder
     };
 
     private double Num(SvgElement e, string name, Axis axis, in SvgStyle st, Viewport vp) => Resolve(ParseLength(e.Attr(name)), axis, st, vp);
+
+    // ---- conditional processing ----
+
+    // SVG 1.1 section 5.8: an element with requiredFeatures, requiredExtensions or systemLanguage renders only when all of them are true.
+    // This renderer supports no extensions, so any requiredExtensions is false; requiredFeatures was removed in SVG 2 and counts as true,
+    // except that an empty value is false as in SVG 1.1.
+    private bool Conditions(SvgElement e)
+    {
+        if (e.Attrs.ContainsKey("requiredExtensions"))
+        {
+            return false;
+        }
+
+        if (e.Attrs.TryGetValue("requiredFeatures", out string? features) && features.Trim().Length == 0)
+        {
+            return false;
+        }
+
+        return !e.Attrs.TryGetValue("systemLanguage", out string? languages) || LanguageMatches(languages);
+    }
+
+    // A language tag in the value matches a configured language when they are equal, or when the configured one is a prefix of the tag
+    // followed by '-' (so "en" matches "en-GB"), ignoring case. An empty list is false.
+    private bool LanguageMatches(string value)
+    {
+        foreach (Range r in value.AsSpan().Split(','))
+        {
+            ReadOnlySpan<char> tag = value.AsSpan(r).Trim();
+            if (tag.IsEmpty)
+            {
+                continue;
+            }
+
+            foreach (string lang in _languages)
+            {
+                if (tag.Equals(lang, StringComparison.OrdinalIgnoreCase)
+                    || (tag.Length > lang.Length && tag[lang.Length] == '-' && tag[..lang.Length].Equals(lang, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSwitchCandidate(string name) =>
+        name is "a" or "g" or "image" or "svg" or "switch" or "text" or "use" or "foreignObject" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon" or "path";
+
+    // The first direct child that can be rendered and whose conditions hold is the only one that is; the switch itself behaves as a group.
+    private void PushSwitch(Stack<Frame> stack, Frame f, SvgElement e)
+    {
+        if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
+        {
+            return;
+        }
+
+        foreach (SvgElement child in e.Children)
+        {
+            if (IsSwitchCandidate(child.Name) && Conditions(child))
+            {
+                Open(stack, f, [child], st, ctm, f.Vp, f.Clip, st.Opacity < 1, maxLayers: _limits.MaxLayerDepth);
+                return;
+            }
+        }
+    }
+
+    // ---- transform-origin ----
+
+    private enum OriginKind
+    {
+        Length,
+        Left,
+        Right,
+        Top,
+        Bottom,
+        Center,
+    }
+
+    private static OriginKind OriginWord(string t) => t switch
+    {
+        "left" => OriginKind.Left,
+        "right" => OriginKind.Right,
+        "top" => OriginKind.Top,
+        "bottom" => OriginKind.Bottom,
+        "center" => OriginKind.Center,
+        _ => OriginKind.Length,
+    };
+
+    // CSS Transforms 2: one to three values (a third is a length along z and is ignored); keywords and lengths or percentages of the
+    // reference box. A single value is the horizontal one, unless it is top or bottom.
+    private bool TryOrigin(string value, double rx, double ry, double rw, double rh, in SvgStyle st, out double ox, out double oy)
+    {
+        ox = 0;
+        oy = 0;
+        string[] t = value.Split([' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+        if (t.Length is 0 or > 3)
+        {
+            return false;
+        }
+
+        OriginKind ka = OriginWord(t[0]);
+        OriginKind kb = t.Length >= 2 ? OriginWord(t[1]) : OriginKind.Center;
+        string sa = t[0];
+        string sb = t.Length >= 2 ? t[1] : "center";
+        if (t.Length == 1 && ka is OriginKind.Top or OriginKind.Bottom)
+        {
+            (ka, kb) = (OriginKind.Center, ka);
+            (sa, sb) = ("center", t[0]);
+        }
+        else if (ka is OriginKind.Top or OriginKind.Bottom || kb is OriginKind.Left or OriginKind.Right)
+        {
+            (ka, kb) = (kb, ka);
+            (sa, sb) = (sb, sa);
+        }
+
+        if (ka is OriginKind.Top or OriginKind.Bottom || kb is OriginKind.Left or OriginKind.Right)
+        {
+            return false;
+        }
+
+        if (!OriginOffset(ka, sa, rw, st, out double dx) || !OriginOffset(kb, sb, rh, st, out double dy))
+        {
+            return false;
+        }
+
+        ox = rx + dx;
+        oy = ry + dy;
+        return double.IsFinite(ox) && double.IsFinite(oy);
+    }
+
+    private bool OriginOffset(OriginKind kind, string text, double size, in SvgStyle st, out double offset)
+    {
+        offset = 0;
+        switch (kind)
+        {
+            case OriginKind.Left or OriginKind.Top:
+                return true;
+            case OriginKind.Right or OriginKind.Bottom:
+                offset = size;
+                return true;
+            case OriginKind.Center:
+                offset = size / 2;
+                return true;
+        }
+
+        if (!Length.TryParse(text, out Length l))
+        {
+            return false;
+        }
+
+        offset = l.Unit == LengthUnit.Percent ? l.Value / 100 * size : Resolve(l, Axis.Other, st, new Viewport(0, 0));
+        return true;
+    }
+
+    // ---- images ----
+
+    // An image with a data: URI: a raster decoded by the library's own codecs, or a nested SVG document. Any other href is dangling.
+    private void EmitImage(Frame f, SvgElement e)
+    {
+        if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0 || !st.Visible)
+        {
+            return;
+        }
+
+        // A picture is read once per element, however many times use instantiates it.
+        if (!_pictures.TryGetValue(e, out Picture? picture))
+        {
+            picture = LoadPicture(e);
+            _pictures[e] = picture;
+        }
+
+        if (picture is null)
+        {
+            return;
+        }
+
+        RasterSource? raster = picture.Raster;
+        SvgScene? nested = picture.Nested;
+        double iw = picture.Width;
+        double ih = picture.Height;
+        if (!(iw > 0) || !(ih > 0))
+        {
+            return;
+        }
+
+        double x = Resolve(ParseLength(e.Attr("x")), Axis.X, st, f.Vp);
+        double y = Resolve(ParseLength(e.Attr("y")), Axis.Y, st, f.Vp);
+
+        // A missing or auto width or height comes from the picture: both from its size, one from the other through its aspect ratio.
+        double w = Length.TryParse(e.Attr("width") ?? string.Empty, out Length lw) ? Resolve(lw, Axis.X, st, f.Vp) : double.NaN;
+        double h = Length.TryParse(e.Attr("height") ?? string.Empty, out Length lh) ? Resolve(lh, Axis.Y, st, f.Vp) : double.NaN;
+        if (double.IsNaN(w) && double.IsNaN(h))
+        {
+            (w, h) = (iw, ih);
+        }
+        else if (double.IsNaN(w))
+        {
+            w = h * iw / ih;
+        }
+        else if (double.IsNaN(h))
+        {
+            h = w * ih / iw;
+        }
+
+        if (!(w > 0) || !(h > 0) || !double.IsFinite(w) || !double.IsFinite(h))
+        {
+            return;
+        }
+
+        AspectRatio ar = AspectRatio.Parse(e.Attr("preserveAspectRatio"));
+        Affine placed = ctm.Multiply(Affine.Translate(x, y)).Multiply(ar.Fit(0, 0, iw, ih, w, h));
+        if (!placed.IsFinite || Math.Abs(placed.A) > Coord.Limit || Math.Abs(placed.D) > Coord.Limit || Math.Abs(placed.E) > Coord.Limit || Math.Abs(placed.F) > Coord.Limit)
+        {
+            return;
+        }
+
+        // A sliced picture overflows its viewport and is cut to it.
+        Path? clip = f.Clip;
+        if (ar.Slice && !ar.None)
+        {
+            Path box = Path.Rectangle(Coord.F(x), Coord.F(y), Coord.F(w), Coord.F(h)).Transform(ctm.ToMatrix3x2());
+            clip = clip is null ? box : clip.Intersect(box);
+        }
+
+        (double bx0, double by0, double bx1, double by1) = placed.TransformRect(0, 0, iw, ih);
+        var node = new RImage
+        {
+            Width = iw,
+            Height = ih,
+            Ctm = placed,
+            Raster = raster,
+            Nested = nested,
+            Clip = clip,
+            Opacity = (float)st.Opacity,
+            Pixelated = st.Pixelated,
+            ContentX1 = bx1,
+            ContentY1 = by1,
+            X0 = bx0 - 1,
+            Y0 = by0 - 1,
+            X1 = bx1 + 1,
+            Y1 = by1 + 1,
+        };
+
+        if (clip is not null)
+        {
+            System.Drawing.RectangleF cb = clip.Bounds;
+            node.X0 = Math.Max(node.X0, cb.Left - 1);
+            node.Y0 = Math.Max(node.Y0, cb.Top - 1);
+            node.X1 = Math.Min(node.X1, cb.Right + 1);
+            node.Y1 = Math.Min(node.Y1, cb.Bottom + 1);
+            if (node.X0 > node.X1 || node.Y0 > node.Y1)
+            {
+                return;
+            }
+        }
+
+        _hasContent = true;
+        f.Out.Add(node);
+    }
+
+    private sealed record Picture(RasterSource? Raster, SvgScene? Nested, double Width, double Height);
+
+    // Reads the data: URI of an image element; null when there is no usable picture (the image is dangling).
+    private Picture? LoadPicture(SvgElement e)
+    {
+        if (e.Attr("href") is not { } href || !DataUri.TryDecode(href, _limits.MaxImageBytes, out byte[] data))
+        {
+            return null;
+        }
+
+        _budget.ImageBytes += data.Length;
+        if (_budget.ImageBytes > _limits.MaxTotalImageBytes)
+        {
+            throw new ImageLimitException($"The embedded images of the document are larger than {_limits.MaxTotalImageBytes} bytes in total.");
+        }
+
+        if (SvgSniffer.Matches(data.AsSpan(0, Math.Min(data.Length, 4096))))
+        {
+            if (_imageDepth >= _limits.MaxImageDepth)
+            {
+                throw new ImageLimitException($"Images are nested more than {_limits.MaxImageDepth} deep.");
+            }
+
+            SvgScene? scene = LoadNested(data);
+            return scene is null ? null : new Picture(null, scene, scene.Width, scene.Height);
+        }
+
+        try
+        {
+            Image raster = Image.Load(data, new LoadOptions { Limits = _imageLimits });
+            return new Picture(new RasterSource(raster), null, raster.Width, raster.Height);
+        }
+        catch (ImageFormatException)
+        {
+            return null;
+        }
+    }
+
+    // The render tree of a nested SVG image, sharing this document's budgets; null when the data is not a usable SVG document.
+    private SvgScene? LoadNested(byte[] data)
+    {
+        try
+        {
+            using var stream = new MemoryStream(data, writable: false);
+            byte[] bytes = SvgSource.Read(stream, _limits, _imageLimits, 0, out _);
+            Xml.XmlDocument xml = Xml.XmlParser.Parse(bytes, _limits);
+            SvgDocument doc = SvgDocument.Build(xml, _limits);
+            return new SceneBuilder(doc, _limits, _imageLimits, _languages, _imageDepth + 1, _budget, _cancel).BuildRoot();
+        }
+        catch (ImageFormatException)
+        {
+            return null;
+        }
+    }
 
     // ---- shapes ----
 

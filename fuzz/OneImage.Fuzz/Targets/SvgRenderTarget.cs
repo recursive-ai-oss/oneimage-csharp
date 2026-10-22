@@ -21,6 +21,12 @@ internal static class SvgRenderTarget
         MaxReferenceDepth = 8,
         MaxLayerDepth = 8,
         MaxPatternTilePixels = 1 << 18,
+        MaxCssBytes = 1 << 16,
+        MaxCssRules = 500,
+        MaxCssMatchSteps = 1_000_000,
+        MaxImageBytes = 1 << 16,
+        MaxTotalImageBytes = 1 << 18,
+        MaxImageDepth = 2,
     };
 
     private static readonly LoadOptions Options = new()

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 200 200" width="200" height="200">
+  <style type="text/css">
+    /* selectors, specificity, !important, inheritance keywords */
+    @import url("other.css");
+    @media print { rect { fill: red } }
+    rect { fill: green }
+    .a, .b.c > rect:first-child { fill: #fa0; stroke: black }
+    g#g1 > rect:nth-child(2n+1):not(.skip) { fill: blue !important }
+    [data-k^="v"] ~ circle, svg g rect[data-k="w"] { stroke-width: 3; opacity: .5 }
+    path:only-of-type, :root:empty { fill: inherit; stroke: initial }
+    #u { transform: translate(10px, 5px) rotate(5deg); transform-origin: 25% top }
+  </style>
+  <g id="g1" class="b c" fill="red">
+    <rect class="skip" x="10" y="10" width="40" height="40" data-k="w"/>
+    <rect x="60" y="10" width="40" height="40" style="stroke: red !important; fill: unset"/>
+    <rect data-k="v1" x="110" y="10" width="40" height="40"/>
+    <circle cx="175" cy="30" r="15"/>
+  </g>
+  <switch id="s" transform="scale(1)" transform-origin="center">
+    <rect systemLanguage="ru, de-AT" width="20" height="20" fill="red"/>
+    <rect requiredExtensions="http://example.org/x" width="20" height="20" fill="red"/>
+    <use id="u" xlink:href="#sym" x="20" y="70" width="60" height="60" systemLanguage="en"/>
+  </switch>
+  <symbol id="sym" viewBox="0 0 10 10"><image width="100%" height="100%" preserveAspectRatio="xMaxYMin slice" image-rendering="optimizeSpeed" href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAJElEQVR4nIXKsQ0AIAwDMEficLg8HXoAkxcHrYqoOm4RrPmNNzNHD4ZCFxc7AAAAAElFTkSuQmCC"/></symbol>
+  <image x="100" y="70" width="80" transform="rotate(10)" transform-origin="100px 100px" xlink:href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHN0eWxlPmNpcmNsZXtmaWxsOiMwNmN9PC9zdHlsZT48Y2lyY2xlIGN4PSI1IiBjeT0iNSIgcj0iNSIvPjxpbWFnZSB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBocmVmPSJkYXRhOmltYWdlL3BuZztiYXNlNjQsaVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFRQUFBQUVDQVlBQUFDcDhaNStBQUFBSkVsRVFWUjRuSVhLc1EwQUlBd0RNRWZpY0xnOEhYb0FreGNIcllxb09tNFJyUG1OTnpOSEQ0WkNGeGM3QUFBQUFFbEZUa1N1UW1DQyIvPjwvc3ZnPg=="/>
+  <image x="0" y="150" width="40" height="40" visibility="hidden" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAJElEQVR4nIXKsQ0AIAwDMEficLg8HXoAkxcHrYqoOm4RrPmNNzNHD4ZCFxc7AAAAAElFTkSuQmCC"/>
+  <image x="40" y="150" width="40" height="40" href="https://example.com/not-fetched.png"/>
+</svg>

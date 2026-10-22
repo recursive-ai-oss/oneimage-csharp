@@ -51,4 +51,26 @@ public sealed class SvgLimits
     /// rendered at a coarser resolution (nested patterns get half of their parent's share each), not refused. Default 16 megapixels.
     /// </summary>
     public int MaxPatternTilePixels { get; init; } = 16 * 1024 * 1024;
+
+    /// <summary>Gets the largest total size in characters of all <c>&lt;style&gt;</c> elements and <c>style</c> attributes together. Default 2 MiB.</summary>
+    public int MaxCssBytes { get; init; } = 2 * 1024 * 1024;
+
+    /// <summary>Gets how many style rules (one per selector of a selector list) the style sheets may define. Default 20,000.</summary>
+    public int MaxCssRules { get; init; } = 20_000;
+
+    /// <summary>
+    /// Gets how many selector matching steps (one per simple-selector test or ancestor/sibling move) the cascade may spend on one document.
+    /// Honest style sheets use a small fraction of this because rules are indexed by id, class and type; a hostile one is stopped with
+    /// <see cref="ImageLimitException"/>. Default 100 million.
+    /// </summary>
+    public long MaxCssMatchSteps { get; init; } = 100_000_000;
+
+    /// <summary>Gets how many levels of <c>image</c> elements may nest (an SVG image that itself contains an SVG image ...). Default 3.</summary>
+    public int MaxImageDepth { get; init; } = 3;
+
+    /// <summary>Gets the largest <c>data:</c> payload of one <c>image</c> in bytes. Default 16 MiB.</summary>
+    public int MaxImageBytes { get; init; } = 16 * 1024 * 1024;
+
+    /// <summary>Gets the largest total of all <c>data:</c> image payloads in one document, nested images included, in bytes. Default 64 MiB.</summary>
+    public long MaxTotalImageBytes { get; init; } = 64L * 1024 * 1024;
 }

@@ -73,6 +73,7 @@ internal struct SvgStyle
     public double FontSize;
     public bool Visible;
     public bool Antialias;
+    public bool Pixelated;
 
     /// <summary>The <c>paint-order</c> as three base-4 digits, first painted first: 0 fill, 1 stroke, 2 markers. Normal is fill, stroke, markers.</summary>
     public int PaintOrder;
@@ -97,6 +98,7 @@ internal struct SvgStyle
         Visible = true,
         Antialias = true,
         PaintOrder = NormalPaintOrder,
+        Pixelated = false,
         Opacity = 1,
         Displayed = true,
     };
@@ -121,7 +123,7 @@ internal struct SvgStyle
         // font-size and color first: other values (em lengths, currentColor) are evaluated against the element's own.
         if (e.Props.TryGetValue("font-size", out string? fs))
         {
-            s.FontSize = ParseFontSize(fs, parent.FontSize, rootFontSize) ?? parent.FontSize;
+            s.FontSize = fs == "initial" ? DefaultFontSize : ParseFontSize(fs, parent.FontSize, rootFontSize) ?? parent.FontSize;
         }
 
         if (e.Props.TryGetValue("color", out string? col))
@@ -129,6 +131,10 @@ internal struct SvgStyle
             if (col == "inherit")
             {
                 s.Color = parent.Color;
+            }
+            else if (col == "initial")
+            {
+                s.Color = Initial.Color;
             }
             else if (CssColor.TryParse(col, out Rgba32 c))
             {
@@ -141,6 +147,27 @@ internal struct SvgStyle
             if (value == "inherit")
             {
                 InheritOne(ref s, name, parent, e);
+                continue;
+            }
+
+            if (value == "initial")
+            {
+                InitialOne(ref s, name);
+                continue;
+            }
+
+            if (value == "unset")
+            {
+                // unset is inherit for inherited properties and initial for the others.
+                if (Inherited(name))
+                {
+                    InheritOne(ref s, name, parent, e);
+                }
+                else
+                {
+                    InitialOne(ref s, name);
+                }
+
                 continue;
             }
 
@@ -252,6 +279,13 @@ internal struct SvgStyle
                 case "display":
                     s.Displayed = value != "none";
                     break;
+                case "image-rendering":
+                    if (value is "optimizeSpeed" or "pixelated" or "crisp-edges" or "auto" or "optimizeQuality" or "smooth" or "high-quality")
+                    {
+                        s.Pixelated = value is "optimizeSpeed" or "pixelated" or "crisp-edges";
+                    }
+
+                    break;
                 case "shape-rendering":
                     if (value is "optimizeSpeed" or "crispEdges" or "geometricPrecision" or "auto")
                     {
@@ -285,6 +319,7 @@ internal struct SvgStyle
             case "stroke-dashoffset": s.DashOffset = p.DashOffset; break;
             case "visibility": s.Visible = p.Visible; break;
             case "shape-rendering": s.Antialias = p.Antialias; break;
+            case "image-rendering": s.Pixelated = p.Pixelated; break;
             case "display": s.Displayed = true; break;
             case "font-size": s.FontSize = p.FontSize; break;
         }
@@ -334,6 +369,38 @@ internal struct SvgStyle
 
         code = order[0] | (order[1] << 2) | (order[2] << 4);
         return true;
+    }
+
+    private static bool Inherited(string name) => name is "fill" or "stroke" or "fill-opacity" or "stroke-opacity" or "fill-rule" or "paint-order" or "clip-rule"
+        or "stroke-width" or "stroke-linecap" or "stroke-linejoin" or "stroke-miterlimit" or "stroke-dasharray" or "stroke-dashoffset"
+        or "visibility" or "shape-rendering" or "image-rendering" or "font-size" or "color";
+
+    private static void InitialOne(ref SvgStyle s, string name)
+    {
+        SvgStyle i = Initial;
+        switch (name)
+        {
+            case "fill": s.Fill = i.Fill; break;
+            case "stroke": s.Stroke = i.Stroke; break;
+            case "fill-opacity": s.FillOpacity = i.FillOpacity; break;
+            case "stroke-opacity": s.StrokeOpacity = i.StrokeOpacity; break;
+            case "opacity": s.Opacity = i.Opacity; break;
+            case "fill-rule": s.FillEvenOdd = i.FillEvenOdd; break;
+            case "paint-order": s.PaintOrder = i.PaintOrder; break;
+            case "clip-rule": s.ClipEvenOdd = i.ClipEvenOdd; break;
+            case "stroke-width": s.StrokeWidth = i.StrokeWidth; break;
+            case "stroke-linecap": s.LineCap = i.LineCap; break;
+            case "stroke-linejoin": s.LineJoin = i.LineJoin; break;
+            case "stroke-miterlimit": s.MiterLimit = i.MiterLimit; break;
+            case "stroke-dasharray": s.DashArray = i.DashArray; break;
+            case "stroke-dashoffset": s.DashOffset = i.DashOffset; break;
+            case "visibility": s.Visible = i.Visible; break;
+            case "shape-rendering": s.Antialias = i.Antialias; break;
+            case "image-rendering": s.Pixelated = i.Pixelated; break;
+            case "display": s.Displayed = true; break;
+            case "font-size": s.FontSize = i.FontSize; break;
+            case "color": s.Color = i.Color; break;
+        }
     }
 
     private static bool TryOpacity(string v, out double result)

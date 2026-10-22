@@ -103,6 +103,9 @@ internal static class SceneRenderer
             case RPath p:
                 DrawPath(canvas, p, dev);
                 break;
+            case RImage image:
+                ImageRenderer.Draw(canvas, image, dev, depth, limits);
+                break;
             case RLayer layer:
                 if (depth >= limits.MaxLayerDepth)
                 {
