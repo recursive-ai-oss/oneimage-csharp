@@ -216,6 +216,14 @@ internal sealed class JpegBitWriter : IDisposable
 
     public bool Counting { get; set; }
 
+    /// <summary>Empties a raw-mode writer so its buffer can collect the next segment.</summary>
+    public void Reset()
+    {
+        _pos = 0;
+        Acc = 0;
+        Bits = 0;
+    }
+
     /// <summary>The 32-bit words written so far by a raw-mode writer, big-endian.</summary>
     public ReadOnlySpan<byte> RawWords => _buf.AsSpan(0, _pos);
 

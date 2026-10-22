@@ -105,4 +105,37 @@ public class JpegTwoPassTests
 
         Assert.True(stored.AsSpan().SequenceEqual(twoPass));
     }
+
+    /// <summary>Without restart intervals the coding pass runs rows in parallel; the bytes must not depend on the degree.</summary>
+    [Theory]
+    [InlineData("base-420", 1)]
+    [InlineData("base-420", 2)]
+    [InlineData("base-420", 8)]
+    [InlineData("base-444", 3)]
+    [InlineData("base-444", 8)]
+    public void TwoPassWithoutRestartsEqualsStoredAtAnyDegree(string name, int degree)
+    {
+        Image img = Image.Load(JpegTestSupport.Read(name));
+        var o = new JpegEncoderOptions { Quality = 85 };
+        byte[] Encode(int d)
+        {
+            using var ms = new MemoryStream();
+            img.Save(ms, JpegFormat.Instance, new SaveOptions { EncoderOptions = o, MaxDegree = d });
+            return ms.ToArray();
+        }
+
+        byte[] stored = Encode(1);
+        byte[] twoPass;
+        try
+        {
+            OneImage.Codecs.Jpeg.JpegEncodeSession.StoredPixelLimitForTests = 1;
+            twoPass = Encode(degree);
+        }
+        finally
+        {
+            OneImage.Codecs.Jpeg.JpegEncodeSession.StoredPixelLimitForTests = 0;
+        }
+
+        Assert.True(stored.AsSpan().SequenceEqual(twoPass));
+    }
 }
