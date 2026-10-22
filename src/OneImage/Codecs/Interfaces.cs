@@ -105,6 +105,37 @@ public interface IImageDecoder
     void DecodeFrame(Stream source, ImageInfo info, int frameIndex, in DecodeRequest request, IRowSink sink, ImageLimits limits, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Optional addition to <see cref="IImageDecoder"/> for random-access decoders whose natural decode unit (a strip or a
+/// block) is larger than the core's 128x128 tiles. The core asks for the native blocks of a large region to be decoded
+/// ahead of the per-tile requests, spreading them over its worker threads; the per-tile <c>DecodeFrame</c> calls then
+/// find the blocks already decoded in the decoder's own cache instead of queueing behind one another on the same block.
+/// Decoders without a block cache should not implement it.
+/// </summary>
+public interface IBlockedDecoder
+{
+    /// <summary>Gets the size in pixels of the decoder's native blocks for a frame (a strip is the frame width by the rows per strip).</summary>
+    /// <param name="info">The value <see cref="IImageDecoder.ReadInfo"/> returned.</param>
+    /// <param name="frameIndex">Zero-based frame index.</param>
+    /// <param name="width">Block width in pixels.</param>
+    /// <param name="height">Block height in pixels.</param>
+    /// <returns><see langword="false"/> when the frame has no useful block structure.</returns>
+    bool TryGetBlockSize(ImageInfo info, int frameIndex, out int width, out int height);
+
+    /// <summary>
+    /// Decodes the native blocks that intersect <paramref name="region"/> (full-frame coordinates, scale 1) so that later
+    /// <c>DecodeFrame</c> calls for parts of it are cheap. May be called concurrently for different regions. Has no output; corrupt data
+    /// throws the same typed exceptions <c>DecodeFrame</c> would.
+    /// </summary>
+    /// <param name="source">A seekable stream whose position 0 is the first byte of the image.</param>
+    /// <param name="info">The value <see cref="IImageDecoder.ReadInfo"/> returned.</param>
+    /// <param name="frameIndex">Zero-based frame index.</param>
+    /// <param name="region">The region whose blocks to decode.</param>
+    /// <param name="limits">The limits to enforce.</param>
+    /// <param name="cancellationToken">Observe while decoding.</param>
+    void PrefetchBlocks(Stream source, ImageInfo info, int frameIndex, ImageRect region, ImageLimits limits, CancellationToken cancellationToken);
+}
+
 /// <summary>Base class for codec-specific encoder settings (quality, compression level, ...).</summary>
 public abstract class ImageEncoderOptions
 {

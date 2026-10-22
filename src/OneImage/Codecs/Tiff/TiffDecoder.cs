@@ -29,7 +29,7 @@ internal sealed class TiffImageState
 /// TIFF decoder. Strips and tiles are addressed through the offset tables, so a region read touches only the blocks that
 /// intersect it and the decoder advertises random access. See <see cref="TiffFormat"/> for the supported feature set.
 /// </summary>
-internal sealed class TiffDecoder : IImageDecoder
+internal sealed class TiffDecoder : IImageDecoder, IBlockedDecoder
 {
     // Offset tables, palettes and JPEG tables of all pages stay in memory; many pages pointing at the same big table must not multiply it.
     private const long MaxRetainedBytes = 128L << 20;
@@ -183,6 +183,52 @@ internal sealed class TiffDecoder : IImageDecoder
         finally
         {
             ArrayPool<byte>.Shared.Return(band);
+        }
+    }
+
+    public bool TryGetBlockSize(ImageInfo info, int frameIndex, out int width, out int height)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+        if (info.DecoderState is TiffImageState state && (uint)frameIndex < (uint)state.Frames.Length)
+        {
+            TiffFrame f = state.Frames[frameIndex];
+            width = f.BlockWidth;
+            height = f.BlockHeight;
+            return true;
+        }
+
+        width = height = 0;
+        return false;
+    }
+
+    public void PrefetchBlocks(Stream source, ImageInfo info, int frameIndex, ImageRect region, ImageLimits limits, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(info);
+        ArgumentNullException.ThrowIfNull(limits);
+        if (info.DecoderState is not TiffImageState state || (uint)frameIndex >= (uint)state.Frames.Length)
+        {
+            throw new ArgumentException("The image info was not produced by the TIFF decoder.", nameof(info));
+        }
+
+        TiffFrame f = state.Frames[frameIndex];
+        ImageRect r = region.Intersect(new ImageRect(0, 0, f.Width, f.Height));
+        if (r.IsEmpty)
+        {
+            return;
+        }
+
+        TiffFile file = state.File.Rebind(source);
+        for (int by = r.Y / f.BlockHeight; by <= (r.Bottom - 1) / f.BlockHeight; by++)
+        {
+            for (int bx = r.X / f.BlockWidth; bx <= (r.Right - 1) / f.BlockWidth; bx++)
+            {
+                for (int plane = 0; plane < f.Planes; plane++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    GetBlock(state, file, f, frameIndex, (plane * f.BlocksPerPlane) + (by * f.BlocksAcross) + bx, limits, cancellationToken);
+                }
+            }
         }
     }
 
