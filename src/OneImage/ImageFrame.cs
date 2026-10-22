@@ -6,7 +6,7 @@ namespace OneImage;
 /// One frame of an <see cref="Image"/>: a lazy, immutable grid of pixels plus its display time.
 /// Pixels are computed on demand when read; reading can fail late (corrupt data, a changed source file) with the typed image exceptions.
 /// </summary>
-public sealed class ImageFrame
+public sealed partial class ImageFrame
 {
     internal ImageFrame(Node node, TimeSpan delay, int index)
     {
