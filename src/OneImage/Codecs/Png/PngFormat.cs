@@ -66,8 +66,9 @@ public enum PngColorMode
     /// <summary>Always write gray or truecolor, never a palette.</summary>
     Truecolor = 1,
 
-    /// <summary>Require a palette: more than 256 colors needs a quantizer, which is not wired in yet, and fails with
-    /// <see cref="ImageOperationException"/>.</summary>
+    /// <summary>Require a palette. An image with more than 256 colors is reduced to 256 by the shared quantizer (without dithering,
+    /// keeping alpha). Only 8-bit RGB and RGBA images are converted; other formats are written as they are.
+    /// To dither or choose the palette size, call <see cref="Image.Quantize"/> first.</summary>
     Indexed = 2,
 }
 
