@@ -479,7 +479,7 @@ Where OneImage has part of a feature, the table says what it covers and what it 
 
 Drawing is SixLabors.ImageSharp.Drawing 2.1.7; text layout and fonts are SixLabors.Fonts 2.1.3. OneImage 1.0 has neither.
 
-| ImageSharp | As of 1.0 | Closest workaround |
+| ImageSharp | OneImage today | Closest workaround |
 |---|---|---|
 | `Fill(...)` (whole image, rectangle, path, polygon, path collection), `Draw(...)` (rectangle, path, path collection), `DrawLine`, `DrawPolygon`, `DrawBeziers`, `DrawPath`, `FillPolygon`, `Clear(...)` | No paths, shapes, fills or strokes. | Write pixels yourself through `Canvas.Lock`, or draw elsewhere and bring the result in with `Composite`. |
 | Shapes and paths: `IPath`, `Path`, `PathBuilder` (lines, arcs, quadratic and cubic Béziers, SVG arc, figures, transforms), `Path.TryParseSvgPath`, `Polygon`, `ComplexPolygon`, `RectangularPolygon`, `RegularPolygon`, `Star`, `EllipsePolygon`, `PathCollection`; path `Translate`/`Scale`/`Rotate`/`Reverse`/`ComputeLength`; boolean `Clip` (`ClippingOperation`: union, intersection, difference, xor); `GenerateOutline` (stroke to outline) | None. | None. |
@@ -495,7 +495,7 @@ Not in Fonts 2.1.3 either, so not part of the gap: CFF2 outlines (rejected with 
 
 ### Effects and filters: coming soon
 
-| ImageSharp | As of 1.0 | Closest workaround |
+| ImageSharp | OneImage today | Closest workaround |
 |---|---|---|
 | `HistogramEqualization(options)` (global, adaptive tile, sliding window, `AutoLevel`) | None. `Histogram` gives the data. | `Levels` or `Curves` with values you compute from `Histogram`. |
 | `AdaptiveThreshold(...)` | None. `Threshold(level)` is a global threshold. | None. |
@@ -524,7 +524,7 @@ Cloud storage providers (Azure Blob, AWS S3) and cache are not in the 3.2.0 pack
 
 ImageSharp reads and writes more formats than OneImage. We are not working on these and are not promising them.
 
-| ImageSharp | As of 1.0 |
+| ImageSharp | OneImage today |
 |---|---|
 | `TgaDecoder` / `TgaEncoder` (TGA) | Not supported. |
 | `PbmDecoder` / `PbmEncoder` (PBM, PGM, PPM, PFM) | Not supported. |
@@ -534,7 +534,7 @@ OneImage reads and writes PNG, JPEG, WebP, GIF, TIFF, BMP and ICO. ImageSharp 3.
 
 ### Programming model
 
-| ImageSharp | As of 1.0 | Closest workaround |
+| ImageSharp | OneImage today | Closest workaround |
 |---|---|---|
 | `IImageProcessor` and `ApplyProcessors` plug-ins | No public processor interface. | Transform pixels after `ToArray`, or write into a `Canvas`. |
 | `ProcessPixelRows`, `ProcessPixelRowsAsVector4`, `PixelRowOperation` | No row-callback API. | `Canvas.Lock` gives row spans. |
