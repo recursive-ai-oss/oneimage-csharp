@@ -121,6 +121,37 @@ public class JpegInteropTests
         Assert.True(max <= 1, $"max difference {max}");
     }
 
+    // Frames of a megapixel or more transform MCU rows on a second thread; the output must not depend on that.
+    [Theory]
+    [InlineData(JpegSubsampling.Yuv420)]
+    [InlineData(JpegSubsampling.Yuv444)]
+    public void LargeFrameMatchesReferenceDecoder(JpegSubsampling sub)
+    {
+        const int W = 1237;
+        const int H = 911;
+        byte[] jpeg = JpegEncodeTests.Encode(Image.FromPixels<Rgb24>(Photo(W, H, 3), W, H), new JpegEncoderOptions { Quality = 85, Subsampling = sub });
+        byte[] theirs = SkiaDecodeRgb(jpeg, out _, out _);
+        (_, byte[] ours, _) = JpegTestSupport.Decode(jpeg);
+        Assert.Equal(theirs.Length, ours.Length);
+        int max = 0;
+        for (int i = 0; i < ours.Length; i++)
+        {
+            max = Math.Max(max, Math.Abs(ours[i] - theirs[i]));
+        }
+
+        Assert.True(max <= 1, $"max difference {max}");
+    }
+
+    [Fact]
+    public void LargeFrameTruncatedFailsTyped()
+    {
+        const int W = 1237;
+        const int H = 911;
+        byte[] jpeg = JpegEncodeTests.Encode(Image.FromPixels<Rgb24>(Photo(W, H, 3), W, H), new JpegEncoderOptions { Quality = 85 });
+        byte[] cut = jpeg.AsSpan(0, jpeg.Length / 2).ToArray();
+        Assert.ThrowsAny<ImageFormatException>(() => JpegTestSupport.Decode(cut));
+    }
+
     [Theory]
     [InlineData(75)]
     [InlineData(90)]

@@ -67,7 +67,7 @@ if [ $TIMING = 1 ]; then
   "${RUN[@]}" --anyCategories $CATS --exporters json --artifacts "$WORK/bdn" 2>&1 | tee "$WORK/bdn.log" | tail -n 5
 fi
 
-TASKS="thumb-jpeg thumb-webp png-to-webp jpeg-decode jpeg-encode png-decode png-encode webp-decode webp-encode gif-decode gif-encode gif-resize tiff-multipage-decode tiff-encode bmp-decode bmp-encode upscale-2x watermark cmyk-jpeg-to-srgb"
+TASKS="thumb-jpeg thumb-webp png-to-webp jpeg-decode jpeg-decode-rgba jpeg-encode png-decode png-encode webp-decode webp-encode gif-decode gif-encode gif-resize tiff-multipage-decode tiff-encode bmp-decode bmp-encode upscale-2x watermark cmyk-jpeg-to-srgb"
 [ -z "$TASKSEL" ] || TASKS="$TASKSEL"
 LIBS="oneimage imagesharp skia netvips magick"
 PEAKTSV="$WORK/peak.tsv"

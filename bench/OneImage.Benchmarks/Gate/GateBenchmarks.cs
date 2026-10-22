@@ -81,9 +81,26 @@ public class JpegGateBenchmarks : IDisposable
         return (int)m.Width;
     }
 
+    private OI.Rgba32[] _rgbaBuffer = [];
+
+    // ImageSharp decodes into pooled memory reused from load to load, so this row decodes into a buffer the caller keeps.
     [BenchmarkCategory("Gate", "jpeg-decode-rgba")]
-    [Benchmark(Description = "OneImage Image.Load + ToArray<Rgba32>, 24 MP")]
-    public int OneImageRgba() => OI.Image.Load(_jpeg).ToArray<OI.Rgba32>().Length;
+    [Benchmark(Description = "OneImage Image.Load + CopyPixelsTo reused Rgba32 buffer, 24 MP")]
+    public int OneImageRgba()
+    {
+        OI.Image img = OI.Image.Load(_jpeg);
+        if (_rgbaBuffer.Length != img.Width * img.Height)
+        {
+            _rgbaBuffer = new OI.Rgba32[img.Width * img.Height];
+        }
+
+        img.CopyPixelsTo<OI.Rgba32>(_rgbaBuffer, new OI.ImageRect(0, 0, img.Width, img.Height));
+        return img.Width;
+    }
+
+    [BenchmarkCategory("jpeg-decode-rgba-alloc")]
+    [Benchmark(Description = "OneImage Image.Load + ToArray<Rgba32> (allocates), 24 MP")]
+    public int OneImageRgbaToArray() => OI.Image.Load(_jpeg).ToArray<OI.Rgba32>().Length;
 
     [BenchmarkCategory("Gate", "jpeg-decode-rgba")]
     [Benchmark(Description = "ImageSharp Image.Load<Rgba32>, 24 MP")]

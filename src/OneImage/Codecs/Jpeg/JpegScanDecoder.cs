@@ -13,12 +13,19 @@ internal sealed class JpegCoefficientStore : IDisposable
     private readonly JpegComponent[] _components;
     private readonly short[]?[][] _rows;
     private readonly bool _ring;
+    private readonly int _sets;
     private readonly JpegReader _reader;
     private readonly double _maxExpansion;
     private long _allocated;
 
-    public JpegCoefficientStore(JpegFrame frame, bool ring, JpegReader reader, ImageLimits limits)
+    /// <param name="frame">The frame whose components are stored.</param>
+    /// <param name="ring">Whether to keep only the rows of the current MCU row (sequential single-scan images).</param>
+    /// <param name="reader">The reader, whose byte count bounds lazily allocated rows.</param>
+    /// <param name="limits">Limits applied to expansion.</param>
+    /// <param name="sets">With a ring, how many MCU rows are held at once: 2 lets one thread decode the next MCU row while another transforms the previous one.</param>
+    public JpegCoefficientStore(JpegFrame frame, bool ring, JpegReader reader, ImageLimits limits, int sets = 1)
     {
+        _sets = ring ? sets : 1;
         _components = frame.Components;
         _ring = ring;
         _reader = reader;
@@ -27,10 +34,10 @@ internal sealed class JpegCoefficientStore : IDisposable
         for (int i = 0; i < _components.Length; i++)
         {
             JpegComponent c = _components[i];
-            _rows[i] = new short[ring ? c.V : c.BlockRows][];
+            _rows[i] = new short[ring ? c.V * _sets : c.BlockRows][];
             if (ring)
             {
-                for (int r = 0; r < c.V; r++)
+                for (int r = 0; r < c.V * _sets; r++)
                 {
                     _rows[i][r] = Rent(c.BlocksPerLine * 64);
                 }
@@ -50,7 +57,7 @@ internal sealed class JpegCoefficientStore : IDisposable
     {
         int len = c.BlocksPerLine * 64;
         short[]?[] rows = _rows[c.Index];
-        int slot = _ring ? blockRow % c.V : blockRow;
+        int slot = _ring ? blockRow % (c.V * _sets) : blockRow;
         short[]? a = rows[slot];
         if (a is null)
         {

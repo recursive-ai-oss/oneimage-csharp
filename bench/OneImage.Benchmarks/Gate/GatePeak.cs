@@ -27,7 +27,7 @@ internal static class GatePeak
 
     public static readonly string[] Tasks =
     [
-        "thumb-jpeg", "thumb-webp", "png-to-webp", "jpeg-decode", "jpeg-encode", "png-decode", "png-encode",
+        "thumb-jpeg", "thumb-webp", "png-to-webp", "jpeg-decode", "jpeg-decode-rgba", "jpeg-encode", "png-decode", "png-encode",
         "webp-decode", "webp-encode", "gif-decode", "gif-encode", "gif-resize", "tiff-multipage-decode", "tiff-encode",
         "bmp-decode", "bmp-encode", "upscale-2x", "watermark", "cmyk-jpeg-to-srgb",
     ];
@@ -122,6 +122,13 @@ internal static class GatePeak
                 var g = new JpegGateBenchmarks();
                 g.Setup();
                 return new() { ["oneimage"] = () => b.OneImageFull(), ["oneimage-alloc"] = () => b.OneImageFullToArray(), ["skia"] = () => b.SkiaFull(), ["imagesharp"] = () => b.ImageSharpFull(), ["netvips"] = () => b.NetVipsFull(), ["magick"] = () => g.MagickDecode() };
+            }
+
+            case "jpeg-decode-rgba":
+            {
+                var g = new JpegGateBenchmarks();
+                g.Setup();
+                return new() { ["oneimage"] = () => g.OneImageRgba(), ["oneimage-alloc"] = () => g.OneImageRgbaToArray(), ["skia"] = () => g.SkiaRgba(), ["imagesharp"] = () => g.ImageSharpRgba() };
             }
 
             case "jpeg-encode":
