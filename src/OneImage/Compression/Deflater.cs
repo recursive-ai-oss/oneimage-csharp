@@ -18,7 +18,7 @@ namespace OneImage.Compression;
 /// </para>
 /// <para>
 /// Call <see cref="Finish"/> once to end the stream, then <see cref="Dispose"/> to return pooled
-/// buffers. <see cref="Reset"/> starts a new stream on the same instance.
+/// buffers. <see cref="Reset(int, bool)"/> starts a new stream on the same instance.
 /// </para>
 /// </remarks>
 internal sealed class Deflater : IDisposable
@@ -55,7 +55,7 @@ internal sealed class Deflater : IDisposable
     private static readonly uint[] FixedLitEnc = BuildFixedLit();
     private static readonly uint[] FixedDistEnc = BuildFixedDist();
 
-    private readonly IBufferWriter<byte> _sink;
+    private IBufferWriter<byte> _sink;
     private int _level;
     private bool _zlib;
     private bool _finished;
@@ -131,7 +131,7 @@ internal sealed class Deflater : IDisposable
     /// Z_FILTERED, but it applies to levels 1-9). It suits data that went through predictive filtering, such as PNG
     /// scanlines, where short matches are mostly coincidences. Because only longer matches count, the match finder hashes
     /// 6 bytes instead of 3, which keeps the candidate chains short and makes compression much faster. Set it before the
-    /// first <see cref="Write"/>; it is kept across <see cref="Reset"/>.
+    /// first <see cref="Write"/>; it is kept across <see cref="Reset(int, bool)"/>.
     /// </summary>
     public bool FilteredStrategy
     {
@@ -150,6 +150,14 @@ internal sealed class Deflater : IDisposable
         _hashLen = _filtered ? 6 : 3;
         _hashMask = _filtered ? 0x0000FFFFFFFFFFFFUL : 0x0000000000FFFFFFUL;
         _minUseful = _filtered ? 6 : MinMatch;
+    }
+
+    /// <summary>Starts a new stream writing to <paramref name="sink"/>, keeping the buffers.</summary>
+    public void Reset(IBufferWriter<byte> sink, int level, bool zlib)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        _sink = sink;
+        Reset(level, zlib);
     }
 
     /// <summary>Starts a new stream with the given settings, keeping the buffers.</summary>

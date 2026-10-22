@@ -113,15 +113,18 @@ internal static class TiffBlockDecoder
             {
                 // Old-style (pre-6.0) streams start with a clear code packed least significant bit first: 0x00, then a byte with bit 0 set.
                 bool oldStyle = input.Length >= 2 && input[0] == 0 && (input[1] & 1) == 1;
-                var d = new LzwDecoder(oldStyle ? LzwVariant.Gif : LzwVariant.Tiff, 8, raw.Length + 8192L, limits.MaxExpansionRatio);
+                LzwVariant variant = oldStyle ? LzwVariant.Gif : LzwVariant.Tiff;
+                LzwDecoder d = CodecCache.RentLzwDecoder(variant, 8, raw.Length + 8192L, limits.MaxExpansionRatio);
                 Pump(input, raw, (i, o, out c, out w) => d.Decode(i, o, out c, out w));
+                CodecCache.Return(d, variant);
                 break;
             }
 
             case TiffCodec.Deflate:
             {
-                using var inf = new Inflater(zlib: true, raw.Length + 8192L, limits.MaxExpansionRatio);
+                Inflater inf = CodecCache.RentInflater(zlib: true, raw.Length + 8192L, limits.MaxExpansionRatio);
                 Pump(input, raw, (i, o, out c, out w) => inf.Inflate(i, o, out c, out w));
+                CodecCache.Return(inf);
                 break;
             }
 

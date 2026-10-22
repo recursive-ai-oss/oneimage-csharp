@@ -116,17 +116,19 @@ internal sealed class TiffEncoder : IImageEncoder
                         break;
                     case TiffCompression.Lzw:
                     {
-                        var enc = new LzwEncoder(data, LzwVariant.Tiff);
+                        LzwEncoder enc = CodecCache.RentTiffLzwEncoder(data);
                         enc.Write(strip);
                         enc.Finish();
+                        CodecCache.Return(enc);
                         break;
                     }
 
                     case TiffCompression.Deflate:
                     {
-                        using var def = new Deflater(data, options.DeflateLevel, zlib: true);
+                        Deflater def = CodecCache.RentDeflater(data, options.DeflateLevel, zlib: true);
                         def.Write(strip);
                         def.Finish();
+                        CodecCache.Return(def);
                         break;
                     }
 
