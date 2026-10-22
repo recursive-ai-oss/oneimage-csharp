@@ -1,3 +1,5 @@
+using OneImage.Kernels;
+
 namespace OneImage;
 
 /// <summary>What the frames decoded from one image share: where the bytes are, who decodes them, and the parsed header.</summary>
@@ -50,6 +52,7 @@ internal sealed class DecodeSourceNode : Node
     private TileGrid? _grid;
     private StreamingSessionHandle? _stream;
     private int _restarts;
+    private int _directPulled;
 
     public DecodeSourceNode(DecodeSession session, int frame, int scale = 1, ImageRect? region = null)
         : this(session, frame, scale, region ?? FullRegion(session, frame, scale), 0)
@@ -127,6 +130,30 @@ internal sealed class DecodeSourceNode : Node
         var sink = new NullRowSink(Width, Height, Format);
         _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
         CheckComplete(sink.RowsWritten, Height);
+    }
+
+    /// <summary>
+    /// The first whole-frame read of a small sequential decode: decodes straight into the caller's buffer (converting rows to
+    /// <paramref name="destinationFormat"/>) so no tile storage is allocated for a frame that is read once. Returns false, touching
+    /// nothing, when this is not the first such read or the node does not materialize (random access and streaming nodes already
+    /// keep memory bounded); the caller then reads through the tiles, which keeps a second read from decoding again.
+    /// </summary>
+    public bool TryDecodeInto(Span<byte> destination, PixelFormat destinationFormat, CancellationToken cancellationToken)
+    {
+        if (_randomAccess || _streaming || Volatile.Read(ref _grid) != null || Interlocked.Exchange(ref _directPulled, 1) != 0)
+        {
+            return false;
+        }
+
+        ConvertRowKernel? converter = destinationFormat != Format ? KernelRegistry.Get<ConvertRowKernel>("convert") : null;
+        using Stream s = _session.Source.Open();
+        PinnedDestination.Run(destination, 0, (pinned, _) =>
+        {
+            var sink = new DirectRowSink(pinned, Width, Height, Format, destinationFormat, converter);
+            _session.Decoder.DecodeFrame(s, _session.Info, _frame, new DecodeRequest(RequestRegion(), _scale), sink, _session.Limits, cancellationToken);
+            CheckComplete(sink.RowsWritten, Height);
+        });
+        return true;
     }
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)

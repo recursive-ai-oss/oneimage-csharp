@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.Intrinsics;
 
 namespace OneImage.Kernels;
@@ -22,7 +23,14 @@ internal static class ConvertFast
             return false;
         }
 
-        if (sf.Model == df.Model && sf.Alpha == df.Alpha && ss != ds && ss is SampleType.U8 or SampleType.U16 && ds is SampleType.U8 or SampleType.U16)
+        bool intSrc = ss is SampleType.U8 or SampleType.U16;
+        bool intDst = ds is SampleType.U8 or SampleType.U16;
+        if (!intSrc || !intDst)
+        {
+            return false;
+        }
+
+        if (ss != ds && sf.Model == df.Model && sf.Alpha == df.Alpha)
         {
             int n = width * sf.ChannelCount;
             if (ss == SampleType.U8)
@@ -37,11 +45,59 @@ internal static class ConvertFast
             return true;
         }
 
-        if (ss != SampleType.U8 || ds != SampleType.U8)
+        if (ss == ds)
+        {
+            return ss == SampleType.U8 ? Structural8(src, dst, width, sf, df) : Structural16(src, dst, width, sf, df);
+        }
+
+        // Different sample size and different layout: change the sample size and the layout in two exact steps. Both steps act per
+        // channel (and alpha 255 widens to 65535, which is what the float path produces), so the result equals the float path.
+        if (sf.Alpha == AlphaMode.Premultiplied || df.Alpha == AlphaMode.Premultiplied || !LayoutSupported(sf, df))
         {
             return false;
         }
 
+        byte[] scratch = ArrayPool<byte>.Shared.Rent(width * 8);
+        try
+        {
+            if (ss == SampleType.U16)
+            {
+                Narrow(src, scratch, width * sf.ChannelCount);
+                return Structural8(scratch, dst, width, sf, df);
+            }
+
+            if (!Structural8(src, scratch, width, sf, df))
+            {
+                return false;
+            }
+
+            Widen(scratch, dst, width * df.ChannelCount);
+            return true;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(scratch);
+        }
+    }
+
+    /// <summary>Layouts that change only the channel set (add/drop alpha, replicate gray), not the values. RGB to gray is not one of them.</summary>
+    private static bool LayoutSupported(PixelFormat sf, PixelFormat df)
+    {
+        if (sf.Model == ColorModel.Rgb && df.Model == ColorModel.Rgb)
+        {
+            return sf.HasAlpha != df.HasAlpha;
+        }
+
+        if (sf.Model == ColorModel.Gray && df.Model == ColorModel.Rgb)
+        {
+            return true;
+        }
+
+        return sf.Model == ColorModel.Gray && df.Model == ColorModel.Gray && sf.HasAlpha != df.HasAlpha;
+    }
+
+    private static bool Structural8(ReadOnlySpan<byte> src, Span<byte> dst, int width, PixelFormat sf, PixelFormat df)
+    {
         AlphaMode sa = sf.Alpha;
         AlphaMode da = df.Alpha;
         if (sf.Model == ColorModel.Rgb && df.Model == ColorModel.Rgb)
@@ -54,11 +110,11 @@ internal static class ConvertFast
             {
                 AddAlpha(src, dst, width);
             }
-            else if (sa == AlphaMode.Straight && da == AlphaMode.Premultiplied)
+            else if (sa == AlphaMode.Straight && da == AlphaMode.Premultiplied && sf.Sample == SampleType.U8 && df.Sample == SampleType.U8)
             {
                 Premultiply(src, dst, width);
             }
-            else if (sa == AlphaMode.Premultiplied && da == AlphaMode.Straight)
+            else if (sa == AlphaMode.Premultiplied && da == AlphaMode.Straight && sf.Sample == SampleType.U8 && df.Sample == SampleType.U8)
             {
                 Unpremultiply(src, dst, width);
             }
@@ -90,6 +146,45 @@ internal static class ConvertFast
         }
 
         return false;
+    }
+
+    // 16-bit layout changes: plain loops over ushort samples (opaque alpha is 65535, the float path's 1.0). Straight alpha only.
+    private static bool Structural16(ReadOnlySpan<byte> srcBytes, Span<byte> dstBytes, int width, PixelFormat sf, PixelFormat df)
+    {
+        if (sf.Alpha == AlphaMode.Premultiplied || df.Alpha == AlphaMode.Premultiplied || !LayoutSupported(sf, df))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<ushort> src = SpanCast.As<ushort>(srcBytes);
+        Span<ushort> dst = SpanCast.As<ushort>(dstBytes);
+        int sch = sf.ChannelCount;
+        int dch = df.ChannelCount;
+        bool grayToRgb = sf.Model == ColorModel.Gray && df.Model == ColorModel.Rgb;
+        int colors = grayToRgb ? 1 : sf.ColorChannels;
+        for (int x = 0; x < width; x++)
+        {
+            ReadOnlySpan<ushort> s = src.Slice(x * sch, sch);
+            Span<ushort> d = dst.Slice(x * dch, dch);
+            if (grayToRgb)
+            {
+                d[0] = d[1] = d[2] = s[0];
+            }
+            else
+            {
+                for (int k = 0; k < colors; k++)
+                {
+                    d[k] = s[k];
+                }
+            }
+
+            if (df.HasAlpha)
+            {
+                d[df.ColorChannels] = sf.HasAlpha ? s[sf.ColorChannels] : (ushort)65535;
+            }
+        }
+
+        return true;
     }
 
     // Rgba -> Rgb: four pixels per shuffle; the 16-byte store spills 4 bytes the next iteration overwrites, so it stops 16 bytes short.

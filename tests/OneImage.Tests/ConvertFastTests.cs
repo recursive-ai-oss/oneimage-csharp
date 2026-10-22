@@ -29,6 +29,61 @@ public class ConvertFastTests
         (PixelFormat.Cmyk16, PixelFormat.Cmyk8, 0),
     ];
 
+    private static readonly PixelFormat GrayAlpha16 = new(ColorModel.Gray, SampleType.U16, AlphaMode.Straight);
+
+    private static PixelFormat[] LayoutFormats =>
+    [
+        PixelFormat.Gray8, PixelFormat.GrayAlpha8, PixelFormat.Rgb8, PixelFormat.Rgba8,
+        PixelFormat.Gray16, GrayAlpha16, PixelFormat.Rgb16, PixelFormat.Rgba16,
+    ];
+
+    /// <summary>Every layout change between the straight-alpha gray/RGB 8- and 16-bit formats, except RGB to gray, equals the float path.</summary>
+    [Fact]
+    public void LayoutAndSampleChangesAreBitIdenticalToFloatPath()
+    {
+        const int Width = 65536 + 3;
+        var rnd = new Random(5);
+        int pairs = 0;
+        foreach (PixelFormat from in LayoutFormats)
+        {
+            foreach (PixelFormat to in LayoutFormats)
+            {
+                if (from == to || (from.Model == ColorModel.Rgb && to.Model == ColorModel.Gray))
+                {
+                    continue;
+                }
+
+                byte[] src = new byte[Width * from.BytesPerPixel];
+                if (from.Sample == SampleType.U8)
+                {
+                    // Each channel walks through all 256 values, offset per channel.
+                    for (int i = 0; i < src.Length; i++)
+                    {
+                        src[i] = (byte)((i / from.ChannelCount) + ((i % from.ChannelCount) * 85));
+                    }
+                }
+                else
+                {
+                    rnd.NextBytes(src);
+                    Span<ushort> u = SpanCast.As<ushort>(src.AsSpan());
+                    for (int i = 0; i < 6; i++)
+                    {
+                        u[i] = i % 2 == 0 ? (ushort)0 : (ushort)65535;
+                    }
+                }
+
+                byte[] fast = new byte[Width * to.BytesPerPixel];
+                byte[] reference = new byte[fast.Length];
+                ConvertKernel.ConvertRow(src, from, fast, to, Width);
+                ConvertKernel.ConvertViaFloat(src, from, reference, to, Width);
+                Assert.True(fast.AsSpan().SequenceEqual(reference), $"{from} -> {to}");
+                pairs++;
+            }
+        }
+
+        Assert.Equal(40, pairs);
+    }
+
     [Fact]
     public void ReportHardwarePaths() =>
         TestContext.Current.SendDiagnosticMessage($"Vector128={Vector128.IsHardwareAccelerated} Vector256={Vector256.IsHardwareAccelerated} Vector512={Vector512.IsHardwareAccelerated} Avx2={System.Runtime.Intrinsics.X86.Avx2.IsSupported}");

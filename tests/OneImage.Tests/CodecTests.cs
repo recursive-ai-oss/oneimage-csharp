@@ -219,8 +219,10 @@ public sealed class CodecTests : IDisposable
         using var ms = new MemoryStream();
         Sample(300, 270).Save(ms, raw);
         Image img = Image.Load(ms.ToArray(), Opts(raw));
-        Rgba32[] a = img.ToArray<Rgba32>(maxDegree: 4);
+        // The partial read materializes the frame; the later whole-frame read then reuses it (a whole-frame read made first would
+        // decode straight into the caller's buffer instead and keep nothing).
         Rgba32[] b = img.Crop(130, 130, 50, 50).ToArray<Rgba32>();
+        Rgba32[] a = img.ToArray<Rgba32>(maxDegree: 4);
         Assert.Equal(1, raw.DecodeCalls);
         Assert.Equal(a[(130 * 300) + 130], b[0]);
         Assert.Equal(Sample(300, 270).ToArray<Rgba32>(), a);

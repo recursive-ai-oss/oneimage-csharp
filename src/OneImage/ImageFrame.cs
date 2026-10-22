@@ -39,6 +39,8 @@ public sealed class ImageFrame
     /// <summary>
     /// Computes the pixels of a rectangle into <paramref name="destination"/>, converting to <typeparamref name="T"/> when the frame
     /// format differs (round half up, clamped to range). Tiles are computed in parallel; the result does not depend on the degree.
+    /// The first whole-frame read of a small image from a sequential decoder (PNG, GIF, WebP, ...) decodes straight into
+    /// <paramref name="destination"/> without keeping tiles, so a second read of the same image decodes once more and then keeps them.
     /// </summary>
     /// <typeparam name="T">The pixel struct.</typeparam>
     /// <param name="destination">Receives <c>rect.Width * rect.Height</c> tightly packed pixels.</param>
@@ -59,6 +61,12 @@ public sealed class ImageFrame
 
         try
         {
+            if (rect.X == 0 && rect.Y == 0 && rect.Width == Node.Width && rect.Height == Node.Height
+                && Node is DecodeSourceNode decode && decode.TryDecodeInto(SpanCast.AsBytes(destination), T.Format, cancellationToken))
+            {
+                return;
+            }
+
             Render.ReadRegion(Node, rect, SpanCast.AsBytes(destination), 0, T.Format, RenderContext.Create(maxDegree, cancellationToken));
         }
         finally

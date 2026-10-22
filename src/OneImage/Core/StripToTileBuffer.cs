@@ -1,3 +1,4 @@
+using OneImage.Kernels;
 using System.Buffers;
 
 namespace OneImage;
@@ -203,5 +204,65 @@ internal sealed class NullRowSink : IRowSink
         }
 
         _nextRow += rowCount;
+    }
+}
+
+/// <summary>Writes decoded rows into a caller's buffer, converting to its format; the buffer holds exactly the frame, tightly packed.</summary>
+internal sealed class DirectRowSink : IRowSink
+{
+    private readonly PinnedDestination _destination;
+    private readonly PixelFormat _destinationFormat;
+    private readonly ConvertRowKernel? _converter;
+    private readonly int _sourceRowBytes;
+    private readonly int _destinationRowBytes;
+    private int _nextRow;
+
+    public DirectRowSink(PinnedDestination destination, int width, int height, PixelFormat format, PixelFormat destinationFormat, ConvertRowKernel? converter)
+    {
+        _destination = destination;
+        _destinationFormat = destinationFormat;
+        _converter = converter;
+        Width = width;
+        Height = height;
+        Format = format;
+        _sourceRowBytes = width * format.BytesPerPixel;
+        _destinationRowBytes = width * destinationFormat.BytesPerPixel;
+    }
+
+    public int Width { get; }
+
+    public int Height { get; }
+
+    public PixelFormat Format { get; }
+
+    public int RowsWritten => _nextRow;
+
+    public void WriteRows(int y, ReadOnlySpan<byte> rows, int rowCount)
+    {
+        if (y != _nextRow || rowCount < 0 || rowCount > Height - y)
+        {
+            throw new ImageOperationException("Decoder delivered rows out of order or beyond the requested region.");
+        }
+
+        if ((long)rowCount * _sourceRowBytes > rows.Length)
+        {
+            throw new ImageOperationException("Decoder delivered fewer bytes than the row count implies.");
+        }
+
+        for (int r = 0; r < rowCount; r++)
+        {
+            ReadOnlySpan<byte> src = rows.Slice(r * _sourceRowBytes, _sourceRowBytes);
+            Span<byte> dst = _destination.Slice((y + r) * _destinationRowBytes, _destinationRowBytes);
+            if (_converter == null)
+            {
+                src.CopyTo(dst);
+            }
+            else
+            {
+                _converter(src, Format, dst, _destinationFormat, Width);
+            }
+        }
+
+        _nextRow = y + rowCount;
     }
 }

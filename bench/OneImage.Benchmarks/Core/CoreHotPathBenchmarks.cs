@@ -40,10 +40,14 @@ public class CoreHotPathBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>Call degree for the full copy-out: 0 is the default, 1 is serial.</summary>
+    [Params(1, 0, 8)]
+    public int Degree { get; set; }
+
     [Benchmark(Description = "copy out 6000x4000 Rgba32 to caller buffer")]
     public int CopyOut()
     {
-        _src.Ours.CopyPixelsTo<OneImage.Rgba32>(_rgba, new ImageRect(0, 0, 6000, 4000));
+        _src.Ours.CopyPixelsTo<OneImage.Rgba32>(_rgba, new ImageRect(0, 0, 6000, 4000), Degree);
         return _rgba.Length;
     }
 
