@@ -217,15 +217,17 @@ Committed subset, 1,748 files (42 excluded), run on the render-at-size path. "Be
 | category | rendered | pass before | pass now | rate now |
 |---|---:|---:|---:|---:|
 | shapes | 133 | 0 | 128 | 96.2% |
-| painting | 307 | 0 | 160 | 52.1% |
-| structure | 230 | 0 | 134 | 58.3% |
+| painting | 307 | 0 | 162 | 52.8% |
+| structure | 230 | 0 | 135 | 58.7% |
 | paint-servers | 154 | 0 | 146 | 94.8% |
-| masking | 93 | 0 | 7 | 7.5% |
-| filters | 406 | 0 | 76 | 18.7% |
+| masking | 93 | 0 | 85 | 91.4% |
+| filters | 406 | 0 | 77 | 19.0% |
 | text | 383 | 0 | 16 | 4.2% |
-| **all** | 1,706 | 0 | 667 | 39.1% |
+| **all** | 1,706 | 0 | 749 | 43.9% |
 
-The masking, filter and text passes are tests whose result happens not to need the feature (an empty result, or an element that is skipped). Subcategories in scope for this step:
+Masking: 85 of 93. The 8 failures are other features: 3 draw an `image` (`mask/with-image`, `mask/with-grayscale-image`, `clip/simple-case`) and 5 clip with text. All 46 `clipPath` tests that do not use text, the `clip-rule` test and 38 of the 40 `mask` tests pass (the other two draw an image).
+
+The filter and text passes are tests whose result happens not to need the feature (an empty result, or an element that is skipped). Subcategories in scope for this step:
 
 | subcategory | pass |
 |---|---:|
