@@ -20,3 +20,10 @@ Color Consortium (https://registry.color.org/rgb-registry/srgbprofiles) under it
 permission to use, copy and distribute the files for any purpose is granted without fee, provided the files are not changed
 (including the ICC copyright notice tag) and the name of the ICC is not used in advertising or publicity. They are provided
 "AS IS" with no express or implied warranty. They are used only by the test project and are not part of the shipped package.
+
+## Noto font subsets (test data only)
+
+The files in `tests/testdata/fonts/` are subsets of Noto Sans (Copyright 2015 Google LLC) and Noto Sans CJK (Copyright 2014-2021
+Adobe), made by `tools/TextFonts/make-test-fonts.py`: fewer glyphs, hinting removed, and in one face a synthetic legacy `kern`
+table. The fonts are licensed under the SIL Open Font License 1.1; the license text is `tests/testdata/fonts/OFL.txt`. They are
+used only by the test and benchmark projects and are not part of the shipped package.
