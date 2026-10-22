@@ -40,7 +40,7 @@ public static class TextBuilder
         return builder.Build();
     }
 
-    internal static List<TextPart> GenerateParts(string text, TextOptions options, bool color)
+    internal static List<TextPart> GenerateParts(string text, TextOptions options, bool color = false)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(options);
