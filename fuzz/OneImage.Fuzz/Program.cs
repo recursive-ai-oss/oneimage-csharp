@@ -59,6 +59,8 @@ internal static class Program
 
         // Instrumented library code may only run once libFuzzer has attached, so configuration happens on the first input.
         bool configured = false;
+        long count = 0;
+        long heapLogEvery = long.TryParse(Environment.GetEnvironmentVariable("FUZZ_HEAP_LOG"), out long every) ? every : 0;
         Fuzzer.LibFuzzer.Run(span =>
         {
             if (!configured)
@@ -69,6 +71,12 @@ internal static class Program
             }
 
             target(span);
+
+            // Optional leak watch: FUZZ_HEAP_LOG=<every N inputs> prints the live managed heap after a full collection.
+            if (heapLogEvery > 0 && ++count % heapLogEvery == 0)
+            {
+                Console.Error.WriteLine($"[heap] input {count}: live {GC.GetTotalMemory(true) >> 10} KiB, tiles rented-returned {Tile.RentedCount - Tile.ReturnedCount}, global cache {TileCache.Global.Bytes >> 10} KiB, streaming cache {TileCache.Streaming.Bytes >> 10} KiB");
+            }
         });
         return 0;
     }
