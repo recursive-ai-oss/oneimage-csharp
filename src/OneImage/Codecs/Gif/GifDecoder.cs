@@ -31,8 +31,29 @@ internal sealed class GifState
     public int LastDrawn = -1;
     public byte[]? Saved; // pixels under the last frame's rectangle, kept for disposal "restore to previous"
 
-    // The canvas is rented from the shared pool so repeated loads reuse memory; images have no Dispose, so the finalizer gives it back.
+    // Canvases up to PooledCanvasBytes are rented from the shared pool so repeated loads of small animations reuse memory; images have no
+    // Dispose, so the finalizer gives them back. Bigger canvases are plain arrays: the shared pool keeps what it is handed (per core, until
+    // a memory-pressure trim), and a process decoding many large screens would otherwise hold them all.
+    internal const int PooledCanvasBytes = 1 << 20;
+
+    private bool _canvasPooled;
+
     ~GifState() => ReleaseCanvas();
+
+    /// <summary>Gets a zeroed canvas of <paramref name="bytes"/> bytes (the array may be longer when pooled).</summary>
+    public byte[] AcquireCanvas(int bytes)
+    {
+        if (bytes <= PooledCanvasBytes)
+        {
+            _canvasPooled = true;
+            byte[] pooled = ArrayPool<byte>.Shared.Rent(bytes);
+            pooled.AsSpan(0, bytes).Clear();
+            return pooled;
+        }
+
+        _canvasPooled = false;
+        return new byte[bytes];
+    }
 
     public void ReleaseCanvas()
     {
@@ -40,7 +61,7 @@ internal sealed class GifState
         Canvas = null;
         LastDrawn = -1;
         Saved = null;
-        if (c != null)
+        if (c != null && _canvasPooled)
         {
             ArrayPool<byte>.Shared.Return(c);
         }
@@ -59,9 +80,12 @@ internal sealed class GifState
 /// are decoded (missing end code, truncated file) leaves the remaining pixels of that frame untouched, so they show what was under
 /// them; a file cut inside a frame's data keeps that frame; invalid LZW codes raise <see cref="ImageFormatException"/>.
 /// </remarks>
-internal sealed class GifDecoder : IImageDecoder
+internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
 {
     public static GifDecoder Instance { get; } = new();
+
+    [ThreadStatic]
+    private static LzwDecoder? t_lzw;
 
     // Frames are composited from the start; the decoder keeps the canvas of the last frame it produced, so reading frames in order and
     // reading one frame tile by tile are both cheap. Going back to an earlier frame replays from the first.
@@ -447,8 +471,14 @@ internal sealed class GifDecoder : IImageDecoder
                 throw new ImageLimitException("The logical screen is too large to composite.");
             }
 
-            state.Canvas ??= ArrayPool<byte>.Shared.Rent((int)bytes);
-            state.Canvas.AsSpan(0, (int)bytes).Clear();
+            if (state.Canvas == null)
+            {
+                state.Canvas = state.AcquireCanvas((int)bytes);
+            }
+            else
+            {
+                state.Canvas.AsSpan(0, (int)bytes).Clear();
+            }
 
             state.LastDrawn = -1;
             state.Saved = null;
@@ -552,7 +582,9 @@ internal sealed class GifDecoder : IImageDecoder
         // The ratio guard of the LZW decoder is tuned for deflate; LZW can legitimately shrink a solid color by more than 1000x. Output is
         // capped by the frame's own size instead, and one 12-bit code expands to at most 4094 bytes, so input bounds the work.
         _ = limits;
-        var lzw = new LzwDecoder(LzwVariant.Gif, f.MinCodeSize, (long)f.Width * f.Height, 0);
+        // One decoder per thread (its tables are about 68 KB) instead of one per frame; the frame limit is set again by Reset.
+        LzwDecoder lzw = t_lzw ??= new LzwDecoder(LzwVariant.Gif);
+        lzw.Reset(f.MinCodeSize, (long)f.Width * f.Height, 0);
         byte[] rowBuf = ArrayPool<byte>.Shared.Rent(f.Width);
         byte[] inBuf = ArrayPool<byte>.Shared.Rent(4096);
         try

@@ -385,8 +385,13 @@ internal sealed class BmpDecoder : IImageDecoder
                 throw new ImageFormatException("The BMP pixel data is truncated.");
             }
 
-            int batch = (int)Math.Max(1, Math.Min(region.Height, (1 << 20) / stride));
-            byte[]? block = ArrayPool<byte>.Shared.Rent((int)(batch * stride));
+            // Rows are converted a block at a time (a quarter megabyte of input stays in cache between reading and converting) and
+            // delivered together. When the input is already in memory its bytes are converted in place, without a copy.
+            int batch = (int)Math.Max(1, Math.Min(region.Height, (1 << 18) / stride));
+            ReadOnlyMemory<byte> mem = s is ReadOnlyMemoryStream rms ? rms.Data : default;
+            bool direct = region.X == 0 && region.Width == st.Width;
+            byte[]? block = mem.IsEmpty ? ArrayPool<byte>.Shared.Rent((int)(batch * stride)) : null;
+            byte[] outBlock = ArrayPool<byte>.Shared.Rent(checked(batch * outStride));
             try
             {
                 for (int y0 = 0; y0 < region.Height; y0 += batch)
@@ -396,20 +401,45 @@ internal sealed class BmpDecoder : IImageDecoder
                     int firstSrc = region.Y + y0;
                     // The n output rows are contiguous in the file; bottom-up files hold them in reverse order.
                     int firstFileRow = st.TopDown ? firstSrc : st.Height - firstSrc - n;
-                    s.Position = st.DataOffset + (firstFileRow * stride);
-                    ContainerIo.ReadFully(s, block.AsSpan(0, (int)(n * stride)));
+                    long offset = st.DataOffset + (firstFileRow * stride);
+                    ReadOnlySpan<byte> input;
+                    if (block == null)
+                    {
+                        input = mem.Span.Slice(checked((int)offset), (int)(n * stride));
+                    }
+                    else
+                    {
+                        s.Position = offset;
+                        ContainerIo.ReadFully(s, block.AsSpan(0, (int)(n * stride)));
+                        input = block.AsSpan(0, (int)(n * stride));
+                    }
+
                     for (int i = 0; i < n; i++)
                     {
                         int fileIndex = st.TopDown ? i : n - 1 - i;
-                        conv.Pixels(block.AsSpan((int)(fileIndex * stride), (int)stride), rowBuf);
-                        rowBuf.AsSpan(region.X * outBpp, outStride).CopyTo(outBuf);
-                        sink.WriteRows(y0 + i, outBuf.AsSpan(0, outStride), 1);
+                        ReadOnlySpan<byte> row = input.Slice((int)(fileIndex * stride), (int)stride);
+                        if (direct)
+                        {
+                            conv.Pixels(row, outBlock.AsSpan(i * outStride, outStride));
+                        }
+                        else
+                        {
+                            conv.Pixels(row, rowBuf);
+                            rowBuf.AsSpan(region.X * outBpp, outStride).CopyTo(outBlock.AsSpan(i * outStride));
+                        }
                     }
+
+                    sink.WriteRows(y0, outBlock.AsSpan(0, n * outStride), n);
                 }
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(block);
+                if (block != null)
+                {
+                    ArrayPool<byte>.Shared.Return(block);
+                }
+
+                ArrayPool<byte>.Shared.Return(outBlock);
             }
         }
         finally
@@ -622,13 +652,17 @@ internal sealed class BmpDecoder : IImageDecoder
                     }
 
                 case 24:
-                    for (int x = 0; x < w; x++)
+                    Kernels.BmpPixels.Swap3(src, dst, w);
+                    break;
+                case 32 when _st.MaskR == 0x00FF0000 && _st.MaskG == 0x0000FF00 && _st.MaskB == 0x000000FF && _st.MaskA is 0 or 0xFF000000:
+                    // The usual BGRA / BGRx layout: a byte shuffle per pixel.
+                    if (_st.MaskA == 0)
                     {
-                        ReadOnlySpan<byte> p = src.Slice(x * 3, 3);
-                        Span<byte> d = dst.Slice(x * 3, 3);
-                        d[0] = p[2];
-                        d[1] = p[1];
-                        d[2] = p[0];
+                        Kernels.BmpPixels.Narrow4(src, dst, w);
+                    }
+                    else
+                    {
+                        Kernels.BmpPixels.Swap4(src, dst, w);
                     }
 
                     break;

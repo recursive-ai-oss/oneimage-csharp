@@ -319,6 +319,9 @@ internal sealed class ReadOnlyMemoryStream : Stream
 
     public ReadOnlyMemoryStream(ReadOnlyMemory<byte> data) => _data = data;
 
+    /// <summary>Gets the bytes behind the stream, for decoders that read them in place instead of copying.</summary>
+    public ReadOnlyMemory<byte> Data => _data;
+
     public override bool CanRead => true;
 
     public override bool CanSeek => true;

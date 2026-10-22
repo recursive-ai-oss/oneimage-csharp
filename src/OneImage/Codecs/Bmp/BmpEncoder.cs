@@ -57,6 +57,13 @@ internal sealed class BmpEncoder : IImageEncoder
             throw new ImageLimitException("The image is too large for a BMP file.");
         }
 
+        // The size is known now, so a growable MemoryStream is sized once instead of doubling (and copying) its way up; on a
+        // fixed-size one the writes below would fail the same way.
+        if (dest is MemoryStream { CanWrite: true } ms && total <= Array.MaxLength - ms.Position && ms.Capacity < ms.Position + total)
+        {
+            ms.Capacity = (int)(ms.Position + total);
+        }
+
         byte[] head = new byte[dataOffset];
         if (includeFileHeader)
         {
@@ -110,26 +117,21 @@ internal sealed class BmpEncoder : IImageEncoder
                 {
                     ReadOnlySpan<byte> s = src.AsSpan((n - 1 - i) * width * srcBpp, width * srcBpp);
                     Span<byte> d = outBlock.AsSpan((int)(i * stride), (int)stride);
-                    d.Clear();
                     if (hasAlpha)
                     {
-                        for (int x = 0; x < width; x++)
-                        {
-                            d[x * 4] = s[(x * 4) + 2];
-                            d[(x * 4) + 1] = s[(x * 4) + 1];
-                            d[(x * 4) + 2] = s[x * 4];
-                            d[(x * 4) + 3] = s[(x * 4) + 3];
-                        }
+                        Kernels.BmpPixels.Swap4(s, d, width);
+                    }
+                    else if (srcBpp == 4)
+                    {
+                        Kernels.BmpPixels.Narrow4(s, d, width);
                     }
                     else
                     {
-                        for (int x = 0; x < width; x++)
-                        {
-                            d[x * 3] = s[(x * srcBpp) + 2];
-                            d[(x * 3) + 1] = s[(x * srcBpp) + 1];
-                            d[(x * 3) + 2] = s[x * srcBpp];
-                        }
+                        Kernels.BmpPixels.Swap3(s, d, width);
                     }
+
+                    // Row padding (to a multiple of four bytes) is zero.
+                    d[(width * (hasAlpha ? 4 : 3))..].Clear();
 
                     if (mask != null)
                     {

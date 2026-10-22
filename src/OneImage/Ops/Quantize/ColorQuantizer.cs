@@ -23,7 +23,8 @@ internal sealed class ColorQuantizer
     private readonly QuantizeAlpha _alpha;
     private readonly int _alphaThreshold;
     private int _aDim; // 2 (one alpha plane) or 9; full mode starts with one plane and grows when a pixel is not opaque
-    private long[] _w, _r, _g, _b, _a, _sq;
+    private long[] _w, _r, _g, _b, _a, _sq; // the common-size set comes from, and goes back to, s_spare
+    private readonly bool _reserveTransparent;
     private readonly ColorSet _set = new();
     private bool _exact = true;
     private long _transparentCount;
@@ -34,21 +35,46 @@ internal sealed class ColorQuantizer
     /// <param name="maxColors">Palette size limit, 2 to 256 (a transparent entry counts).</param>
     /// <param name="alpha">Alpha handling.</param>
     /// <param name="alphaThreshold">With <see cref="QuantizeAlpha.Binary"/>, pixels with alpha below this are transparent.</param>
-    public ColorQuantizer(int maxColors, QuantizeAlpha alpha = QuantizeAlpha.Binary, int alphaThreshold = 128)
+    /// <param name="reserveTransparent">With <see cref="QuantizeAlpha.Binary"/>, the palette always ends with a fully transparent entry (counted in <paramref name="maxColors"/>) even when no input pixel is transparent, so it can be reused for later frames that have transparent pixels.</param>
+    public ColorQuantizer(int maxColors, QuantizeAlpha alpha = QuantizeAlpha.Binary, int alphaThreshold = 128, bool reserveTransparent = false)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxColors, 2);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(maxColors, 256);
         _maxColors = maxColors;
         _alpha = alpha;
         _alphaThreshold = Math.Clamp(alphaThreshold, 1, 255);
+        _reserveTransparent = reserveTransparent && alpha == QuantizeAlpha.Binary;
         _aDim = 2;
         int n = _aDim * D * D * D;
-        _w = new long[n];
-        _r = new long[n];
-        _g = new long[n];
-        _b = new long[n];
-        _a = new long[n];
-        _sq = new long[n];
+        long[][] set = Interlocked.Exchange(ref s_spare, null) ?? [new long[n], new long[n], new long[n], new long[n], new long[n], new long[n]];
+        (_w, _r, _g, _b, _a, _sq) = (set[0], set[1], set[2], set[3], set[4], set[5]);
+    }
+
+    // The six histogram planes are 0.5 MB each, so each is a large-object-heap allocation. One zeroed set is kept for reuse: quantizing
+    // the frames of an animation one after another then allocates nothing. A set that grew for translucent input is not kept.
+    private static long[][]? s_spare;
+
+    private void ReleaseHistogram()
+    {
+        long[] w = _w;
+        if (w == null)
+        {
+            return;
+        }
+
+        long[][] set = [_w, _r, _g, _b, _a, _sq];
+        _w = _r = _g = _b = _a = _sq = null!;
+        if (_aDim != 2)
+        {
+            return;
+        }
+
+        foreach (long[] m in set)
+        {
+            Array.Clear(m);
+        }
+
+        Interlocked.CompareExchange(ref s_spare, set, null);
     }
 
     /// <summary>Packs a pixel into the key used for exact color matching: transparent pixels collapse to 0.</summary>
@@ -76,7 +102,7 @@ internal sealed class ColorQuantizer
             {
                 if (_set.Find(key) < 0)
                 {
-                    if (_set.Count >= _maxColors)
+                    if (_set.Count >= _maxColors - (_reserveTransparent ? 1 : 0))
                     {
                         _exact = false;
                     }
@@ -140,26 +166,41 @@ internal sealed class ColorQuantizer
     /// <returns>The palette, usable with <see cref="PaletteMapper"/>.</returns>
     public QuantizedPalette BuildPalette()
     {
-        if (_exact)
+        try
         {
-            var rgbaExact = new byte[_set.Count * 4];
-            int tIndex = -1;
-            for (int i = 0; i < _set.Count; i++)
+            if (_exact)
             {
-                uint k = _set[i];
-                BinaryPrimitives.WriteUInt32LittleEndian(rgbaExact.AsSpan(i * 4, 4), k);
-                if (k == 0)
+                int n = _set.Count;
+                bool addT = _reserveTransparent && _transparentCount == 0;
+                var rgbaExact = new byte[(n + (addT ? 1 : 0)) * 4];
+                int tIndex = -1;
+                for (int i = 0; i < n; i++)
                 {
-                    tIndex = i;
+                    uint k = _set[i];
+                    BinaryPrimitives.WriteUInt32LittleEndian(rgbaExact.AsSpan(i * 4, 4), k);
+                    if (k == 0)
+                    {
+                        tIndex = i;
+                    }
                 }
+
+                if (addT)
+                {
+                    tIndex = n;
+                    n++;
+                }
+
+                return new QuantizedPalette(rgbaExact, n, tIndex, _alpha, _alphaThreshold, _set);
             }
 
-            return new QuantizedPalette(rgbaExact, _set.Count, tIndex, _alpha, _alphaThreshold, _set);
+            bool binaryTransparent = _transparentCount > 0 || _reserveTransparent; // fully transparent pixels always get their own exact entry
+            int target = _maxColors - (binaryTransparent ? 1 : 0);
+            return BuildWu(target, binaryTransparent);
         }
-
-        bool binaryTransparent = _transparentCount > 0; // fully transparent pixels always get their own exact entry
-        int target = _maxColors - (binaryTransparent ? 1 : 0);
-        return BuildWu(target, binaryTransparent);
+        finally
+        {
+            ReleaseHistogram();
+        }
     }
 
     private QuantizedPalette BuildWu(int target, bool addTransparent)
@@ -429,10 +470,11 @@ internal sealed class ColorQuantizer
     private static void Refine(List<Cell> cells, List<(int R, int G, int B, int A)> entries)
     {
         int n = entries.Count;
-        var pr = new int[n];
-        var pg = new int[n];
-        var pb = new int[n];
-        var pa = new int[n];
+        int padded = Kernels.QuantizeKernels.PaddedLength(n);
+        int[] pr = QuantizedPalette.PaddedTable(padded);
+        int[] pg = QuantizedPalette.PaddedTable(padded);
+        int[] pb = QuantizedPalette.PaddedTable(padded);
+        int[] pa = QuantizedPalette.PaddedTable(padded);
         for (int i = 0; i < n; i++)
         {
             (pr[i], pg[i], pb[i], pa[i]) = entries[i];

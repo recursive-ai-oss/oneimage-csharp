@@ -23,6 +23,9 @@ internal sealed class GifEncoder : IImageEncoder
 {
     private const int AlphaThreshold = 128;
 
+    /// <summary>Frames up to this size are read one ahead; bigger ones are read in line so three frame buffers stay modest.</summary>
+    private const int PrefetchMaxBytes = 16 << 20;
+
     public static GifEncoder Instance { get; } = new();
 
     public IReadOnlyList<PixelFormat> SupportedFormats { get; } = [PixelFormat.Rgba8];
@@ -57,19 +60,38 @@ internal sealed class GifEncoder : IImageEncoder
 
         Plan? plan = Build(frames, options, sw, sh, uniform, forceSelfContained: false, cancellationToken)
             ?? Build(frames, options, sw, sh, uniform, forceSelfContained: true, cancellationToken);
-        Write(plan!, request, destination, sw, sh, options, cancellationToken);
+        try
+        {
+            Write(plan!, request, destination, sw, sh, options, cancellationToken);
+        }
+        finally
+        {
+            plan!.Release();
+        }
     }
 
     private sealed class PendingFrame
     {
         public int X, Y, W, H;
-        public byte[] Indices = [];
+        public byte[] Indices = []; // rented from the shared pool, longer than IndexCount
+        public int IndexCount;
         public int Disposal;
         public int DelayCs;
         public int Transparent = -1;
         public byte[]? LocalRgb; // RGB triplets, unpadded
         public int LocalCount;
         public int SharedCount; // entries of the shared table this frame may index (when LocalRgb is null)
+
+        public void ReleaseIndices()
+        {
+            byte[] b = Indices;
+            Indices = [];
+            IndexCount = 0;
+            if (b.Length > 0)
+            {
+                ArrayPool<byte>.Shared.Return(b);
+            }
+        }
     }
 
     private sealed class Plan
@@ -78,6 +100,23 @@ internal sealed class GifEncoder : IImageEncoder
         public ColorSet Shared = new();
         public bool SharedAlive = true;
         public bool ReserveT;
+
+        /// <summary>Gives the frames' index buffers back to the pool.</summary>
+        public void Release()
+        {
+            foreach (PendingFrame f in Frames)
+            {
+                f.ReleaseIndices();
+            }
+        }
+    }
+
+    /// <summary>The palette made for an earlier frame, kept so following frames that it still suits do not each pay for a new quantization.</summary>
+    private sealed class Anchor(QuantizedPalette palette, byte[] rgb, double meanError)
+    {
+        public readonly QuantizedPalette Palette = palette;
+        public readonly byte[] Rgb = rgb;
+        public readonly double MeanError = meanError;
     }
 
     /// <summary>Reads all frames and decides indices and rectangles. Returns null when an opaque-mode assumption was broken and the caller must retry self-contained.</summary>
@@ -89,124 +128,192 @@ internal sealed class GifEncoder : IImageEncoder
         int sharedCap = options.MaxColors - (plan.ReserveT ? 1 : 0);
         byte[]? prev = null;
         byte[]? cur = null;
-        for (int i = 0; i < frames.Count; i++)
+        int curLen = 0;
+        int prevLen = 0;
+        Anchor? anchor = null;
+        bool ok = false;
+
+        // While one frame is indexed, the next is read (decoded, resized, ...) on another thread into a third buffer. Frames are still
+        // requested one at a time and in order, so what is read and what is written do not depend on timing.
+        bool prefetch = multi && uniform && frames[0].Degree > 1 && (long)frames[0].Width * frames[0].Height * 4 <= PrefetchMaxBytes;
+        byte[]? ahead = null;
+        Task? pending = null;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            ImageFrameReader fr = frames[i];
-            int w = fr.Width;
-            int h = fr.Height;
-            long need = (long)w * h * 4;
-            if (need > Array.MaxLength)
+            for (int i = 0; i < frames.Count; i++)
             {
-                throw new ImageLimitException("The frame is too large to encode as GIF in one piece.");
-            }
-
-            if (cur == null || cur.Length != need)
-            {
-                cur = new byte[need];
-            }
-
-            ReadFrame(fr, cur, ct);
-            bool hasTransparency = HasTransparency(cur);
-            if (i == 0 && multi && uniform && hasTransparency && !selfContained)
-            {
-                selfContained = true;
-                plan.ReserveT = false;
-                sharedCap = options.MaxColors;
-            }
-            else if (hasTransparency && plan.ReserveT)
-            {
-                return null; // an earlier frame was already stored as a patch over its predecessor
-            }
-
-            int x0 = 0, y0 = 0, rw = w, rh = h;
-            bool diff = plan.ReserveT && i > 0 && prev != null;
-            if (diff)
-            {
-                if (!ChangedBounds(prev!, cur, w, h, out x0, out y0, out rw, out rh))
+                ct.ThrowIfCancellationRequested();
+                ImageFrameReader fr = frames[i];
+                int w = fr.Width;
+                int h = fr.Height;
+                long need = (long)w * h * 4;
+                if (need > Array.MaxLength)
                 {
-                    (x0, y0, rw, rh) = (0, 0, 1, 1);
-                }
-            }
-            else if (selfContained && multi)
-            {
-                if (!VisibleBounds(cur, w, h, out x0, out y0, out rw, out rh))
-                {
-                    (x0, y0, rw, rh) = (0, 0, 1, 1);
-                }
-            }
-
-            // Region pixels; pixels that need not be drawn (unchanged since the previous frame) become transparent.
-            int workLen = rw * rh * 4;
-            byte[] workBuf = ArrayPool<byte>.Shared.Rent(workLen);
-            Span<byte> workSpan = workBuf.AsSpan(0, workLen);
-            for (int y = 0; y < rh; y++)
-            {
-                ReadOnlySpan<byte> src = cur.AsSpan((((y0 + y) * w) + x0) * 4, rw * 4);
-                Span<byte> dst = workSpan.Slice(y * rw * 4, rw * 4);
-                if (!diff)
-                {
-                    src.CopyTo(dst);
-                    continue;
+                    throw new ImageLimitException("The frame is too large to encode as GIF in one piece.");
                 }
 
-                ReadOnlySpan<byte> psrc = prev.AsSpan((((y0 + y) * w) + x0) * 4, rw * 4);
-                for (int x = 0; x < rw; x++)
+                if (cur == null || curLen != need)
                 {
-                    uint a = BinaryPrimitives.ReadUInt32LittleEndian(src.Slice(x * 4, 4));
-                    uint b = BinaryPrimitives.ReadUInt32LittleEndian(psrc.Slice(x * 4, 4));
-                    if (a != b && ColorQuantizer.Key(a, QuantizeAlpha.Binary, AlphaThreshold) != ColorQuantizer.Key(b, QuantizeAlpha.Binary, AlphaThreshold))
+                    if (cur != null)
                     {
-                        BinaryPrimitives.WriteUInt32LittleEndian(dst.Slice(x * 4, 4), a);
+                        ArrayPool<byte>.Shared.Return(cur);
                     }
-                    else
+
+                    cur = ArrayPool<byte>.Shared.Rent((int)need);
+                    curLen = (int)need;
+                }
+
+                // One request for the whole frame: the engine then computes each tile once and keeps none of them, where reading
+                // in tile-row bands would leave every frame's tiles in the cache until the save ends.
+                if (pending != null)
+                {
+                    Task read = pending;
+                    pending = null;
+                    read.GetAwaiter().GetResult();
+                }
+                else
+                {
+                    fr.ReadRows(0, h, cur.AsSpan(0, curLen));
+                }
+
+                if (prefetch && i + 1 < frames.Count)
+                {
+                    ahead ??= ArrayPool<byte>.Shared.Rent(curLen);
+                    byte[] target = ahead;
+                    int bytes = curLen;
+                    ImageFrameReader next = frames[i + 1];
+                    pending = Task.Run(() => next.ReadRows(0, next.Height, target.AsSpan(0, bytes)), CancellationToken.None);
+                }
+
+                bool hasTransparency = HasTransparency(cur.AsSpan(0, curLen));
+                if (i == 0 && multi && uniform && hasTransparency && !selfContained)
+                {
+                    selfContained = true;
+                    plan.ReserveT = false;
+                    sharedCap = options.MaxColors;
+                }
+                else if (hasTransparency && plan.ReserveT)
+                {
+                    return null; // an earlier frame was already stored as a patch over its predecessor
+                }
+
+                int x0 = 0, y0 = 0, rw = w, rh = h;
+                bool diff = plan.ReserveT && i > 0 && prev != null;
+                if (diff)
+                {
+                    if (!ChangedBounds(prev!, cur, w, h, out x0, out y0, out rw, out rh))
                     {
-                        BinaryPrimitives.WriteUInt32LittleEndian(dst.Slice(x * 4, 4), 0);
+                        (x0, y0, rw, rh) = (0, 0, 1, 1);
                     }
                 }
-            }
-
-            var pf = new PendingFrame
-            {
-                X = x0,
-                Y = y0,
-                W = rw,
-                H = rh,
-                Disposal = !multi ? 0 : selfContained ? 2 : 1,
-                DelayCs = (int)Math.Clamp(Math.Round(fr.Delay.TotalMilliseconds / 10.0), 0, 65535),
-            };
-            try
-            {
-                if (plan.SharedAlive && !TryIndexShared(plan, workSpan, rw, rh, sharedCap, pf))
+                else if (selfContained && multi)
                 {
-                    plan.SharedAlive = false;
+                    if (!VisibleBounds(cur, w, h, out x0, out y0, out rw, out rh))
+                    {
+                        (x0, y0, rw, rh) = (0, 0, 1, 1);
+                    }
                 }
 
-                if (!plan.SharedAlive)
+                // Region pixels; pixels that need not be drawn (unchanged since the previous frame) become transparent.
+                int workLen = rw * rh * 4;
+                byte[] workBuf = ArrayPool<byte>.Shared.Rent(workLen);
+                Span<byte> workSpan = workBuf.AsSpan(0, workLen);
+                for (int y = 0; y < rh; y++)
                 {
-                    IndexLocal(workSpan, rw, rh, options, pf);
+                    ReadOnlySpan<byte> src = cur.AsSpan((((y0 + y) * w) + x0) * 4, rw * 4);
+                    Span<byte> dst = workSpan.Slice(y * rw * 4, rw * 4);
+                    if (!diff)
+                    {
+                        src.CopyTo(dst);
+                        continue;
+                    }
+
+                    ReadOnlySpan<byte> psrc = prev.AsSpan((((y0 + y) * w) + x0) * 4, rw * 4);
+                    for (int x = 0; x < rw; x++)
+                    {
+                        uint a = BinaryPrimitives.ReadUInt32LittleEndian(src.Slice(x * 4, 4));
+                        uint b = BinaryPrimitives.ReadUInt32LittleEndian(psrc.Slice(x * 4, 4));
+                        if (a != b && ColorQuantizer.Key(a, QuantizeAlpha.Binary, AlphaThreshold) != ColorQuantizer.Key(b, QuantizeAlpha.Binary, AlphaThreshold))
+                        {
+                            BinaryPrimitives.WriteUInt32LittleEndian(dst.Slice(x * 4, 4), a);
+                        }
+                        else
+                        {
+                            BinaryPrimitives.WriteUInt32LittleEndian(dst.Slice(x * 4, 4), 0);
+                        }
+                    }
+                }
+
+                var pf = new PendingFrame
+                {
+                    X = x0,
+                    Y = y0,
+                    W = rw,
+                    H = rh,
+                    Disposal = !multi ? 0 : selfContained ? 2 : 1,
+                    DelayCs = (int)Math.Clamp(Math.Round(fr.Delay.TotalMilliseconds / 10.0), 0, 65535),
+                };
+                plan.Frames.Add(pf);
+                try
+                {
+                    if (plan.SharedAlive && !TryIndexShared(plan, workSpan, rw, rh, sharedCap, pf))
+                    {
+                        plan.SharedAlive = false;
+                    }
+
+                    if (!plan.SharedAlive)
+                    {
+                        IndexLocal(workSpan, rw, rh, options, pf, multi, ref anchor);
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(workBuf);
+                }
+
+                if (pending != null)
+                {
+                    (prev, cur, ahead) = (cur, ahead, prev);
+                    prevLen = curLen = (int)need;
+                }
+                else
+                {
+                    (prev, cur) = (cur, prev);
+                    (prevLen, curLen) = (curLen, prevLen);
                 }
             }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(workBuf);
-            }
 
-            plan.Frames.Add(pf);
-            (prev, cur) = (cur, prev);
+            ok = true;
+            return plan;
         }
-
-        return plan;
-    }
-
-    private static void ReadFrame(ImageFrameReader fr, byte[] dest, CancellationToken ct)
-    {
-        int rowBytes = fr.Width * 4;
-        for (int y = 0; y < fr.Height; y += Tile.Size)
+        finally
         {
-            ct.ThrowIfCancellationRequested();
-            int n = Math.Min(Tile.Size, fr.Height - y);
-            fr.ReadRows(y, n, dest.AsSpan(y * rowBytes, n * rowBytes));
+            if (pending != null)
+            {
+                // The read still owns its buffer; wait for it before the buffers go back. Its own error, if any, is secondary to the
+                // one that is already leaving this method.
+                pending.ContinueWith(static _ => { }, TaskScheduler.Default).GetAwaiter().GetResult();
+            }
+
+            if (ahead != null)
+            {
+                ArrayPool<byte>.Shared.Return(ahead);
+            }
+
+            if (cur != null)
+            {
+                ArrayPool<byte>.Shared.Return(cur);
+            }
+
+            if (prev != null)
+            {
+                ArrayPool<byte>.Shared.Return(prev);
+            }
+
+            if (!ok)
+            {
+                plan.Release();
+            }
         }
     }
 
@@ -286,13 +393,14 @@ internal sealed class GifEncoder : IImageEncoder
     private static bool TryIndexShared(Plan plan, ReadOnlySpan<byte> work, int rw, int rh, int cap, PendingFrame pf)
     {
         int offset = plan.ReserveT ? 1 : 0;
-        var indices = new byte[rw * rh];
+        int count = rw * rh;
+        byte[] indices = ArrayPool<byte>.Shared.Rent(count);
         bool usesT = false;
         uint lastKey = 0;
         int lastIdx = -1;
         bool have = false;
         ColorSet set = plan.Shared;
-        for (int i = 0; i < indices.Length; i++)
+        for (int i = 0; i < count; i++)
         {
             uint key = ColorQuantizer.Key(BinaryPrimitives.ReadUInt32LittleEndian(work.Slice(i * 4, 4)), QuantizeAlpha.Binary, AlphaThreshold);
             if (!have || key != lastKey)
@@ -310,6 +418,7 @@ internal sealed class GifEncoder : IImageEncoder
                     {
                         if (set.Count >= cap)
                         {
+                            ArrayPool<byte>.Shared.Return(indices);
                             return false;
                         }
 
@@ -328,6 +437,7 @@ internal sealed class GifEncoder : IImageEncoder
         }
 
         pf.Indices = indices;
+        pf.IndexCount = count;
         pf.SharedCount = set.Count + offset;
         if (usesT)
         {
@@ -336,7 +446,7 @@ internal sealed class GifEncoder : IImageEncoder
         else if (!plan.ReserveT)
         {
             int t = set.Find(0);
-            if (t >= 0 && Array.IndexOf(indices, (byte)t) >= 0)
+            if (t >= 0 && indices.AsSpan(0, count).Contains((byte)t))
             {
                 pf.Transparent = t;
             }
@@ -345,30 +455,71 @@ internal sealed class GifEncoder : IImageEncoder
         return true;
     }
 
-    private static void IndexLocal(ReadOnlySpan<byte> work, int rw, int rh, GifEncoderOptions options, PendingFrame pf)
+    /// <summary>A later frame reuses the palette made for an earlier one when its mean squared RGB error stays within this much of the earlier frame's (or the floor below).</summary>
+    private const double ReuseErrorFactor = 2.0;
+
+    /// <summary>Mean squared RGB error per pixel (summed over the channels, roughly 2.8 levels RMS per channel) that is always accepted when reusing a palette.</summary>
+    private const double ReuseErrorFloor = 24.0;
+
+    /// <summary>
+    /// Quantizes a frame region. In an animation the palette of the last frame that needed one (the anchor) is tried first: a frame
+    /// whose colors it still represents about as well maps onto it directly, which costs a table lookup per pixel instead of a
+    /// histogram, cumulative moments and box search per frame. Otherwise the region gets its own palette and becomes the anchor.
+    /// Every palette of an animation keeps a transparent entry, so any anchor can serve frames that patch over their predecessor.
+    /// </summary>
+    private static void IndexLocal(ReadOnlySpan<byte> work, int rw, int rh, GifEncoderOptions options, PendingFrame pf, bool multi, ref Anchor? anchor)
     {
-        var q = new ColorQuantizer(options.MaxColors, QuantizeAlpha.Binary, AlphaThreshold);
-        q.AddRows(work);
-        QuantizedPalette pal = q.BuildPalette();
+        QuantizedPalette pal;
+        byte[] rgb;
+        if (anchor != null && HasUsableAnchor(anchor, work))
+        {
+            pal = anchor.Palette;
+            rgb = anchor.Rgb;
+        }
+        else
+        {
+            var q = new ColorQuantizer(options.MaxColors, QuantizeAlpha.Binary, AlphaThreshold, reserveTransparent: multi);
+            q.AddRows(work);
+            pal = q.BuildPalette();
+            rgb = new byte[pal.Count * 3];
+            for (int i = 0; i < pal.Count; i++)
+            {
+                rgb[i * 3] = pal.Rgba[i * 4];
+                rgb[(i * 3) + 1] = pal.Rgba[(i * 4) + 1];
+                rgb[(i * 3) + 2] = pal.Rgba[(i * 4) + 2];
+            }
+
+            if (multi)
+            {
+                long err = pal.ColorError(work, out long px);
+                anchor = new Anchor(pal, rgb, px == 0 ? 0 : (double)err / px);
+            }
+        }
+
         var mapper = new PaletteMapper(pal, rw, options.Dither);
-        var indices = new byte[rw * rh];
+        byte[] indices = ArrayPool<byte>.Shared.Rent(rw * rh);
         for (int y = 0; y < rh; y++)
         {
             mapper.MapRow(y, work.Slice(y * rw * 4, rw * 4), indices.AsSpan(y * rw, rw));
         }
 
-        var rgb = new byte[pal.Count * 3];
-        for (int i = 0; i < pal.Count; i++)
-        {
-            rgb[i * 3] = pal.Rgba[i * 4];
-            rgb[(i * 3) + 1] = pal.Rgba[(i * 4) + 1];
-            rgb[(i * 3) + 2] = pal.Rgba[(i * 4) + 2];
-        }
-
         pf.Indices = indices;
+        pf.IndexCount = rw * rh;
         pf.LocalRgb = rgb;
         pf.LocalCount = pal.Count;
         pf.Transparent = pal.TransparentIndex;
+    }
+
+    private static bool HasUsableAnchor(Anchor anchor, ReadOnlySpan<byte> work)
+    {
+        // A frame with transparent pixels needs a transparent entry.
+        if (anchor.Palette.TransparentIndex < 0 && Kernels.QuantizeKernels.HasAlphaBelow(work, AlphaThreshold))
+        {
+            return false;
+        }
+
+        long err = anchor.Palette.ColorError(work, out long px);
+        return px == 0 || (double)err / px <= Math.Max(anchor.MeanError * ReuseErrorFactor, ReuseErrorFloor);
     }
 
     /// <summary>Gets the table size exponent: smallest n >= 1 with 2^n >= count.</summary>
@@ -411,7 +562,8 @@ internal sealed class GifEncoder : IImageEncoder
         List<PendingFrame> frames = plan.Frames;
         bool multi = frames.Count > 1;
 
-        // A single quantized frame reads more conventionally with its palette as the global table.
+        // The first frame's own palette becomes the global table; frames that share it (a single frame, or an animation whose later
+        // frames kept the first palette) then carry no table of their own.
         byte[]? globalRgb = null;
         int globalCount = 0;
         if (plan.SharedAlive)
@@ -419,11 +571,10 @@ internal sealed class GifEncoder : IImageEncoder
             globalCount = Math.Max(plan.Shared.Count + (plan.ReserveT ? 1 : 0), 1);
             globalRgb = SharedRgb(plan, globalCount);
         }
-        else if (!multi)
+        else if (frames[0].LocalRgb != null)
         {
             globalRgb = frames[0].LocalRgb;
             globalCount = frames[0].LocalCount;
-            frames[0].LocalRgb = null;
         }
 
         Span<byte> head = stackalloc byte[13];
@@ -475,13 +626,19 @@ internal sealed class GifEncoder : IImageEncoder
         }
 
         var lzwSink = new ArrayBufferWriter<byte>(1 << 16);
+        LzwEncoder? enc = null;
         Span<byte> small = stackalloc byte[18];
         foreach (PendingFrame f in frames)
         {
             ct.ThrowIfCancellationRequested();
             byte[]? table;
             int count;
-            if (f.LocalRgb != null)
+            if (f.LocalRgb != null && ReferenceEquals(f.LocalRgb, globalRgb))
+            {
+                table = null;
+                count = globalCount;
+            }
+            else if (f.LocalRgb != null)
             {
                 table = f.LocalRgb;
                 count = f.LocalCount;
@@ -525,8 +682,16 @@ internal sealed class GifEncoder : IImageEncoder
 
             int minCode = Math.Max(2, bits);
             lzwSink.ResetWrittenCount();
-            var enc = new LzwEncoder(lzwSink, LzwVariant.Gif, minCode);
-            enc.Write(f.Indices);
+            if (enc == null)
+            {
+                enc = new LzwEncoder(lzwSink, LzwVariant.Gif, minCode);
+            }
+            else
+            {
+                enc.Reset(minCode);
+            }
+
+            enc.Write(f.Indices.AsSpan(0, f.IndexCount));
             enc.Finish();
             dest.WriteByte((byte)minCode);
             ReadOnlySpan<byte> data = lzwSink.WrittenSpan;
@@ -538,7 +703,7 @@ internal sealed class GifEncoder : IImageEncoder
             }
 
             dest.WriteByte(0);
-            f.Indices = [];
+            f.ReleaseIndices();
         }
 
         dest.WriteByte(0x3B);

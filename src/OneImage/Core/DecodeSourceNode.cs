@@ -22,6 +22,11 @@ internal sealed class DecodeSession
     public ImageLimits Limits { get; }
 }
 
+/// <summary>Marks a random-access decoder whose tiles cost about as much to produce again as to fetch from the tile cache, so they are not cached.</summary>
+internal interface ICheapTileDecoder
+{
+}
+
 /// <summary>Decoder state that holds reusable scratch (decoded blocks) which a finished one-shot read can give back.</summary>
 internal interface IReleasableDecoderState
 {
@@ -91,7 +96,9 @@ internal sealed class DecodeSourceNode : Node
         _streaming = !_randomAccess && (long)region.Width * region.Height * Format.BytesPerPixel >= StreamingMinBytes;
     }
 
-    public override bool Cacheable => _randomAccess;
+    // A decoder whose tiles are a plain copy out of state it already holds (a GIF canvas) says so: caching them would only keep a
+    // second copy of every frame of an animation alive for as long as the image or a save in progress.
+    public override bool Cacheable => _randomAccess && _session.Decoder is not ICheapTileDecoder;
 
     public override bool Streaming => _streaming;
 

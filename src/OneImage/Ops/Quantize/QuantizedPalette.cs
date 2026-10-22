@@ -23,10 +23,12 @@ internal sealed class QuantizedPalette
         Exact = exact;
         _threshold = threshold;
         _full = alpha == QuantizeAlpha.Full;
-        _r = new int[count];
-        _g = new int[count];
-        _b = new int[count];
-        _a = new int[count];
+        // Padded for the vector nearest-entry search; the padding never wins.
+        int padded = Kernels.QuantizeKernels.PaddedLength(count);
+        _r = PaddedTable(padded);
+        _g = PaddedTable(padded);
+        _b = PaddedTable(padded);
+        _a = PaddedTable(padded);
         for (int i = 0; i < count; i++)
         {
             _r[i] = rgba[i * 4];
@@ -89,33 +91,52 @@ internal sealed class QuantizedPalette
     internal void SeedCell(int lutIndex, int r, int g, int b, int a) =>
         _lut[lutIndex] = (ushort)Nearest(_r, _g, _b, _a, Count, TransparentIndex, r, g, b, _full ? a : 255);
 
-    internal static int Nearest(int[] pr, int[] pg, int[] pb, int[] pa, int count, int skip, int r, int g, int b, int a)
+    internal static int[] PaddedTable(int paddedLength)
     {
-        int best = -1;
-        long bestD = long.MaxValue;
-        for (int i = 0; i < count; i++)
+        var t = new int[paddedLength];
+        Array.Fill(t, Kernels.QuantizeKernels.PaddingValue);
+        return t;
+    }
+
+    /// <summary>Nearest entry by squared distance over four channels; the tables must be padded (see <see cref="PaddedTable"/>).</summary>
+    internal static int Nearest(int[] pr, int[] pg, int[] pb, int[] pa, int count, int skip, int r, int g, int b, int a) =>
+        Kernels.QuantizeKernels.Nearest(pr, pg, pb, pa, count, skip, r, g, b, a);
+
+    internal int Threshold => _threshold;
+
+    /// <summary>
+    /// Sums, over the pixels that are not transparent, the squared RGB distance between each pixel and the entry it maps to without
+    /// dithering. Used to judge whether a palette made for one picture still suits another.
+    /// </summary>
+    /// <param name="rgba">Whole pixels, 4 bytes each.</param>
+    /// <param name="pixels">Receives the number of pixels that were counted.</param>
+    /// <returns>The error sum.</returns>
+    internal long ColorError(ReadOnlySpan<byte> rgba, out long pixels)
+    {
+        long sum = 0;
+        long n = 0;
+        int limit = Alpha == QuantizeAlpha.Binary ? _threshold : 1;
+        for (int i = 0; i + 3 < rgba.Length; i += 4)
         {
-            if (i == skip)
+            int r = rgba[i];
+            int g = rgba[i + 1];
+            int b = rgba[i + 2];
+            if (rgba[i + 3] < limit)
             {
                 continue;
             }
 
-            long dr = pr[i] - r;
-            long dg = pg[i] - g;
-            long db = pb[i] - b;
-            long da = pa[i] - a;
-            long d = (dr * dr) + (dg * dg) + (db * db) + (da * da);
-            if (d < bestD)
-            {
-                bestD = d;
-                best = i;
-            }
+            int e = Lookup(r, g, b, rgba[i + 3]);
+            int dr = _r[e] - r;
+            int dg = _g[e] - g;
+            int db = _b[e] - b;
+            sum += (dr * dr) + (dg * dg) + (db * db);
+            n++;
         }
 
-        return best < 0 ? 0 : best;
+        pixels = n;
+        return sum;
     }
-
-    internal int Threshold => _threshold;
 
     internal uint KeyOf(uint px) => ColorQuantizer.Key(px, Alpha, _threshold);
 }
@@ -232,7 +253,7 @@ internal sealed class PaletteMapper
                 uint key = p.KeyOf(BinaryPrimitives.ReadUInt32LittleEndian(rgba.Slice(x * 4, 4)));
                 if (!have || key != lastKey)
                 {
-                    int idx = set.Find(key);
+                    int idx = key == 0 && tIndex >= 0 ? tIndex : set.Find(key);
                     if (idx < 0)
                     {
                         idx = p.Lookup((int)(key & 0xFF), (int)((key >> 8) & 0xFF), (int)((key >> 16) & 0xFF), (int)(key >> 24));
