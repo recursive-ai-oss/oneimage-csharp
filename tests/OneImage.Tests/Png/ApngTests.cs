@@ -183,6 +183,29 @@ public class ApngTests
         Assert.Equal(Canon.ToRgba16(PixelFormat.Rgba8, PngTestUtil.Decode(file, 0).Data, W * H), PngTestUtil.NetVipsDecode(file).Rgba);
     }
 
+    [Fact]
+    public void ParallelFrameRequestsAgreeWithSequentialDecoding()
+    {
+        const int W = 30, H = 20;
+        var rnd = new Random(5);
+        var frames = Enumerable.Range(0, 12).Select(i =>
+            new MiniPng.Frame(rnd.Next(10), rnd.Next(8), 10 + rnd.Next(10), 6 + rnd.Next(8), MiniPng.Rgba(20, 14, (byte)(i * 20), (byte)(i * 9), 7, (byte)(i % 3 == 0 ? 255 : 90)), 1, 10, Dispose: i % 3, Blend: i % 2)).ToArray();
+        // Keep each rectangle inside the canvas.
+        frames = frames.Select(f => f with { W = Math.Min(f.W, W - f.X), H = Math.Min(f.H, H - f.Y) }).Select(f => f with { Rgba = MiniPng.Rgba(f.W, f.H, f.Rgba[0], f.Rgba[1], f.Rgba[2], f.Rgba[3]) }).ToArray();
+        byte[] file = MiniPng.Apng(W, H, frames);
+        using var ms0 = new MemoryStream(file);
+        ImageInfo shared = PngFormat.Instance.Decoder!.ReadInfo(ms0, ImageLimits.Default);
+        byte[][] expected = Enumerable.Range(0, frames.Length).Select(i => Reference(W, H, frames, i)).ToArray();
+        Parallel.For(0, 400, new ParallelOptions { MaxDegreeOfParallelism = 8 }, n =>
+        {
+            int i = (n * 7) % frames.Length;
+            using var ms = new MemoryStream(file);
+            var sink = new CollectSink(W, H, PixelFormat.Rgba8);
+            PngFormat.Instance.Decoder!.DecodeFrame(ms, shared, i, new DecodeRequest(new ImageRect(0, 0, W, H)), sink, ImageLimits.Default, CancellationToken.None);
+            AssertClose(expected[i], sink.Data);
+        });
+    }
+
     private static byte[] EncodeAgain(Image anim)
     {
         using var ms = new MemoryStream();

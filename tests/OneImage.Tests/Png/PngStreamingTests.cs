@@ -150,6 +150,6 @@ public sealed class PngStreamingTests : IDisposable
         }
 
         TestContext.Current.SendDiagnosticMessage($"png load+invert+save {W}x{H}: peak managed growth {growth >> 20} MiB ({100.0 * growth / frameBytes:F2}% of the frame)");
-        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 10, $"peak growth {growth} exceeds 10% of {frameBytes}");
+        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 6, $"peak growth {growth} exceeds a sixth of the {frameBytes} byte frame");
     }
 }

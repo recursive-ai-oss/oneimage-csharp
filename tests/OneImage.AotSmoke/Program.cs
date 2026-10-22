@@ -140,6 +140,37 @@ foreach (JpegEncoderOptions jo in new[] { new JpegEncoderOptions { Quality = 85 
         Console.Error.WriteLine("jpeg smoke failed");
         return 1;
     }
+
+// PNG, BMP and ICO: encode with each registered codec, decode again, animate.
+var rgbaPixels = new Rgba32[40 * 30];
+for (int i = 0; i < rgbaPixels.Length; i++)
+{
+    rgbaPixels[i] = new Rgba32((byte)(i * 7), (byte)(i / 40 * 9), (byte)(i ^ 0x5A), (byte)(i % 5 == 0 ? 100 : 255));
+}
+
+Image source = Image.FromPixels<Rgba32>(rgbaPixels, 40, 30);
+bool rasterOk = true;
+foreach (IImageFormat format in new IImageFormat[] { PngFormat.Instance, BmpFormat.Instance, IcoFormat.Instance })
+{
+    using var encoded = new System.IO.MemoryStream();
+    source.Save(encoded, format);
+    Image back = Image.Load(encoded.ToArray());
+    rasterOk &= back.SourceFormat == format && back.Width == 40 && back.Height == 30 && back.ToArray<Rgba32>().AsSpan().SequenceEqual(rgbaPixels);
+}
+
+// Indexed PNG for a few colors, and encoder options.
+var flat = new Rgba32[20 * 20];
+Array.Fill(flat, new Rgba32(10, 20, 30, 255));
+using var indexed = new System.IO.MemoryStream();
+Image.FromPixels<Rgba32>(flat, 20, 20).Save(indexed, PngFormat.Instance);
+rasterOk &= Image.Load(indexed.ToArray()).ToArray<Rgb24>()[0] == new Rgb24(10, 20, 30);
+using var tuned = new System.IO.MemoryStream();
+source.Save(tuned, PngFormat.Instance, new SaveOptions { EncoderOptions = new PngEncoderOptions { CompressionLevel = 9, Filter = PngFilterMode.Paeth } });
+rasterOk &= PngFormat.Instance.Matches(tuned.ToArray()) && Image.Load(tuned.ToArray()).ToArray<Rgba32>().AsSpan().SequenceEqual(rgbaPixels);
+if (!rasterOk)
+{
+    Console.Error.WriteLine("png/bmp/ico smoke failed");
+    return 1;
 }
 
 Console.WriteLine("smoke ok: " + Library.Name);
