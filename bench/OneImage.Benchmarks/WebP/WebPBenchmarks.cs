@@ -81,7 +81,7 @@ internal sealed class WebPInputs : IDisposable
 
 /// <summary>Decoding 2000x1500 lossy and lossless files to RGBA bytes.</summary>
 [MemoryDiagnoser]
-[ShortRunJob]
+[SimpleJob(warmupCount: 6, iterationCount: 25, launchCount: 1)]
 public class WebPDecodeBenchmarks : IDisposable
 {
     private WebPInputs _in = null!;
