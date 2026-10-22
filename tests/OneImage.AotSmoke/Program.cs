@@ -172,6 +172,8 @@ if (!rasterOk)
 {
     Console.Error.WriteLine("png/bmp/ico smoke failed");
     return 1;
+}
+
 // WebP: lossless (exact), lossy (close), alpha, and a two-frame animation with metadata, through the default configuration.
 foreach (bool lossless in new[] { true, false })
 {
