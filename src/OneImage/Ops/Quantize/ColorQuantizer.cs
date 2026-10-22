@@ -22,8 +22,8 @@ internal sealed class ColorQuantizer
     private readonly int _maxColors;
     private readonly QuantizeAlpha _alpha;
     private readonly int _alphaThreshold;
-    private readonly int _aDim; // 2 (one alpha plane) or 9
-    private readonly long[] _w, _r, _g, _b, _a, _sq;
+    private int _aDim; // 2 (one alpha plane) or 9; full mode starts with one plane and grows when a pixel is not opaque
+    private long[] _w, _r, _g, _b, _a, _sq;
     private readonly ColorSet _set = new();
     private bool _exact = true;
     private long _transparentCount;
@@ -41,7 +41,7 @@ internal sealed class ColorQuantizer
         _maxColors = maxColors;
         _alpha = alpha;
         _alphaThreshold = Math.Clamp(alphaThreshold, 1, 255);
-        _aDim = alpha == QuantizeAlpha.Full ? 9 : 2;
+        _aDim = 2;
         int n = _aDim * D * D * D;
         _w = new long[n];
         _r = new long[n];
@@ -100,7 +100,12 @@ internal sealed class ColorQuantizer
             int g = (int)((key >> 8) & 0xFF);
             int b = (int)((key >> 16) & 0xFF);
             int a = (int)(key >> 24);
-            int ab = full ? (a >> 5) + 1 : 1;
+            if (full && _aDim == 2 && a != 255)
+            {
+                GrowAlphaPlanes();
+            }
+
+            int ab = _aDim == 2 ? 1 : (a >> 5) + 1;
             int idx = (((((ab * D) + (r >> 3) + 1) * D) + (g >> 3) + 1) * D) + (b >> 3) + 1;
             _w[idx]++;
             _r[idx] += r;
@@ -109,6 +114,26 @@ internal sealed class ColorQuantizer
             _a[idx] += a;
             _sq[idx] += (r * r) + (g * g) + (b * b) + (a * a);
         }
+    }
+
+    /// <summary>Opaque pixels sit in alpha plane 1; once translucent pixels show up the histogram gets eight alpha bins and plane 1 moves to bin 8.</summary>
+    private void GrowAlphaPlanes()
+    {
+        int cube = D * D * D;
+        _w = Grow(_w, cube);
+        _r = Grow(_r, cube);
+        _g = Grow(_g, cube);
+        _b = Grow(_b, cube);
+        _a = Grow(_a, cube);
+        _sq = Grow(_sq, cube);
+        _aDim = 9;
+    }
+
+    private static long[] Grow(long[] old, int cube)
+    {
+        var grown = new long[9 * cube];
+        Array.Copy(old, cube, grown, 8 * cube, cube);
+        return grown;
     }
 
     /// <summary>Computes the palette from everything added so far.</summary>
@@ -158,7 +183,7 @@ internal sealed class ColorQuantizer
                             continue;
                         }
 
-                        int lutIndex = (((((full ? ab - 1 : 0) << 5) | (r - 1)) << 5 | (g - 1)) << 5) | (b - 1);
+                        int lutIndex = (((((full ? (_aDim == 2 ? 7 : ab - 1) : 0) << 5) | (r - 1)) << 5 | (g - 1)) << 5) | (b - 1);
                         cells.Add(new Cell(lutIndex, w, (int)((_r[rowBase + b] + (w >> 1)) / w), (int)((_g[rowBase + b] + (w >> 1)) / w), (int)((_b[rowBase + b] + (w >> 1)) / w), (int)((_a[rowBase + b] + (w >> 1)) / w)));
                     }
                 }
