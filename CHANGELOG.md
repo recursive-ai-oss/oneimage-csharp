@@ -18,6 +18,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 - `Image.ApplyMask(mask, channel, x, y, linear)` and `MaskChannel`: multiplies an image's coverage by a per-pixel mask taken from another image (its alpha, or its luminance times alpha), lazily and tile by tile; everything outside the mask becomes transparent. This is the layer-mask operation the SVG renderer composites masked groups with.
 - `RecursiveAI.OneImage.Svg`: `clipPath` (units, transform, per-child `clip-rule`, nested clips on the clip and on its children, `use` children, cycles broken) and `mask` (units, regions, `mask-type`, masks on masks, cycles broken) on shapes, groups, `use`, nested `svg` and the root, plus `overflow` on nested viewports. Clips are resolved with the polygon boolean engine, so clipped regions draw only the nodes they touch; each clip child counts as 16 instances against the instantiation limit.
+- `RecursiveAI.OneImage.Svg`: markers (`marker-start`/`mid`/`end` and the `marker` shorthand on paths, lines, polylines, polygons and basic shapes; `markerUnits`, `refX`/`refY`, `viewBox`, `overflow`, `orient` as `auto`, `auto-start-reverse` or an angle; context paints; `paint-order` placement; nested and recursive markers under the instance budget), `mix-blend-mode` with every CSS blend mode, and `isolation`.
 
 ### Changed
 
