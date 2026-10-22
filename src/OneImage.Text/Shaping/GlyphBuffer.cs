@@ -22,6 +22,32 @@ internal struct GlyphInfo
 
     /// <summary>The per-glyph feature bits a script shaper sets (for example the Arabic joining form); a lookup planned with a mask applies only to glyphs sharing a bit.</summary>
     public uint Mask;
+
+    /// <summary>The script shaper's category of the character (Indic and Universal Shaping Engine shapers); kept by every glyph a substitution derives from it.</summary>
+    public byte Cat;
+
+    /// <summary>The reordering class of the glyph inside its syllable (Indic and Universal Shaping Engine shapers).</summary>
+    public byte Pos;
+
+    /// <summary>Syllable-level flags (<see cref="GlyphFlags"/>); a ligature carries the union of its components' flags.</summary>
+    public byte Flags;
+
+    /// <summary>The syllable number the glyph belongs to; syllables are numbered along the run.</summary>
+    public int Syllable;
+
+    /// <summary>The glyph id before a feature stage ran, so the stage's effect can be told afterwards.</summary>
+    public int Before;
+}
+
+/// <summary>Per-glyph flags a syllable shaper keeps on <see cref="GlyphInfo.Flags"/>.</summary>
+internal static class GlyphFlags
+{
+    public const byte Base = 1;
+    public const byte Reph = 2;
+    public const byte Pref = 4;
+
+    /// <summary>A sign above the base that moves next to the base after the basic forms have run.</summary>
+    public const byte Above = 8;
 }
 
 /// <summary>The placement of one glyph in font units: how far it advances the pen and where it is drawn relative to the pen.</summary>

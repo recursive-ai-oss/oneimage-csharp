@@ -1,0 +1,120 @@
+# script, code points, reason (the reasons are described in the complex scripts section of docs/text.md)
+balinese	1B00	broken-cluster
+balinese	1B13 1B3F 1B3E	contextual-form
+balinese	1B36	broken-cluster
+balinese	1B44	broken-cluster
+bengali	0982	broken-cluster
+bengali	0995 09CD 0995	bengali-form
+bengali	0995 200D 09CD 09B7	joiner-kerning
+bengali	09B0 09CD 0995 09BF	bengali-form
+bengali	09B0 09CD 09AC 09CD 09AF	bengali-form
+bengali	09B8 09CD 09AC 09BE 09A7 09C0 09A8 09A4 09BE	bengali-form
+bengali	09BC	broken-cluster
+bengali	09CD	broken-cluster
+devanagari	0902	broken-cluster
+devanagari	0903	broken-cluster
+devanagari	0915 094D 200D 0930	joiner-kerning
+devanagari	0915 094D 200D 0937	joiner-kerning
+devanagari	093C	broken-cluster
+devanagari	093E	broken-cluster
+devanagari	0940	broken-cluster
+devanagari	094D	broken-cluster
+gujarati	00A0 0ABF	broken-cluster
+gujarati	0A82	broken-cluster
+gujarati	0A95 0AC1	below-mark-offset
+gujarati	0A95 0AC2	below-mark-offset
+gujarati	0A95 0AC3	below-mark-offset
+gujarati	0A95 0ACD 200D 0AB7	joiner-kerning
+gujarati	0ABC	broken-cluster
+gujarati	0ABE	broken-cluster
+gujarati	0ACD	broken-cluster
+gurmukhi	0A02	broken-cluster
+gurmukhi	0A3E	broken-cluster
+gurmukhi	0A4D	broken-cluster
+javanese	A9B3 A9B6 A9A4 A9C0 A9A4 A9BC	contextual-form
+javanese	A9B6	broken-cluster
+kannada	0C82	broken-cluster
+kannada	0C95 0CCD 0CB7 0CBF	kannada-conjunct
+kannada	0C9C 0CCD 0C9E 0CBE	kannada-conjunct
+kannada	0CB8 0CCD 0CB5 0CBE 0CA4 0C82 0CA4 0CCD 0CB0 0CCD 0CAF	kannada-conjunct
+kannada	0CBE	broken-cluster
+kannada	0CBF	broken-cluster
+kannada	0CC6	broken-cluster
+kannada	0CC7	broken-cluster
+kannada	0CC8	broken-cluster
+kannada	0CCA	broken-cluster
+kannada	0CCB	broken-cluster
+kannada	0CCC	broken-cluster
+kannada	0CCD	broken-cluster
+khmer	1780 17D2 179A 17BB 1798	contextual-form
+khmer	17B6	broken-cluster
+khmer	17C6	broken-cluster
+khmer	17C9	broken-cluster
+khmer	17D2	broken-cluster
+khmer	17D2 1780	contextual-form
+lao	0E99 0EC9 0EB3	sara-am
+lao	0E9C 0EC8 0EB3	sara-am
+malayalam	0D02	broken-cluster
+malayalam	0D15 0D3F	ignore-marks-pair
+malayalam	0D15 0D40	ignore-marks-pair
+malayalam	0D15 0D4D 0D30 0D3F	ignore-marks-pair
+malayalam	0D24 0D3F 0D30 0D41 0D35 0D28 0D28 0D4D 0D24 0D2A 0D41 0D30 0D02	ignore-marks-pair
+malayalam	0D3E	broken-cluster
+malayalam	0D3F	broken-cluster
+malayalam	0D4D	broken-cluster
+myanmar	1000 1031	myanmar-reorder
+myanmar	1000 1031 102B 103A	myanmar-reorder
+myanmar	1000 1031 102C	myanmar-reorder
+myanmar	1000 1031 102C 103A	myanmar-reorder
+myanmar	1000 1031 103B	myanmar-reorder
+myanmar	1000 1039 1000	myanmar-reorder
+myanmar	1000 103B 103D	myanmar-reorder
+myanmar	1000 103B 103D 1014 103A	myanmar-reorder
+myanmar	1000 103B 103E	myanmar-reorder
+myanmar	1000 103C	myanmar-reorder
+myanmar	1000 103C 1031	myanmar-reorder
+myanmar	1000 103C 1031 102C	myanmar-reorder
+myanmar	1000 103C 103D	myanmar-reorder
+myanmar	1004 103A 1039	myanmar-reorder
+myanmar	1004 103A 1039 1000	myanmar-reorder
+myanmar	1004 103A 1039 1000 102D	myanmar-reorder
+myanmar	1004 103A 1039 1001 103B	myanmar-reorder
+myanmar	1010 1039 1010	myanmar-reorder
+myanmar	1015 103C 100A 103A 1011 1031 102C 1004 103A 1005 102F	myanmar-reorder
+myanmar	1019 103C 1014 103A 1019 102C	myanmar-reorder
+myanmar	1021 1004 103A 1039 1002	myanmar-reorder
+myanmar	102B	broken-cluster
+myanmar	1031	broken-cluster
+oriya	0B02	broken-cluster
+oriya	0B3C	broken-cluster
+oriya	0B3F	broken-cluster
+oriya	0B4D	broken-cluster
+sinhala	0D9A 0DCA 200D 0DBA 0DDC	prebase-reorder
+sinhala	0D9A 0DCA 200D 0DBB 0DD9	prebase-reorder
+sinhala	0DBB 0DCA 200D	contextual-form
+sinhala	0DC1 0DCA 200D 0DBB 0DD3	contextual-form
+sinhala	0DC1 0DCA 200D 0DBB 0DD3 0DBD 0D82 0D9A 0DCF	contextual-form
+sinhala	0DD2	broken-cluster
+tamil	0BBE	broken-cluster
+tamil	0BBF	broken-cluster
+tamil	0BCD	broken-cluster
+telugu	0C02	broken-cluster
+telugu	0C3E	broken-cluster
+telugu	0C3F	broken-cluster
+telugu	0C46	broken-cluster
+telugu	0C47	broken-cluster
+telugu	0C48	broken-cluster
+telugu	0C4A	broken-cluster
+telugu	0C4B	broken-cluster
+telugu	0C4C	broken-cluster
+telugu	0C4D	broken-cluster
+thai	0E01 0E48 0E33	sara-am
+thai	0E02 0E49 0E33	sara-am
+thai	0E19 0E49 0E33	sara-am
+thai	0E1B 0E39 0E48	contextual-form
+tibetan	0F40 0F71 0F72	tibetan-extra-glyph
+tibetan	0F40 0F73	tibetan-extra-glyph
+tibetan	0F40 0F81	tibetan-extra-glyph
+tibetan	0F67 0FB2 0F71 0F72	tibetan-extra-glyph
+tibetan	0F72	broken-cluster
+tibetan	0F90	broken-cluster

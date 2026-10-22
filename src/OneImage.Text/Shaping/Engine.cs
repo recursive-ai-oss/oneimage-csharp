@@ -50,6 +50,9 @@ internal sealed partial class Engine
         _maxGlyphs = (int)Math.Min((8L * Math.Max(textLength, 1)) + 256, 1 << 24);
     }
 
+    /// <summary>When set, zero width joiners and non-joiners are never skipped, whatever the lookup flags say, so they block a match.</summary>
+    public bool KeepJoiners { get; set; }
+
     /// <summary>True once the run used up its work budget; the lookups after that point were not applied.</summary>
     public bool Exhausted { get; private set; }
 
@@ -188,6 +191,11 @@ internal sealed partial class Engine
         }
 
         ref GlyphInfo g = ref _buf.Info[i];
+        if (KeepJoiners && g.CodePoint is 0x200C or 0x200D)
+        {
+            return false;
+        }
+
         switch (g.Class)
         {
             case Gdef.ClassBase:

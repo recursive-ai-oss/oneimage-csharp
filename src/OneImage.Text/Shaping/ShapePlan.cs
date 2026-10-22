@@ -83,6 +83,12 @@ internal abstract class ScriptShaper
     /// <summary>The GSUB features applied in order, one list per stage; a stage finishes before the next begins. Enabled features outside every list run in the last stage.</summary>
     public abstract uint[][] GsubStages { get; }
 
+    /// <summary>
+    /// True for shapers whose lookups must see zero width joiners and non-joiners as glyphs that never match through (Indic, Universal
+    /// Shaping Engine): the joiners are taken out of the run once substitution is done.
+    /// </summary>
+    public virtual bool KeepsJoiners => false;
+
     /// <summary>Whether the feature is on unless the user says otherwise.</summary>
     public abstract bool DefaultOn(uint tag);
 
@@ -100,8 +106,37 @@ internal abstract class ScriptShaper
     {
     }
 
+    /// <summary>
+    /// Builds the glyph run for the characters when the shaper needs to decompose, insert or regroup them before the font's
+    /// character map is consulted (split vowel signs, dotted circles, syllables). Returns null to use the plain one-glyph-per-character run.
+    /// </summary>
+    public virtual GlyphBuffer? BuildRun(FontFace face, ReadOnlySpan<int> codePoints, ReadOnlySpan<int> clusters) => null;
+
+    /// <summary>True for shapers that reorder glyphs between stages and so need the <see cref="ShapeContext"/> hooks (<see cref="Prepare"/>, <see cref="AfterStage"/>).</summary>
+    public virtual bool Reorders => false;
+
+    /// <summary>Called on the glyph run before any lookup runs, with the plan in hand; the default forwards to <see cref="PrepareRun(GlyphBuffer)"/>.</summary>
+    public virtual void Prepare(ShapeContext context) => PrepareRun(context.Buffer);
+
+    /// <summary>Called after the GSUB stage with the given index has run (also when the font has no lookups for it), so reordering can happen between stages.</summary>
+    public virtual void AfterStage(int stage, ShapeContext context)
+    {
+    }
+
     /// <summary>The OpenType script tags to try, best first.</summary>
     public virtual uint[] ScriptTags(uint script) => [script, Tag.Dflt, Tag.DfltLower, Tag.Latn];
+}
+
+/// <summary>What a script shaper needs to see while it works on a run: the font, the plan and the glyphs.</summary>
+internal sealed class ShapeContext(FontFace face, OtFace layout, ShapePlan plan, GlyphBuffer buffer)
+{
+    public FontFace Face { get; } = face;
+
+    public OtFace Layout { get; } = layout;
+
+    public ShapePlan Plan { get; } = plan;
+
+    public GlyphBuffer Buffer { get; } = buffer;
 }
 
 internal static class Tag
@@ -153,6 +188,9 @@ internal sealed class ShapePlan
     public PlannedLookup[][] Gsub { get; private init; } = [];
 
     public PlannedLookup[] Gpos { get; private init; } = [];
+
+    /// <summary>Answers a syllable shaper's "would this feature change these glyphs" questions, remembered per plan.</summary>
+    public ConcurrentDictionary<long, bool> Probes { get; } = new();
 
     /// <summary>Whether a GPOS lookup came from the kern feature, so the legacy kern table must stay out of the way.</summary>
     public bool HasGposKern { get; private init; }

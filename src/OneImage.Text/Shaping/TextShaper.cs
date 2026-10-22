@@ -77,18 +77,23 @@ internal static class TextShaper
             }
 
             script = runScript;
-            GlyphBuffer buffer = new(end - start);
-            OtFace layout = face.Layout;
-            bool classes = layout.Gdef is { HasGlyphClasses: true };
-            for (int k = start; k < end; k++)
+            ScriptShaper shaper = ShaperFor(runScript);
+            GlyphBuffer? buffer = shaper.BuildRun(face, codePoints.Slice(start, end - start), clusters.Slice(start, end - start));
+            if (buffer is null)
             {
-                int cp = codePoints[k];
-                int glyph = face.GetGlyphIndex(cp);
-                byte cls = classes ? (byte)layout.Gdef!.GlyphClass(glyph) : (Scripts.IsMark(cp) ? (byte)Gdef.ClassMark : (byte)Gdef.ClassBase);
-                buffer.Add(new GlyphInfo { Glyph = glyph, Cluster = clusters[k], CodePoint = cp, Class = cls });
+                buffer = new(end - start);
+                OtFace layout = face.Layout;
+                bool classes = layout.Gdef is { HasGlyphClasses: true };
+                for (int k = start; k < end; k++)
+                {
+                    int cp = codePoints[k];
+                    int glyph = face.GetGlyphIndex(cp);
+                    byte cls = classes ? (byte)layout.Gdef!.GlyphClass(glyph) : (Scripts.IsMark(cp) ? (byte)Gdef.ClassMark : (byte)Gdef.ClassBase);
+                    buffer.Add(new GlyphInfo { Glyph = glyph, Cluster = clusters[k], CodePoint = cp, Class = cls });
+                }
             }
 
-            ShapeBuffer(face, buffer, runScript, language, features, end - start, output, rtl);
+            ShapeBuffer(face, buffer, shaper, runScript, language, features, end - start, output, rtl);
             start = end;
         }
     }
@@ -104,16 +109,40 @@ internal static class TextShaper
             buffer.Add(new GlyphInfo { Glyph = glyphs[k], Cluster = k, CodePoint = 0x41, Class = cls });
         }
 
-        ShapeBuffer(face, buffer, Tag.Latn, language, features, glyphs.Length, output, false);
+        ShapeBuffer(face, buffer, GenericShaper.Instance, Tag.Latn, language, features, glyphs.Length, output, false);
     }
 
-    private static ScriptShaper ShaperFor(uint script) =>
-        script == Tag.Arab || script == Tag.Syrc || script == Tag.Nko ? ArabicShaper.Instance : GenericShaper.Instance;
+    private static ScriptShaper ShaperFor(uint script)
+    {
+        if (script == Tag.Arab || script == Tag.Syrc || script == Tag.Nko)
+        {
+            return ArabicShaper.Instance;
+        }
 
-    private static void ShapeBuffer(FontFace face, GlyphBuffer buffer, uint script, uint language, FeatureSet features, int textLength, List<ShapedRunGlyph> output, bool rtl)
+        ShapedScript shaped = Scripts.ShapedOf(script);
+        if (shaped == ShapedScript.None)
+        {
+            return GenericShaper.Instance;
+        }
+
+        if (shaped == ShapedScript.Thai)
+        {
+            return ThaiShaper.Thai;
+        }
+
+        if (shaped == ShapedScript.Lao)
+        {
+            return ThaiShaper.Lao;
+        }
+
+        ScriptShaper? complex = IndicShaper.For(shaped);
+        complex ??= UseShaper.For(shaped);
+        return complex ?? GenericShaper.Instance;
+    }
+
+    private static void ShapeBuffer(FontFace face, GlyphBuffer buffer, ScriptShaper shaper, uint script, uint language, FeatureSet features, int textLength, List<ShapedRunGlyph> output, bool rtl)
     {
         OtFace layout = face.Layout;
-        ScriptShaper shaper = ShaperFor(script);
         ShapePlan plan = layout.GetPlan(shaper, script, language, features, rtl);
         if (rtl && !plan.HasRtlm)
         {
@@ -133,16 +162,44 @@ internal static class TextShaper
             }
         }
 
-        shaper.PrepareRun(buffer);
-
-        if (layout.Gsub is { } gsub)
+        ShapeContext? context = null;
+        if (shaper.Reorders)
         {
-            var engine = new Engine(gsub, layout.Gdef, buffer, face.NumGlyphs, textLength, rtl);
-            foreach (PlannedLookup[] stage in plan.Gsub)
+            context = new ShapeContext(face, layout, plan, buffer);
+            shaper.Prepare(context);
+        }
+        else
+        {
+            shaper.PrepareRun(buffer);
+        }
+
+        Engine? engine = layout.Gsub is { } gsub ? new Engine(gsub, layout.Gdef, buffer, face.NumGlyphs, textLength, rtl) : null;
+        if (engine is not null)
+        {
+            engine.KeepJoiners = shaper.KeepsJoiners;
+        }
+
+        int stages = shaper.GsubStages.Length;
+        for (int st = 0; st < stages; st++)
+        {
+            if (engine is not null && st < plan.Gsub.Length && plan.Gsub[st].Length > 0)
             {
-                if (stage.Length > 0)
+                engine.Run(plan.Gsub[st]);
+            }
+
+            if (context is not null)
+            {
+                shaper.AfterStage(st, context);
+            }
+        }
+
+        if (shaper.KeepsJoiners)
+        {
+            for (int i = buffer.Count - 1; i >= 0; i--)
+            {
+                if (buffer.Info[i].CodePoint is 0x200C or 0x200D)
                 {
-                    engine.Run(stage);
+                    buffer.RemoveAt(i);
                 }
             }
         }
@@ -175,9 +232,9 @@ internal static class TextShaper
         {
             ref GlyphInfo info = ref buffer.Info[i];
             ref GlyphPos pos = ref buffer.Pos[i];
-            if (info.CodePoint == 0x200D)
+            if (info.CodePoint is 0x200D or 0x200C)
             {
-                // A zero width joiner only shapes its neighbors; it is not drawn.
+                // A zero width joiner or non-joiner only shapes its neighbors; it is not drawn.
                 continue;
             }
 
@@ -228,6 +285,34 @@ internal static class Scripts
     /// <summary>A script without a shaper of its own; shaped with the default script's rules.</summary>
     public const uint Other = 2;
 
+    // OpenType (version 1) script tags in the order of ShapedScript.
+    private static readonly uint[] ShapedTags =
+    [
+        0, .. new[]
+        {
+            "deva", "beng", "guru", "gujr", "orya", "taml", "telu", "knda", "mlym", "khmr", "mymr", "sinh", "tibt", "bali", "java", "sund",
+            "batk", "brah", "bugi", "cakm", "cham", "kthi", "lepc", "limb", "rjng", "saur", "sylo", "tglg", "tagb", "hano", "buhd", "tale",
+            "lana", "talu", "mtei", "phag", "tavt", "thai", "lao ",
+        }.Select(Fonts.Be.Tag),
+    ];
+
+    /// <summary>The shaped script behind an OpenType script tag returned by <see cref="Of"/>, or <see cref="ShapedScript.None"/>.</summary>
+    public static ShapedScript ShapedOf(uint tag)
+    {
+        for (int i = 1; i < ShapedTags.Length; i++)
+        {
+            if (ShapedTags[i] == tag)
+            {
+                return (ShapedScript)i;
+            }
+        }
+
+        return ShapedScript.None;
+    }
+
+    /// <summary>The OpenType (version 1) script tag of a shaped script.</summary>
+    public static uint TagOf(ShapedScript script) => ShapedTags[(int)script];
+
     public static uint Of(int cp)
     {
         if (cp < 0x80)
@@ -276,6 +361,15 @@ internal static class Scripts
         if (cp is (>= 0x400 and <= 0x52F) or (>= 0x1C80 and <= 0x1C8F) or (>= 0x2DE0 and <= 0x2DFF) or (>= 0xA640 and <= 0xA69F))
         {
             return Tag.Cyrl;
+        }
+
+        if (cp >= 0x900 && cp < 0x20000)
+        {
+            ShapedScript shaped = IndicProps.ScriptOf(cp);
+            if (shaped != ShapedScript.None)
+            {
+                return ShapedTags[(int)shaped];
+            }
         }
 
         // Latin-1 and Latin Extended letters were handled above; what is left below Greek is punctuation and symbols.

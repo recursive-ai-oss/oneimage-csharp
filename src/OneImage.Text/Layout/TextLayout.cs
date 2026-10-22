@@ -481,7 +481,8 @@ internal sealed class TextLayout
             }
 
             int run = RunAt(i);
-            bool ignorable = (IsIgnorable(cp) && !(cp == 0x200D && JoinerMatters(text, i, start, end))) || cp == '\t';
+            bool indicJoiner = cp is 0x200C or 0x200D && SyllableJoinerMatters(text, i, start, end);
+            bool ignorable = (IsIgnorable(cp) && !indicJoiner && !(cp == 0x200D && JoinerMatters(text, i, start, end))) || cp == '\t';
             if (_fallbacks.Count > 0 && !ignorable && _clusters[i - start] != 0)
             {
                 // The first code point of a grapheme cluster picks the face for the whole cluster.
@@ -511,7 +512,7 @@ internal sealed class TextLayout
                 int gid = st.Face.GetGlyphIndex(' ');
                 Glyphs.Add(new ShapedGlyph { GlyphId = gid, CodePoint = cp, Cluster = i, Length = len, Advance = st.TabAdvance, IsSpace = true, Style = style, Level = LevelAt(i - start) });
             }
-            else if (cp is 0x200C or 0x200B or 0x00AD)
+            else if (cp is 0x200C or 0x200B or 0x00AD && !indicJoiner)
             {
                 FlushRun(end);
             }
@@ -561,6 +562,29 @@ internal sealed class TextLayout
     private byte LevelAt(int offset) => _levels is null ? (byte)0 : _levels[offset];
 
     // A zero width joiner is kept for the shaper only where it sits next to a letter that can join through it.
+    // In the Indic and Universal Shaping Engine scripts the joiners steer conjunct and reph formation, so they stay in the run when
+    // a character of such a script is next to them.
+    private static bool SyllableJoinerMatters(string text, int i, int start, int end)
+    {
+        if (i > start && IsSyllableScript(text[i - 1]))
+        {
+            return true;
+        }
+
+        return i + 1 < end && IsSyllableScript(text[i + 1]);
+    }
+
+    private static bool IsSyllableScript(char c)
+    {
+        if (c < 0x900)
+        {
+            return false;
+        }
+
+        ShapedScript s = IndicProps.ScriptOf(c);
+        return s != ShapedScript.None && s != ShapedScript.Thai && s != ShapedScript.Lao;
+    }
+
     private static bool JoinerMatters(string text, int i, int start, int end)
     {
         int before = 0;

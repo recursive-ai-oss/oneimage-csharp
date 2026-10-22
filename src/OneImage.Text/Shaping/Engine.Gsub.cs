@@ -259,7 +259,14 @@ internal sealed partial class Engine
             _buf.Info[first].LigComp = 0;
         }
 
+        byte flags = 0;
+        for (int c = 0; c < comps; c++)
+        {
+            flags |= _buf.Info[mp[c]].Flags;
+        }
+
         ref GlyphInfo g = ref _buf.Info[first];
+        g.Flags = flags;
         g.Glyph = ligGlyph;
         g.Class = ClassFor(ligGlyph, allMarks ? (byte)Gdef.ClassMark : (byte)Gdef.ClassLigature);
         for (int c = comps - 1; c >= 1; c--)
