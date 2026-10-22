@@ -12,6 +12,8 @@ internal static class MetadataTargets
         _ => PixelFormat.LabF32,
     };
 
+    private const long TransformHeapLimit = 400L << 20;
+
     public static void Icc(ReadOnlySpan<byte> data)
     {
         byte[] bytes = data.ToArray();
@@ -21,6 +23,14 @@ internal static class MetadataTargets
             _ = profile.LinearVariant;
             _ = profile.Description;
             ColorProfile target = ColorProfile.DefaultFor(profile.Model);
+
+            // ColorTransform.Get keeps every transform it builds, keyed by profile instance and never evicted, so each distinct profile
+            // leaks its tables (about 0.8 MB each). Stop building transforms once the heap is large so the run can go on parsing.
+            if (GC.GetTotalMemory(false) > TransformHeapLimit)
+            {
+                return;
+            }
+
             foreach (RenderingIntent intent in new[] { RenderingIntent.Perceptual, RenderingIntent.RelativeColorimetric })
             {
                 // Both directions: the profile as source and as destination.
