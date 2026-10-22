@@ -110,8 +110,17 @@ internal sealed class StagePipeline
 /// </summary>
 internal sealed class ColorTransform
 {
-    /// <summary>Most transforms kept for reuse. Each holds lookup tables of up to a couple of megabytes, so the cache must not grow with the number of distinct profiles a long-running process meets.</summary>
-    internal const int MaxCachedTransforms = 32;
+    /// <summary>
+    /// Byte budget of the transform cache: 32 MiB. Each cached transform is charged <see cref="ApproximateBytes"/> (its lookup grid, the
+    /// profile bytes it keeps alive and a fixed allowance for tabulated curves), and the least recently used transforms are dropped
+    /// until the total fits. A table-based CMYK or LUT RGB profile costs about 0.8 to 1.5 MiB, so a few dozen stay cached; matrix
+    /// profiles cost tens of kilobytes. A transform bigger than the whole budget is built and used but not kept.
+    /// A process that meets many distinct embedded profiles therefore holds at most this much, while repeated conversions with the
+    /// same profile (matched by content, not by instance) stay cache hits.
+    /// </summary>
+    internal const long CacheBudgetBytes = 32L << 20;
+
+    private static long s_cachedBytes;
 
     private static readonly object s_gate = new();
     private static readonly Dictionary<(string, string, RenderingIntent, bool), LinkedListNode<(( string, string, RenderingIntent, bool) Key, ColorTransform Value)>> s_cache = new();
@@ -134,6 +143,22 @@ internal sealed class ColorTransform
         else
         {
             _grid = Bake(exact);
+        }
+    }
+
+    /// <summary>Gets the bytes this transform is charged against the cache budget: grid data, the profiles' bytes and an allowance for curve tables.</summary>
+    public long ApproximateBytes =>
+        (_grid is null ? 0 : (long)_grid.Data.Length * sizeof(float)) + Source.IccBytes.Length + Destination.IccBytes.Length + (64L << 10);
+
+    /// <summary>Gets the bytes currently charged to the transform cache (for tests).</summary>
+    internal static long CachedBytes
+    {
+        get
+        {
+            lock (s_gate)
+            {
+                return s_cachedBytes;
+            }
         }
     }
 
@@ -177,11 +202,17 @@ internal sealed class ColorTransform
                 return existing.Value.Value;
             }
 
-            s_cache[key] = s_recent.AddFirst((key, built));
-            while (s_cache.Count > MaxCachedTransforms)
+            long cost = built.ApproximateBytes;
+            if (cost <= CacheBudgetBytes)
             {
-                s_cache.Remove(s_recent.Last!.Value.Key);
-                s_recent.RemoveLast();
+                s_cache[key] = s_recent.AddFirst((key, built));
+                s_cachedBytes += cost;
+                while (s_cachedBytes > CacheBudgetBytes)
+                {
+                    s_cachedBytes -= s_recent.Last!.Value.Value.ApproximateBytes;
+                    s_cache.Remove(s_recent.Last.Value.Key);
+                    s_recent.RemoveLast();
+                }
             }
         }
 

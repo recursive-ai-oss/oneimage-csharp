@@ -28,7 +28,7 @@ public class TransformCacheTests
     [Fact]
     public void RetentionStaysBoundedOverManyDistinctProfiles()
     {
-        // Each transform of this table-based profile holds about 0.8 MB, so an unbounded cache would keep ~250 MB here.
+        // Each transform of this table-based profile holds about 0.8 MB, so an unbounded cache would keep ~250 MB here; the budget is 32 MB.
         _ = ColorTransform.Get(ColorProfile.FromIcc(Profile(1000)), ColorProfile.Srgb, RenderingIntent.Perceptual, true);
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -41,8 +41,10 @@ public class TransformCacheTests
             Assert.True(t.UsesGrid);
         }
 
+        // The charged bytes never pass the budget, and the real heap agrees (the charge is an estimate, so allow it some slack).
+        Assert.InRange(ColorTransform.CachedBytes, 1, ColorTransform.CacheBudgetBytes);
         long growth = LiveHeap.Read(baseline, limit) - baseline;
-        Assert.True(growth < limit, $"transform cache retained {growth >> 20} MB");
+        Assert.True(growth < limit, $"transform cache retained {growth >> 20} MB against a budget of {ColorTransform.CacheBudgetBytes >> 20} MB");
     }
 
     [Fact]
@@ -50,7 +52,7 @@ public class TransformCacheTests
     {
         ColorProfile hot = ColorProfile.FromIcc(Profile(5000));
         ColorTransform first = ColorTransform.Get(hot, ColorProfile.Srgb, RenderingIntent.Perceptual, true);
-        for (int i = 0; i < ColorTransform.MaxCachedTransforms * 2; i++)
+        for (int i = 0; i < 100; i++)
         {
             _ = ColorTransform.Get(ColorProfile.FromIcc(Profile(6000 + i)), ColorProfile.Srgb, RenderingIntent.Perceptual, true);
             Assert.Same(first, ColorTransform.Get(hot, ColorProfile.Srgb, RenderingIntent.Perceptual, true));
