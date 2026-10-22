@@ -140,6 +140,7 @@ foreach (JpegEncoderOptions jo in new[] { new JpegEncoderOptions { Quality = 85 
         Console.Error.WriteLine("jpeg smoke failed");
         return 1;
     }
+}
 
 // PNG, BMP and ICO: encode with each registered codec, decode again, animate.
 var rgbaPixels = new Rgba32[40 * 30];
@@ -159,10 +160,10 @@ foreach (IImageFormat format in new IImageFormat[] { PngFormat.Instance, BmpForm
 }
 
 // Indexed PNG for a few colors, and encoder options.
-var flat = new Rgba32[20 * 20];
-Array.Fill(flat, new Rgba32(10, 20, 30, 255));
+var solid = new Rgba32[20 * 20];
+Array.Fill(solid, new Rgba32(10, 20, 30, 255));
 using var indexed = new System.IO.MemoryStream();
-Image.FromPixels<Rgba32>(flat, 20, 20).Save(indexed, PngFormat.Instance);
+Image.FromPixels<Rgba32>(solid, 20, 20).Save(indexed, PngFormat.Instance);
 rasterOk &= Image.Load(indexed.ToArray()).ToArray<Rgb24>()[0] == new Rgb24(10, 20, 30);
 using var tuned = new System.IO.MemoryStream();
 source.Save(tuned, PngFormat.Instance, new SaveOptions { EncoderOptions = new PngEncoderOptions { CompressionLevel = 9, Filter = PngFilterMode.Paeth } });
