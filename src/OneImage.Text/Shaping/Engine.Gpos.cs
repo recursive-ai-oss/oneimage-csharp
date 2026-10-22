@@ -237,10 +237,10 @@ internal sealed partial class Engine
         // advance shrinks by the same amount so what follows it is not displaced.
         if (_rtl)
         {
-            // Right to left: the first glyph sits to the right, its exit anchor on its left edge, and the second glyph's entry anchor
-            // is on its right edge. The two anchors meet when the first glyph's advance ends where the second glyph's anchor puts
-            // the pen, measured from the glyphs' natural advances.
-            prev.XAdvance += entryX - exitX - cur.XAdvance;
+            // Right to left: the first glyph sits to the right with its exit anchor on its left edge, and the second glyph's entry
+            // anchor is on its right edge. In display order the second glyph comes first and its advance reaches the first glyph's
+            // origin, so the anchors meet when that advance is the entry anchor less the exit anchor.
+            cur.XAdvance = entryX - exitX + cur.XOffset - prev.XOffset;
         }
         else
         {
@@ -491,22 +491,15 @@ internal sealed partial class Engine
     /// (the mark is drawn from the pen position it would have had, not from the base's).
     /// </summary>
     /// <remarks>
-    /// It also fills <see cref="GlyphPos.RtlShift"/>, the change to each glyph's offset when a right-to-left run is laid out from
-    /// its right edge in display order, glyphs reversed. There a glyph's outline hangs from the edge of its advance box where the pen
-    /// starts (the right edge), not from the left, so a glyph whose advance a lookup changed (kerning) is drawn that far from its box,
-    /// and a mark rides with the outline of the glyph it is attached to, not with the box. For a glyph that is not attached the shift
-    /// is its advance minus the font's advance; an attached glyph adds the pen travel to its target, its own advance, and the shift
-    /// of its target.
+    /// It also fills <see cref="GlyphPos.RtlShift"/>, the change to each attached glyph's offset when a right-to-left run is laid out
+    /// in display order, glyphs reversed, with each outline drawn from the left edge of its advance box. A mark then comes before its
+    /// base instead of after it, so it moves by the pen travel between the two plus its own advance, and by the shift of its target
+    /// (a mark on a mark). Glyphs that are not attached do not move: positions given as an advance change stay an advance change.
     /// </remarks>
     public static void ResolveAttachments(GlyphBuffer buffer)
     {
         GlyphPos[] pos = buffer.Pos;
         long[]? prefix = null;
-        for (int i = 0; i < buffer.Count; i++)
-        {
-            pos[i].RtlShift = pos[i].XAdvance - pos[i].BaseAdvance;
-        }
-
         for (int i = 0; i < buffer.Count; i++)
         {
             int t = pos[i].AttachTo;

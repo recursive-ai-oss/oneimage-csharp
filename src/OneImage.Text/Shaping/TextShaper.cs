@@ -35,9 +35,19 @@ internal static class TextShaper
     /// </remarks>
     public static void Shape(FontFace face, ReadOnlySpan<int> codePoints, ReadOnlySpan<int> clusters, uint language, FeatureSet features, List<ShapedRunGlyph> output, bool rtl = false)
     {
+        uint script = 0;
+        Shape(face, codePoints, clusters, language, features, output, rtl, ref script);
+    }
+
+    /// <summary>
+    /// Shapes like the overload without a script, with <paramref name="script"/> as the script of the text before the run: characters
+    /// that have none of their own (spaces, digits, punctuation) take it, and it is updated to the script this run ends in. A caller that
+    /// splits a paragraph into runs by direction passes the same variable along so a run of digits after Arabic is shaped as Arabic.
+    /// </summary>
+    public static void Shape(FontFace face, ReadOnlySpan<int> codePoints, ReadOnlySpan<int> clusters, uint language, FeatureSet features, List<ShapedRunGlyph> output, bool rtl, ref uint script)
+    {
         int n = codePoints.Length;
         int start = 0;
-        uint script = 0;
         while (start < n)
         {
             // A run is a stretch of one script; characters of no script (spaces, digits, punctuation) join the run they sit in.
@@ -142,7 +152,6 @@ internal static class TextShaper
         for (int i = 0; i < count; i++)
         {
             buffer.Pos[i].XAdvance = face.GetAdvance(buffer.Info[i].Glyph);
-            buffer.Pos[i].BaseAdvance = buffer.Pos[i].XAdvance;
         }
 
         if (layout.Gpos is { } gpos && plan.Gpos.Length > 0)

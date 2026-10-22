@@ -42,9 +42,6 @@ internal struct GlyphPos
     /// <summary>True for a cursive link, whose horizontal part is already folded into the advances.</summary>
     public bool Cursive;
 
-    /// <summary>The advance the font gives the glyph before any positioning lookup changed it.</summary>
-    public int BaseAdvance;
-
     /// <summary>
     /// How far a right-to-left glyph's offset moves when the run is laid out in display order (see <see cref="Engine.ResolveAttachments"/>).
     /// </summary>

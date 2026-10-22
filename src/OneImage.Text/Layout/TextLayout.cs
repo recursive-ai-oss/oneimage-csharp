@@ -461,6 +461,7 @@ internal sealed class TextLayout
         _pending = 0;
         _runStyle = -1;
         _runRtl = false;
+        _script = 0;
         int face = 0;
         int i = start;
         while (i < end)
@@ -553,6 +554,9 @@ internal sealed class TextLayout
     private int _runStyle = -1;
     private bool _runRtl;
 
+    // The script the shaping before the current run ended in, carried from run to run within a paragraph.
+    private uint _script;
+
     private byte LevelAt(int offset) => _levels is null ? (byte)0 : _levels[offset];
 
     // A zero width joiner is kept for the shaper only where it sits next to a letter that can join through it.
@@ -591,7 +595,7 @@ internal sealed class TextLayout
 
         GlyphStyle st = Styles[_runStyle];
         _run.Clear();
-        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run, _runRtl);
+        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _features, _run, _runRtl, ref _script);
         for (int k = 0; k < _run.Count; k++)
         {
             ShapedRunGlyph r = _run[k];
@@ -1143,6 +1147,7 @@ internal sealed class TextLayout
         // as wide as the widest line. Center and End place each line inside a box as wide as the wrapping length (the widest line
         // when there is none). The two boxes are the same width unless text wraps, which is how ImageSharp lays it out.
         float blockW = MaxWidth;
+
         float alignW = _wrap > 0 ? _wrap : MaxWidth;
         float haFraction = o.HorizontalAlignment switch { HorizontalAlignment.Center => 0.5f, HorizontalAlignment.Right => 1f, _ => 0f };
         float left = o.Origin.X;
