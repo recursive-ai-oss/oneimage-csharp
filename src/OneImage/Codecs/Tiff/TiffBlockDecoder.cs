@@ -51,7 +51,13 @@ internal static class TiffBlockDecoder
             if (pooled)
             {
                 raw = ArrayPool<byte>.Shared.Rent(expected);
-                raw.AsSpan(0, expected).Clear();
+
+                // These codecs write every byte of the block or fail, so stale pool contents never show; the others (bit-packed fax
+                // data, JPEG) may leave gaps and start from zeros.
+                if (f.Codec is not (TiffCodec.None or TiffCodec.Lzw or TiffCodec.Deflate or TiffCodec.PackBits))
+                {
+                    raw.AsSpan(0, expected).Clear();
+                }
             }
             else
             {

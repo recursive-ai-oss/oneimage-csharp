@@ -64,10 +64,7 @@ internal static class TiffKernels
             Span<byte> row = data.Slice(r, rowBytes);
             if (bits == 8)
             {
-                for (int i = channels; i < row.Length; i++)
-                {
-                    row[i] = (byte)(row[i] + row[i - channels]);
-                }
+                RunningSum8(row, channels);
             }
             else if (bigEndian)
             {
@@ -85,6 +82,97 @@ internal static class TiffKernels
                     BinaryPrimitives.WriteUInt16LittleEndian(row[i..], v);
                 }
             }
+        }
+    }
+
+    // Each sample depends on the one a pixel to its left. Reading that one back from memory makes every step wait for the store
+    // just before it; carrying the previous pixel in locals turns the chain into plain register adds.
+    internal static void RunningSum8(Span<byte> row, int channels)
+    {
+        switch (channels)
+        {
+            case 1:
+            {
+                byte a = row.Length > 0 ? row[0] : (byte)0;
+                for (int i = 1; i < row.Length; i++)
+                {
+                    a = (byte)(a + row[i]);
+                    row[i] = a;
+                }
+
+                break;
+            }
+
+            case 3:
+            {
+                if (row.Length < 3)
+                {
+                    break;
+                }
+
+                byte a = row[0];
+                byte b = row[1];
+                byte c = row[2];
+                int i = 3;
+                for (; i + 3 <= row.Length; i += 3)
+                {
+                    Span<byte> px = row.Slice(i, 3);
+                    a = (byte)(a + px[0]);
+                    b = (byte)(b + px[1]);
+                    c = (byte)(c + px[2]);
+                    px[0] = a;
+                    px[1] = b;
+                    px[2] = c;
+                }
+
+                for (; i < row.Length; i++)
+                {
+                    row[i] = (byte)(row[i] + row[i - 3]);
+                }
+
+                break;
+            }
+
+            case 4:
+            {
+                if (row.Length < 4)
+                {
+                    break;
+                }
+
+                byte a = row[0];
+                byte b = row[1];
+                byte c = row[2];
+                byte d = row[3];
+                int i = 4;
+                for (; i + 4 <= row.Length; i += 4)
+                {
+                    Span<byte> px = row.Slice(i, 4);
+                    a = (byte)(a + px[0]);
+                    b = (byte)(b + px[1]);
+                    c = (byte)(c + px[2]);
+                    d = (byte)(d + px[3]);
+                    px[0] = a;
+                    px[1] = b;
+                    px[2] = c;
+                    px[3] = d;
+                }
+
+                for (; i < row.Length; i++)
+                {
+                    row[i] = (byte)(row[i] + row[i - 4]);
+                }
+
+                break;
+            }
+
+            default:
+                for (int i = channels; i < row.Length; i++)
+                {
+                    row[i] = (byte)(row[i] + row[i - channels]);
+                }
+
+                break;
         }
     }
 
