@@ -145,6 +145,11 @@ public class CanvasTests
     [Fact]
     public void DisposeReturnsPooledTilesAndUndisposedIsGcSafe()
     {
+        // Images dropped by earlier tests give their cached tiles back from a finalizer; let that finish first so it cannot
+        // move the counters in the middle of this test.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
         long outstanding = Tile.RentedCount - Tile.ReturnedCount;
         var canvas = new Canvas(300, 300, PixelFormat.Rgba8);
         canvas.CopyFrom<Rgba32>(new Rgba32[300 * 300], new ImageRect(0, 0, 300, 300));

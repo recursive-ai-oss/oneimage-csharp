@@ -80,6 +80,11 @@ public class GraphTests
     [Fact]
     public void CacheHitsAvoidRecomputeAndLeasesReturnToPool()
     {
+        // Images dropped by earlier tests give their cached tiles back from a finalizer; let that finish first so it cannot
+        // move the counters in the middle of this test.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
         long outstanding = Tile.RentedCount - Tile.ReturnedCount;
         var cache = new TileCache(1L << 30);
         var src = new PatternNode(500, 500);
