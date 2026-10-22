@@ -102,6 +102,15 @@ internal sealed class RLayer : RNode
     public required List<RNode> Children { get; init; }
 
     public float Opacity { get; init; } = 1;
+
+    /// <summary>Gets or sets a region (scene space) the composited layer is limited to: what a <c>clip-path</c> that needed its element's bounding box resolved to.</summary>
+    public Path? ClipPath { get; set; }
+
+    /// <summary>Gets or sets the mask the layer is composited through: another layer whose content gives the coverage (see <see cref="MaskAlpha"/>). Its own <see cref="Mask"/> narrows it further.</summary>
+    public RLayer? Mask { get; set; }
+
+    /// <summary>Gets a value indicating whether, when this layer is a mask, its alpha is the coverage (<c>mask-type: alpha</c>) instead of its luminance.</summary>
+    public bool MaskAlpha { get; init; }
 }
 
 /// <summary>The render tree of one document, independent of the output size.</summary>

@@ -44,6 +44,12 @@ internal sealed partial class SceneBuilder
 
         public int LayerDepth { get; init; }
 
+        /// <summary>Clip and mask still to apply to the layer when this frame closes (see <c>FinishLayer</c>).</summary>
+        public Deco? Deco { get; init; }
+
+        /// <summary>Runs when the frame has closed (mask content frames use it to continue the chain).</summary>
+        public Action<Stack<Frame>>? After { get; set; }
+
         public int UseDepth { get; init; }
 
         /// <summary>For a <c>use</c> frame: the target to forget when the frame closes, and the size the use element gave.</summary>
@@ -133,17 +139,23 @@ internal sealed partial class SceneBuilder
             ctm = Affine.Translate(ox, oy).Multiply(t).Multiply(Affine.Translate(-ox, -oy)).Multiply(ctm);
         }
 
+        Path? rootClip = null;
+        if (!Decorate(root, ctm, vp, 0, ref rootClip, out Deco? rootDeco))
+        {
+            return new SvgScene(w ?? 1, h ?? 1, [], false);
+        }
+
         var top = new List<RNode>();
         List<RNode> output = top;
         RLayer? layer = null;
-        if (st.Opacity < 1)
+        if (st.Opacity < 1 || rootDeco is not null)
         {
             layer = new RLayer { Children = [], Opacity = (float)st.Opacity };
             output = layer.Children;
         }
 
         var stack = new Stack<Frame>();
-        stack.Push(new Frame { Kids = root.Children, Style = st, Ctm = ctm, Vp = vp, Out = output, Layer = layer, LayerParent = top, LayerDepth = layer is null ? 0 : 1 });
+        stack.Push(new Frame { Kids = root.Children, Style = st, Ctm = ctm, Vp = vp, Clip = rootClip, Out = output, Layer = layer, LayerParent = top, LayerDepth = layer is null ? 0 : 1, Deco = rootDeco });
         Run(stack);
 
         RNode[] nodes = [.. top];
@@ -174,7 +186,7 @@ internal sealed partial class SceneBuilder
             if (f.Next >= f.Kids.Count)
             {
                 stack.Pop();
-                Close(f);
+                Close(stack, f);
                 continue;
             }
 
@@ -188,7 +200,7 @@ internal sealed partial class SceneBuilder
         }
     }
 
-    private void Close(Frame f)
+    private void Close(Stack<Frame> stack, Frame f)
     {
         if (f.UseBox is { Needed: true } box)
         {
@@ -203,8 +215,17 @@ internal sealed partial class SceneBuilder
         if (f.Layer is { } layer && layer.Children.Count > 0)
         {
             Union(layer, layer.Children);
-            f.LayerParent!.Add(layer);
+            if (f.Deco is { } deco)
+            {
+                FinishLayer(stack, layer, deco, f.LayerParent!, f.LayerDepth);
+            }
+            else
+            {
+                f.LayerParent!.Add(layer);
+            }
         }
+
+        f.After?.Invoke(stack);
     }
 
     private static void Union(RNode into, List<RNode> children)
@@ -259,16 +280,19 @@ internal sealed partial class SceneBuilder
                 break;
             case "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon" or "path":
                 Count();
-                EmitShape(f, e);
+                EmitShape(stack, f, e);
                 break;
         }
     }
 
     // Style, display and transform of an element about to open or draw: false when it renders nothing.
-    private bool Begin(Frame f, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false)
+    private bool Begin(Frame f, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false) =>
+        BeginIn(f.Style, f.Ctm, e, out st, out ctm, ignoreTransform);
+
+    private bool BeginIn(in SvgStyle parent, Affine parentCtm, SvgElement e, out SvgStyle st, out Affine ctm, bool ignoreTransform = false)
     {
-        st = SvgStyle.Compute(e, f.Style, _rootFontSize);
-        ctm = f.Ctm;
+        st = SvgStyle.Compute(e, parent, _rootFontSize);
+        ctm = parentCtm;
         if (!st.Displayed)
         {
             return false;
@@ -291,7 +315,7 @@ internal sealed partial class SceneBuilder
             && Math.Abs(ctm.D) <= Coord.Limit && Math.Abs(ctm.E) <= Coord.Limit && Math.Abs(ctm.F) <= Coord.Limit;
     }
 
-    private static void Open(Stack<Frame> stack, Frame parent, IReadOnlyList<SvgElement> kids, in SvgStyle st, Affine ctm, Viewport vp, Path? clip, bool layered, SvgElement? useTarget = null, Length? useW = null, Length? useH = null, int useDepth = -1, int maxLayers = 0, ResolvedPaint? ctxFill = null, ResolvedPaint? ctxStroke = null, BBoxHolder? useBox = null)
+    private static void Open(Stack<Frame> stack, Frame parent, IReadOnlyList<SvgElement> kids, in SvgStyle st, Affine ctm, Viewport vp, Path? clip, bool layered, SvgElement? useTarget = null, Length? useW = null, Length? useH = null, int useDepth = -1, int maxLayers = 0, ResolvedPaint? ctxFill = null, ResolvedPaint? ctxStroke = null, BBoxHolder? useBox = null, Deco? deco = null)
     {
         List<RNode> output = parent.Out;
         RLayer? layer = null;
@@ -319,6 +343,7 @@ internal sealed partial class SceneBuilder
             Layer = layer,
             LayerParent = parent.Out,
             LayerDepth = depth,
+            Deco = deco,
             UseDepth = useDepth >= 0 ? useDepth : parent.UseDepth,
             UseTarget = useTarget,
             UseWidth = useW,
@@ -337,7 +362,13 @@ internal sealed partial class SceneBuilder
             return;
         }
 
-        Open(stack, f, e.Children, st, ctm, f.Vp, f.Clip, st.Opacity < 1, maxLayers: _limits.MaxLayerDepth);
+        Path? clip = f.Clip;
+        if (!Decorate(e, ctm, f.Vp, f.UseDepth, ref clip, out Deco? deco))
+        {
+            return;
+        }
+
+        Open(stack, f, e.Children, st, ctm, f.Vp, clip, st.Opacity < 1 || deco is not null, maxLayers: _limits.MaxLayerDepth, deco: deco);
     }
 
     private void PushUse(Stack<Frame> stack, Frame f, SvgElement e)
@@ -364,6 +395,12 @@ internal sealed partial class SceneBuilder
             return;
         }
 
+        Path? useClip = f.Clip;
+        if (!Decorate(e, ctm, f.Vp, f.UseDepth + 1, ref useClip, out Deco? useDeco))
+        {
+            return;
+        }
+
         double x = Resolve(ParseLength(e.Attr("x")), Axis.X, st, f.Vp);
         double y = Resolve(ParseLength(e.Attr("y")), Axis.Y, st, f.Vp);
         if (x != 0 || y != 0)
@@ -375,7 +412,7 @@ internal sealed partial class SceneBuilder
         Length? uh = Length.TryParse(e.Attr("height") ?? string.Empty, out Length lh) ? lh : null;
         _active.Add(target);
         (ResolvedPaint ctxFill, ResolvedPaint ctxStroke, BBoxHolder useBox) = ContextPaints(f, st, ctm);
-        Open(stack, f, [target], st, ctm, f.Vp, f.Clip, st.Opacity < 1, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth, ctxFill, ctxStroke, useBox);
+        Open(stack, f, [target], st, ctm, f.Vp, useClip, st.Opacity < 1 || useDeco is not null, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth, ctxFill, ctxStroke, useBox, useDeco);
     }
 
     private static bool IsAncestorOrSelf(SvgElement candidate, SvgElement of)
@@ -436,14 +473,14 @@ internal sealed partial class SceneBuilder
         }
 
         Path? clip = f.Clip;
-        string? overflow = e.Prop("overflow");
-        if (overflow is not ("visible" or "auto"))
+        if (!Decorate(e, ctm, f.Vp, f.UseDepth, ref clip, out Deco? deco))
         {
-            Path rect = Path.Rectangle(Coord.F(x), Coord.F(y), Coord.F(w), Coord.F(h)).Transform(ctm.ToMatrix3x2());
-            clip = clip is null ? rect : clip.Intersect(rect);
+            return;
         }
 
-        Open(stack, f, e.Children, st, inner, vp, clip, st.Opacity < 1, maxLayers: _limits.MaxLayerDepth);
+        clip = OverflowClip(clip, e, ctm, x, y, w, h);
+
+        Open(stack, f, e.Children, st, inner, vp, clip, st.Opacity < 1 || deco is not null, maxLayers: _limits.MaxLayerDepth, deco: deco);
     }
 
     private static Length ParseLength(string? v) => v is not null && Length.TryParse(v, out Length l) ? l : Length.Zero;
@@ -461,7 +498,7 @@ internal sealed partial class SceneBuilder
 
     // ---- shapes ----
 
-    private void EmitShape(Frame f, SvgElement e)
+    private void EmitShape(Stack<Frame> stack, Frame f, SvgElement e)
     {
         if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
         {
@@ -512,7 +549,13 @@ internal sealed partial class SceneBuilder
         StrokeJoin join = st.LineJoin switch { 1 => StrokeJoin.Round, 2 => StrokeJoin.Bevel, _ => StrokeJoin.Miter };
         StrokeCap cap = st.LineCap switch { 1 => StrokeCap.Round, 2 => StrokeCap.Square, _ => StrokeCap.Butt };
 
-        bool layered = st.Opacity < 1 && fill && stroke;
+        Path? clip = f.Clip;
+        if (!Decorate(e, ctm, f.Vp, f.UseDepth, ref clip, out Deco? deco, BoxOf(geometry.Bounds)))
+        {
+            return;
+        }
+
+        bool layered = (st.Opacity < 1 && fill && stroke) || deco is not null;
         float groupOpacity = layered ? 1f : (float)st.Opacity;
         var node = new RPath
         {
@@ -536,7 +579,7 @@ internal sealed partial class SceneBuilder
             Dash = dash,
             DashOffset = dashOffset,
             Antialias = st.Antialias,
-            Clip = f.Clip,
+            Clip = clip,
         };
 
         System.Drawing.RectangleF b = geometry.Bounds;
@@ -555,9 +598,9 @@ internal sealed partial class SceneBuilder
         node.Y0 = by0 - pad;
         node.X1 = bx1 + pad;
         node.Y1 = by1 + pad;
-        if (f.Clip is not null)
+        if (clip is not null)
         {
-            System.Drawing.RectangleF cb = f.Clip.Bounds;
+            System.Drawing.RectangleF cb = clip.Bounds;
             node.X0 = Math.Max(node.X0, cb.Left - 1);
             node.Y0 = Math.Max(node.Y0, cb.Top - 1);
             node.X1 = Math.Min(node.X1, cb.Right + 1);
@@ -571,7 +614,14 @@ internal sealed partial class SceneBuilder
         if (layered)
         {
             var layer = new RLayer { Children = [node], Opacity = (float)st.Opacity, X0 = node.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1, ContentX1 = node.ContentX1, ContentY1 = node.ContentY1 };
-            f.Out.Add(layer);
+            if (deco is not null)
+            {
+                FinishLayer(stack, layer, deco, f.Out, f.LayerDepth + 1);
+            }
+            else
+            {
+                f.Out.Add(layer);
+            }
         }
         else
         {

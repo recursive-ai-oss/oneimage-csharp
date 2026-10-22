@@ -109,19 +109,69 @@ internal static class SceneRenderer
                     throw new ImageLimitException("Groups with opacity are nested too deep.");
                 }
 
-                using (var offscreen = new Canvas(canvas.Width, canvas.Height, PixelFormat.Rgba8))
+                // The layer is only as large as the part of its bounds inside this band, so a small clipped group does not cost a whole band.
+                (int ox, int oy, int lw, int lh) = LayerRect(layer, dev, canvas.Width, canvas.Height);
+                if (lw <= 0 || lh <= 0)
+                {
+                    break;
+                }
+
+                Affine ldev = Affine.Translate(-ox, -oy).Multiply(dev);
+                using (var offscreen = new Canvas(lw, lh, PixelFormat.Rgba8))
                 {
                     foreach (RNode child in layer.Children)
                     {
-                        DrawNode(offscreen, child, dev, qx0, qy0, qx1, qy1, depth + 1, limits);
+                        DrawNode(offscreen, child, ldev, qx0, qy0, qx1, qy1, depth + 1, limits);
                     }
 
                     Image snapshot = offscreen.Snapshot();
-                    canvas.Fill(Brush.FromImage(snapshot, tile: false), Path.Rectangle(0, 0, canvas.Width, canvas.Height), opacity: layer.Opacity);
+                    if (layer.Mask is { } mask)
+                    {
+                        snapshot = snapshot.ApplyMask(RenderMask(mask, lw, lh, ldev, qx0, qy0, qx1, qy1, depth + 1, limits), mask.MaskAlpha ? MaskChannel.Alpha : MaskChannel.Luminance);
+                    }
+
+                    Path? clip = layer.ClipPath?.Transform(dev.ToMatrix3x2());
+                    canvas.Fill(Brush.FromImage(snapshot, offsetX: ox, offsetY: oy, tile: false), Path.Rectangle(ox, oy, lw, lh), opacity: layer.Opacity, clip: clip);
                 }
 
                 break;
         }
+    }
+
+    // The layer's bounds in the band's pixels, widened to whole pixels and cut to the band.
+    private static (int X, int Y, int Width, int Height) LayerRect(RLayer layer, Affine dev, int width, int height)
+    {
+        (double x0, double y0, double x1, double y1) = dev.TransformRect(layer.X0, layer.Y0, layer.X1, layer.Y1);
+        if (!double.IsFinite(x0 + y0 + x1 + y1))
+        {
+            return (0, 0, width, height);
+        }
+
+        int ax = (int)Math.Clamp(Math.Floor(x0), 0, width);
+        int ay = (int)Math.Clamp(Math.Floor(y0), 0, height);
+        int bx = (int)Math.Clamp(Math.Ceiling(x1), 0, width);
+        int by = (int)Math.Clamp(Math.Ceiling(y1), 0, height);
+        return (ax, ay, bx - ax, by - ay);
+    }
+
+    // The mask's content as an image, narrowed by the mask it carries itself. Depth is bounded by the layer-depth limit.
+    private static Image RenderMask(RLayer mask, int width, int height, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits)
+    {
+        if (depth >= limits.MaxLayerDepth)
+        {
+            throw new ImageLimitException("Masks are nested too deep.");
+        }
+
+        using var maskCanvas = new Canvas(width, height, PixelFormat.Rgba8);
+        foreach (RNode child in mask.Children)
+        {
+            DrawNode(maskCanvas, child, dev, qx0, qy0, qx1, qy1, depth + 1, limits);
+        }
+
+        Image content = maskCanvas.Snapshot();
+        return mask.Mask is { } next
+            ? content.ApplyMask(RenderMask(next, width, height, dev, qx0, qy0, qx1, qy1, depth + 1, limits), next.MaskAlpha ? MaskChannel.Alpha : MaskChannel.Luminance)
+            : content;
     }
 
     private static bool IsFinite(Matrix3x2 m) =>

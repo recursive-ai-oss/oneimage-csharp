@@ -538,6 +538,19 @@ foreach (bool lossless in new[] { true, false })
         Console.Error.WriteLine("svg paint server smoke failed");
         return 1;
     }
+
+    // Clipping and masking: the clip keeps the left half, the luminance mask the top half, so only the top-left quarter is painted.
+    byte[] masked = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='20' height='20'>"
+        + "<clipPath id='c'><rect width='10' height='20'/></clipPath>"
+        + "<mask id='m' maskUnits='userSpaceOnUse' width='20' height='20'><rect width='20' height='10' fill='white'/></mask>"
+        + "<g clip-path='url(#c)' mask='url(#m)'><rect width='20' height='20' fill='#00ff00'/></g></svg>");
+    Rgba32[] maskedPixels = Image.Load(masked, new LoadOptions { Configuration = svgConfig }).Resize(width: 40).ToArray<Rgba32>();
+    if (maskedPixels[(10 * 40) + 10].A != 255 || maskedPixels[(10 * 40) + 30].A != 0 || maskedPixels[(30 * 40) + 10].A != 0)
+    {
+        Console.Error.WriteLine("svg clip and mask smoke failed");
+        return 1;
+    }
 }
 
 // Right-to-left text: joined Arabic, Hebrew and a mixed-direction line through the bidirectional algorithm and the Arabic shaper.

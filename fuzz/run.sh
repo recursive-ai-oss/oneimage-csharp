@@ -115,6 +115,10 @@ if [[ "$target" == svg-xml || "$target" == svg-render ]]; then
     out="$corpus/seed-$(echo "${f#"$root/tests/testdata/resvg/"}" | tr '/' '_')"
     [[ -e "$out" ]] || cp "$f" "$out"
   done < <(find "$root/tests/testdata/resvg" \( -name '*.svg' -o -name '*.svgz' \) -size -16k | sort)
+  # Our own documents (feature mixes, cycles, earlier crashes).
+  for f in "$root"/tests/testdata/svg/*.svg; do
+    if [[ $(stat -c %s "$f") -lt 16384 ]]; then cp -n "$f" "$corpus/seed-own-$(basename "$f")"; fi
+  done
 fi
 [[ "$target" != breaking ]] || cp -n "$work"/breaking-seeds/* "$corpus"/ 2>/dev/null || true
 [[ "$target" != bidi ]] || cp -n "$work"/bidi-seeds/* "$corpus"/ 2>/dev/null || true
