@@ -102,6 +102,9 @@ internal sealed class VP8Decoder
     private byte[] _fInner = [];
     private byte[] _fSegment = [];
     private byte[] _fI4 = [];
+    private byte[] _topY = [];
+    private byte[] _topU = [];
+    private byte[] _topV = [];
 
     private readonly byte[] _work = new byte[Bps * 27];
     private readonly short[] _coeffs = new short[384];
@@ -154,11 +157,6 @@ internal sealed class VP8Decoder
             }
 
             DecodeFrame();
-            if (_filterType > 0)
-            {
-                LoopFilter.FilterFrame(this);
-            }
-
             Upsampler.Emit(_y, _u, _v, _yStride, _uvStride, _width, _height, alphaPlane, sink, _token);
         }
         finally
@@ -411,6 +409,10 @@ internal sealed class VP8Decoder
         _fInner = new byte[mbw * _mbh];
         _fSegment = new byte[mbw * _mbh];
         _fI4 = new byte[mbw * _mbh];
+        _topY = new byte[mbw * 16];
+        _topU = new byte[mbw * 8];
+        _topV = new byte[mbw * 8];
+        LoopFilter? filter = _filterType > 0 ? new LoopFilter(this) : null;
 
         for (int mby = 0; mby < _mbh; mby++)
         {
@@ -432,6 +434,12 @@ internal sealed class VP8Decoder
                     throw new ImageFormatException("The VP8 frame is truncated.");
                 }
             }
+
+            // Prediction of the next row needs this row's unfiltered bottom pixels, so keep them before filtering.
+            _y.AsSpan((((mby * 16) + 15) * _yStride), mbw * 16).CopyTo(_topY);
+            _u.AsSpan((((mby * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topU);
+            _v.AsSpan((((mby * 8) + 7) * _uvStride), mbw * 8).CopyTo(_topV);
+            filter?.FilterRow(mby);
         }
     }
 
@@ -759,7 +767,7 @@ internal sealed class VP8Decoder
     }
 
     private void PrepareBorders(int mbx, int mby) =>
-        VP8Borders.Prepare(_work, _y, _u, _v, _yStride, _uvStride, mbx, mby, _mbw);
+        VP8Borders.PrepareFiltered(_work, _y, _u, _v, _topY, _topU, _topV, _yStride, _uvStride, mbx, mby, _mbw);
 
     private static void AddBlock(byte[] dst, int off, ReadOnlySpan<short> coeffs, uint code)
     {

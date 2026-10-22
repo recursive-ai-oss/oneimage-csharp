@@ -75,4 +75,74 @@ internal static class VP8Borders
             }
         }
     }
+
+    // The decoder variant of Prepare: the row above the macroblock comes from copies saved before the loop filter ran,
+    // because intra prediction must see unfiltered pixels (RFC 6386 section 15).
+    public static void PrepareFiltered(byte[] w, byte[] py, byte[] pu, byte[] pv, byte[] topY, byte[] topU, byte[] topV, int yStride, int uvStride, int mbx, int mby, int mbw)
+    {
+        if (mby > 0)
+        {
+            topY.AsSpan(mbx * 16, 16).CopyTo(w.AsSpan(VP8Decoder.YOff - VP8Decoder.Bps, 16));
+            if (mbx < mbw - 1)
+            {
+                topY.AsSpan((mbx * 16) + 16, 4).CopyTo(w.AsSpan(VP8Decoder.YOff - VP8Decoder.Bps + 16, 4));
+            }
+            else
+            {
+                w.AsSpan(VP8Decoder.YOff - VP8Decoder.Bps + 16, 4).Fill(topY[(mbx * 16) + 15]);
+            }
+
+            topU.AsSpan(mbx * 8, 8).CopyTo(w.AsSpan(VP8Decoder.UOff - VP8Decoder.Bps, 8));
+            topV.AsSpan(mbx * 8, 8).CopyTo(w.AsSpan(VP8Decoder.VOff - VP8Decoder.Bps, 8));
+        }
+        else
+        {
+            w.AsSpan(VP8Decoder.YOff - VP8Decoder.Bps - 1, 16 + 4 + 1).Fill(127);
+            w.AsSpan(VP8Decoder.UOff - VP8Decoder.Bps - 1, 8 + 1).Fill(127);
+            w.AsSpan(VP8Decoder.VOff - VP8Decoder.Bps - 1, 8 + 1).Fill(127);
+        }
+
+        if (mbx > 0)
+        {
+            // Left column = right column of the macroblock to the left, read back from the planes.
+            for (int j = 0; j < 16; j++)
+            {
+                w[VP8Decoder.YOff + (j * VP8Decoder.Bps) - 1] = py[((((mby * 16) + j) * yStride) + (mbx * 16)) - 1];
+            }
+
+            for (int j = 0; j < 8; j++)
+            {
+                int src = ((((mby * 8) + j) * uvStride) + (mbx * 8)) - 1;
+                w[VP8Decoder.UOff + (j * VP8Decoder.Bps) - 1] = pu[src];
+                w[VP8Decoder.VOff + (j * VP8Decoder.Bps) - 1] = pv[src];
+            }
+
+            if (mby > 0)
+            {
+                w[VP8Decoder.YOff - VP8Decoder.Bps - 1] = topY[(mbx * 16) - 1];
+                w[VP8Decoder.UOff - VP8Decoder.Bps - 1] = topU[(mbx * 8) - 1];
+                w[VP8Decoder.VOff - VP8Decoder.Bps - 1] = topV[(mbx * 8) - 1];
+            }
+        }
+        else
+        {
+            for (int j = 0; j < 16; j++)
+            {
+                w[VP8Decoder.YOff + (j * VP8Decoder.Bps) - 1] = 129;
+            }
+
+            for (int j = 0; j < 8; j++)
+            {
+                w[VP8Decoder.UOff + (j * VP8Decoder.Bps) - 1] = 129;
+                w[VP8Decoder.VOff + (j * VP8Decoder.Bps) - 1] = 129;
+            }
+
+            if (mby > 0)
+            {
+                w[VP8Decoder.YOff - VP8Decoder.Bps - 1] = 129;
+                w[VP8Decoder.UOff - VP8Decoder.Bps - 1] = 129;
+                w[VP8Decoder.VOff - VP8Decoder.Bps - 1] = 129;
+            }
+        }
+    }
 }
