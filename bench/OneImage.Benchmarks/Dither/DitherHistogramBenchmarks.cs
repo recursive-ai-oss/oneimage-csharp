@@ -122,7 +122,7 @@ public class DitherHistogramBenchmarks : IDisposable
     public int AutoLevelOurs() => Pull(_ours.AutoLevel());
 
     [Benchmark(Description = "auto level: ImageSharp")]
-    public int AutoLevelSharp() => Run(_sharp, c => c.HistogramEqualization(new HistogramEqualizationOptions { Method = HistogramEqualizationMethod.AutoLevel }));
+    public int AutoLevelSharp() => Run(_sharp, c => c.HistogramEqualization(new HistogramEqualizationOptions { Method = SixLabors.ImageSharp.Processing.Processors.Normalization.HistogramEqualizationMethod.AutoLevel }));
 
     [Benchmark(Description = "adaptive threshold: oneimage")]
     public int ThresholdOurs() => Pull(_ours.AdaptiveThreshold());

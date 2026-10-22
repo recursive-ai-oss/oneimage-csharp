@@ -51,7 +51,7 @@ public class HistogramParityTests
                 theirs[x, y] = new Rgba32Is(p.R, p.G, p.B, 255);
             }
 
-        theirs.Mutate(x => x.HistogramEqualization(new HistogramEqualizationOptions { Method = HistogramEqualizationMethod.AutoLevel, SyncChannels = sync }));
+        theirs.Mutate(x => x.HistogramEqualization(new HistogramEqualizationOptions { Method = SixLabors.ImageSharp.Processing.Processors.Normalization.HistogramEqualizationMethod.AutoLevel, SyncChannels = sync }));
         Rgba32[] mine = Image.FromPixels<Rgba32>(px, W, H).AutoLevel(sync).ToArray<Rgba32>();
         var (diff, max, mean) = Compare(mine, theirs, W, H);
         Assert.True(max <= (sync ? 2 : 1), $"autolevel sync={sync}: {diff} pixels differ, max {max}, mean {mean:F4}");

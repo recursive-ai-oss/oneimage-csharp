@@ -15,7 +15,7 @@ namespace ImageSharpHistogramSide
         public static (int Width, int Height) Section(string input, string output)
         {
             using SixLabors.ImageSharp.Image image = SixLabors.ImageSharp.Image.Load(input);
-            image.Mutate(x => x.HistogramEqualization(new HistogramEqualizationOptions { Method = HistogramEqualizationMethod.AutoLevel }));
+            image.Mutate(x => x.HistogramEqualization(new HistogramEqualizationOptions { Method = SixLabors.ImageSharp.Processing.Processors.Normalization.HistogramEqualizationMethod.AutoLevel }));
             image.Mutate(x => x.AdaptiveThreshold(Color.White, Color.Black, 0.85f));
             image.Mutate(x => x.BinaryDither(KnownDitherings.Bayer4x4));
             image.Mutate(x => x.Dither(KnownDitherings.Stucki, new[] { Color.Black, Color.White, Color.Red }));
