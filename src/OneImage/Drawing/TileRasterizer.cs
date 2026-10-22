@@ -30,6 +30,9 @@ internal sealed class RasterScratch
     public readonly float[] BrushRow = new float[Tile.Size * 4];
     public readonly float[] Straight = new float[Tile.Size * 4];
 
+    // One decoded run of 8-bit pixels as straight floats (linear-light fills).
+    public readonly byte[] LinearBytes = new byte[Tile.Size * 16];
+
     public static RasterScratch Rent() => Pool.TryTake(out RasterScratch? s) ? s : new RasterScratch();
 
     public static void Return(RasterScratch s) => Pool.Add(s);

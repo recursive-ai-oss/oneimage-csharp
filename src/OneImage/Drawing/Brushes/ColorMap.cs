@@ -21,10 +21,16 @@ internal sealed class ColorMap
         _gray = gray;
     }
 
-    public static ColorMap Create(Image image)
+    private static readonly Lazy<ColorMap> DefaultRgb = new(() => Create(ColorProfile.DefaultFor(ColorModel.Rgb), false));
+    private static readonly Lazy<ColorMap> DefaultGray = new(() => Create(ColorProfile.DefaultFor(ColorModel.Gray), true));
+
+    /// <summary>The map of the default profile of a color model (shared; built on first use).</summary>
+    public static ColorMap Default(ColorModel model) => model == ColorModel.Gray ? DefaultGray.Value : DefaultRgb.Value;
+
+    public static ColorMap Create(Image image) => Create(image.ColorProfile, image.Format.Model == ColorModel.Gray);
+
+    private static ColorMap Create(ColorProfile profile, bool gray)
     {
-        ColorProfile profile = image.ColorProfile;
-        bool gray = image.Format.Model == ColorModel.Gray;
         var ramp = new RgbaFloat[Steps + 1];
         for (int i = 0; i <= Steps; i++)
         {

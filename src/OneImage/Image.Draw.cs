@@ -134,6 +134,21 @@ public sealed partial class Image
             return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);
         }
 
+        if (UsesLinear8)
+        {
+            // 8-bit data in the default space: the plan decodes and encodes just the covered pixels, so no tile is converted whole.
+            float[]? solid8 = brush.TryGetSolid(out Rgba32 c8) ? FillPlan.LinearSolid8(c8, Format) : null;
+            Brush brush8 = solid8 != null ? brush : brush.Linearized(ColorMap.Default(Format.Model));
+            FillPlan plan8 = FillPlan.CreateLinear8(Format, brush8, s, solid8);
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                Node n = _frames[i].Node;
+                nodes[i] = new FillNode(n, new RasterSource(path, s.Transform, n.Width, n.Height, s.Tolerance), plan8, FillNode.Describe("fill", brush, path, s, label), ClipSource(s, n));
+            }
+
+            return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);
+        }
+
         // Linear light: fill in the linear variant of the profile, convert back, and keep the untouched tiles from the original.
         Image lin = ToLinearLight(out ColorProfile original);
         float[]? solid = brush.TryGetSolid(out Rgba32 c) ? LinearSolid(c, original, lin.Format) : null;
@@ -156,6 +171,10 @@ public sealed partial class Image
 
         return new Image(nodes, delays, LoopCount, Metadata, SourceFormat);
     }
+
+    // Linear-light fills of 8-bit gray/RGB pixels in the default space (no usable embedded profile) blend only covered pixels.
+    private bool UsesLinear8 =>
+        FillPlan.CanBlendLinear8(Format) && !(Metadata.EmbeddedColorProfile is { } p && p.Model == Format.Model);
 
     private static RasterSource? ClipSource(in FillSettings s, Node n) =>
         s.Clip == null ? null : new RasterSource(s.Clip, System.Numerics.Matrix3x2.Identity, n.Width, n.Height, s.Tolerance);

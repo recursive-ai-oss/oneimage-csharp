@@ -81,13 +81,24 @@ public sealed partial class Canvas
     {
         Raster raster = Raster.Build(path, s.Transform, Width, Height, s.Tolerance);
         Raster? clip = s.Clip == null ? null : Raster.Build(s.Clip, Matrix3x2.Identity, Width, Height, s.Tolerance);
-        if (s.Linear)
+        bool linear8 = s.Linear && FillPlan.CanBlendLinear8(Format);
+        if (s.Linear && !linear8)
         {
             FillLinear(brush, path, s, raster, clip);
             return;
         }
 
-        FillPlan plan = FillPlan.Create(Format, brush, s);
+        FillPlan plan;
+        if (linear8)
+        {
+            float[]? solid = brush.TryGetSolid(out Rgba32 c) ? FillPlan.LinearSolid8(c, Format) : null;
+            plan = FillPlan.CreateLinear8(Format, solid != null ? brush : brush.Linearized(ColorMap.Default(Format.Model)), s, solid);
+        }
+        else
+        {
+            plan = FillPlan.Create(Format, brush, s);
+        }
+
         // Writable tiles are taken one by one (the tile table is single-writer); painting them is independent per tile and
         // runs in parallel. Each tile's result depends only on its own rasterization, so the output never depends on scheduling.
         var touched = new List<(int Tx, int Ty, Tile Tile)>();

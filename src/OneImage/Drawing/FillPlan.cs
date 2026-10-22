@@ -77,9 +77,14 @@ internal sealed class FillPlan
     private readonly byte _cr, _cg, _cb;
     private readonly float _fr, _fg, _fb, _alpha; // color in 0..255 and its alpha times opacity
 
-    private FillPlan(PixelFormat format, Brush brush, FillSettings s, float[]? solidWork)
+    private readonly bool _lin8; // 8-bit sRGB storage blended in linear light, one run of covered pixels at a time
+    private readonly PixelFormat _surface; // the straight float layout of a decoded run when _lin8
+
+    private FillPlan(PixelFormat format, Brush brush, FillSettings s, float[]? solidWork, bool linear8)
     {
         Format = format;
+        _lin8 = linear8;
+        _surface = new PixelFormat(format.Model, SampleType.F32, format.Alpha);
         Work = new PixelFormat(format.Model, SampleType.F32, AlphaMode.Premultiplied);
         Brush = brush;
         Settings = s;
@@ -141,7 +146,16 @@ internal sealed class FillPlan
         if (full != null)
         {
             Replace = new byte[format.BytesPerPixel];
-            ConvertKernel.ConvertRow(SpanCast.AsBytes(full.AsSpan()), Work, Replace, format, 1);
+            if (_lin8)
+            {
+                var px = new byte[_surface.BytesPerPixel];
+                ConvertKernel.ConvertRow(SpanCast.AsBytes(full.AsSpan()), Work, px, _surface, 1);
+                EncodeStorage(px, Replace, 1);
+            }
+            else
+            {
+                ConvertKernel.ConvertRow(SpanCast.AsBytes(full.AsSpan()), Work, Replace, format, 1);
+            }
         }
     }
 
@@ -163,8 +177,47 @@ internal sealed class FillPlan
 
     public static FillPlan Create(PixelFormat format, Brush brush, FillSettings settings, float[]? solidWork = null)
     {
-        return new FillPlan(format, brush, settings, solidWork);
+        return new FillPlan(format, brush, settings, solidWork, false);
     }
+
+    /// <summary>
+    /// Whether a linear-light fill on pixels of <paramref name="format"/> in the default color space can blend the covered pixels
+    /// alone: 8-bit gray or RGB, without premultiplied alpha. Other formats and tagged profiles convert whole tiles instead.
+    /// </summary>
+    public static bool CanBlendLinear8(PixelFormat format) =>
+        format.Sample == SampleType.U8 && format.Alpha != AlphaMode.Premultiplied && format.Model is ColorModel.Rgb or ColorModel.Gray;
+
+    /// <summary>The plan of a linear-light fill on 8-bit storage (see <see cref="CanBlendLinear8"/>); <paramref name="solidWork"/> is the linear solid color for solid brushes.</summary>
+    public static FillPlan CreateLinear8(PixelFormat format, Brush brush, FillSettings settings, float[]? solidWork) =>
+        new FillPlan(format, brush, settings, solidWork, true);
+
+    /// <summary>The linear, premultiplied working-format color of an sRGB-encoded solid color, as the profile conversion of a one-pixel image gives it.</summary>
+    public static float[] LinearSolid8(Rgba32 color, PixelFormat format)
+    {
+        var work = new PixelFormat(format.Model, SampleType.F32, AlphaMode.Premultiplied);
+        var v = new float[work.ChannelCount];
+        float a = color.A / 255f;
+        if (format.Model == ColorModel.Gray)
+        {
+            // A gray fill color is the 8-bit gray of the color, as converting it to a gray image gives.
+            Span<byte> rgba = [color.R, color.G, color.B, color.A];
+            Span<byte> gray = stackalloc byte[2];
+            ConvertKernel.ConvertRow(rgba, PixelFormat.Rgba8, gray, PixelFormat.GrayAlpha8, 1);
+            v[0] = SrgbTables.ToLinear8[gray[0]] * a;
+        }
+        else
+        {
+            v[0] = SrgbTables.ToLinear8[color.R] * a;
+            v[1] = SrgbTables.ToLinear8[color.G] * a;
+            v[2] = SrgbTables.ToLinear8[color.B] * a;
+        }
+
+        v[^1] = a;
+        return v;
+    }
+
+    private void EncodeStorage(ReadOnlySpan<byte> surface, Span<byte> storage, int n) =>
+        LinearLightKernel.Encode(SpanCast.As<float>(surface), Work.ColorChannels, Format.HasAlpha, storage, n);
 
     /// <summary>Paints the rasterized coverage in <paramref name="s"/> into <paramref name="tile"/> (a tile in <see cref="Format"/>, rows of Tile.Size pixels).</summary>
     public void Paint(Span<byte> tile, int tw, int th, int originX, int originY, RasterScratch s)
@@ -292,9 +345,19 @@ internal sealed class FillPlan
                 int e = x;
                 while (e < b && cov[e] >= 1f)
                 {
-                    row.Slice(e * bpp, bpp).Clear();
-                    Replace.CopyTo(row.Slice(e * bpp, bpp));
                     e++;
+                }
+
+                if (bpp == 4)
+                {
+                    SpanCast.As<uint>(row.Slice(x * 4, (e - x) * 4)).Fill(BitConverter.ToUInt32(Replace));
+                }
+                else
+                {
+                    for (int i = x; i < e; i++)
+                    {
+                        Replace.CopyTo(row.Slice(i * bpp, bpp));
+                    }
                 }
 
                 x = e;
@@ -318,15 +381,32 @@ internal sealed class FillPlan
         int ch = Work.ChannelCount;
         int count = n * ch;
         int bpp = Format.BytesPerPixel;
-        Span<byte> pixels = row.Slice(x0 * bpp, n * bpp);
+        Span<byte> stored = row.Slice(x0 * bpp, n * bpp);
+
+        // Linear light on 8-bit storage: the run is decoded to straight linear floats and encoded back, so only covered pixels pay.
+        PixelFormat fmt = Format;
+        Span<byte> pixels = stored;
+        if (_lin8)
+        {
+            fmt = _surface;
+            pixels = s.LinearBytes.AsSpan(0, n * _surface.BytesPerPixel);
+        }
+
+        bool decoded = !_lin8;
         Span<float> rgba = default;
         if (!Solid)
         {
             rgba = s.BrushRow.AsSpan(0, n * 4);
             if (Brush.ReadsBackdrop)
             {
+                if (!decoded)
+                {
+                    LinearLightKernel.Decode(stored, Work.ColorChannels, Format.HasAlpha, SpanCast.As<float>(pixels), n);
+                    decoded = true;
+                }
+
                 Span<float> backdrop = s.Straight.AsSpan(0, n * 4);
-                ConvertKernel.ConvertRow(pixels, Format, SpanCast.AsBytes(backdrop), PixelFormat.RgbaF32, n);
+                ConvertKernel.ConvertRow(pixels, fmt, SpanCast.AsBytes(backdrop), PixelFormat.RgbaF32, n);
                 Brush.FillRow(originX + x0, y, backdrop, rgba);
             }
             else
@@ -337,7 +417,12 @@ internal sealed class FillPlan
             // Opaque brush colors over fully covered pixels replace them: no need to read the backdrop and blend.
             if (_opaqueReplace && AllOpaqueAndCovered(cov.Slice(x0, n), rgba))
             {
-                if (Format == PixelFormat.Rgba8)
+                if (_lin8)
+                {
+                    ConvertKernel.ConvertRow(SpanCast.AsBytes(rgba), PixelFormat.RgbaF32, pixels, fmt, n);
+                    EncodeStorage(pixels, stored, n);
+                }
+                else if (Format == PixelFormat.Rgba8)
                 {
                     BrushKernel.RgbaF32ToRgba8(rgba, pixels);
                 }
@@ -350,8 +435,13 @@ internal sealed class FillPlan
             }
         }
 
+        if (!decoded)
+        {
+            LinearLightKernel.Decode(stored, Work.ColorChannels, Format.HasAlpha, SpanCast.As<float>(pixels), n);
+        }
+
         Span<float> back = s.Back.AsSpan(0, count), over = s.Over.AsSpan(0, count), result = s.Result.AsSpan(0, count);
-        ConvertKernel.ConvertRow(pixels, Format, SpanCast.AsBytes(back), Work, n);
+        ConvertKernel.ConvertRow(pixels, fmt, SpanCast.AsBytes(back), Work, n);
         if (Solid)
         {
             for (int i = 0; i < n; i++)
@@ -379,7 +469,11 @@ internal sealed class FillPlan
             }
         }
 
-        ConvertKernel.ConvertRow(SpanCast.AsBytes(result), Work, pixels, Format, n);
+        ConvertKernel.ConvertRow(SpanCast.AsBytes(result), Work, pixels, fmt, n);
+        if (_lin8)
+        {
+            EncodeStorage(pixels, stored, n);
+        }
     }
 
     private static bool AllOpaqueAndCovered(ReadOnlySpan<float> cov, ReadOnlySpan<float> rgba)
