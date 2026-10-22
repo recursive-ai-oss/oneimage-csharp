@@ -20,13 +20,21 @@ public sealed class PngStreamingTests : IDisposable
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
-            Baseline = GC.GetTotalMemory(true);
+            Baseline = LiveHeap.Baseline();
             _peak = Baseline;
             _thread = new Thread(() =>
             {
                 while (!_stop.IsCancellationRequested)
                 {
-                    _peak = Math.Max(_peak, LiveHeap.Read(Baseline, limit));
+                    long now = LiveHeap.Read(Baseline, limit);
+                    if (now > _peak)
+                    {
+                        _peak = now;
+                        if (now - Baseline > limit / 2)
+                        {
+                            Detail = HeapReport.Describe();
+                        }
+                    }
                     Thread.Sleep(2);
                 }
             });
@@ -34,6 +42,8 @@ public sealed class PngStreamingTests : IDisposable
         }
 
         public long Baseline { get; }
+
+        public string Detail { get; private set; } = "";
 
         public long Growth
         {
@@ -145,13 +155,17 @@ public sealed class PngStreamingTests : IDisposable
         Image img = Image.Load(path).Invert();
         Assert.Equal((W, H), (img.Width, img.Height));
         long growth;
+        string detail;
+        long residual;
         using (var sampler = new PeakSampler(frameBytes / 10))
         {
             img.Save(Stream.Null, PngFormat.Instance, new SaveOptions { EncoderOptions = new PngEncoderOptions { CompressionLevel = 0, Filter = PngFilterMode.None, ColorMode = PngColorMode.Truecolor } });
             growth = sampler.Growth;
+            detail = sampler.Detail;
+            residual = LiveHeap.Total(true) - sampler.Baseline;
         }
 
-        TestContext.Current.SendDiagnosticMessage($"png load+invert+save {W}x{H}: peak managed growth {growth >> 20} MiB ({100.0 * growth / frameBytes:F2}% of the frame)");
-        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 6, $"peak growth {growth} exceeds a sixth of the {frameBytes} byte frame");
+        TestContext.Current.SendDiagnosticMessage($"png load+invert+save {W}x{H}: peak managed growth {growth >> 20} MiB ({100.0 * growth / frameBytes:F2}% of the frame); still live after the run and a collection: {residual >> 20} MiB; {LiveHeap.Flatness()}; {detail}");
+        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 6, $"peak growth {growth} exceeds a sixth of the {frameBytes} byte frame; at the peak: {detail}");
     }
 }

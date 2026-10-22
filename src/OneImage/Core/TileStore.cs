@@ -37,6 +37,9 @@ internal sealed class PooledTileStore : ITileStore
 
     public static PooledTileStore Instance { get; } = new();
 
+    /// <summary>Gets the bytes currently idle in the pool (diagnostics).</summary>
+    public long PooledBytes => Interlocked.Read(ref _pooledBytes);
+
     public byte[] Rent(int length, bool clear)
     {
         int shift = Shift(length);

@@ -15,6 +15,9 @@ internal static class FloatScratch
     private static readonly System.Collections.Concurrent.ConcurrentQueue<float[]>[] s_queues = CreateQueues();
     private static long s_pooledBytes;
 
+    /// <summary>Gets the bytes currently idle in the pool (diagnostics).</summary>
+    public static long PooledBytes => Interlocked.Read(ref s_pooledBytes);
+
     public static float[] Rent(int length)
     {
         int shift = Shift(length);

@@ -108,14 +108,23 @@ public sealed class GeometryStreamingTests : IDisposable
         Assert.True(img.Frames[0].Node.Streaming);
         GC.Collect();
         GC.WaitForPendingFinalizers();
-        long baseline = GC.GetTotalMemory(true);
+        long baseline = LiveHeap.Baseline();
         long peak = baseline;
+        string detail = "";
         using var stop = new CancellationTokenSource();
         var sampler = new Thread(() =>
         {
             while (!stop.IsCancellationRequested)
             {
-                peak = Math.Max(peak, LiveHeap.Read(baseline, frameBytes / 10));
+                long now = LiveHeap.Read(baseline, frameBytes / 10);
+                if (now > peak)
+                {
+                    peak = now;
+                    if (now - baseline > frameBytes / 10 / 2)
+                    {
+                        detail = HeapReport.Describe();
+                    }
+                }
                 Thread.Sleep(2);
             }
         });
@@ -133,9 +142,10 @@ public sealed class GeometryStreamingTests : IDisposable
         }
 
         long growth = peak - baseline;
-        TestContext.Current.SendDiagnosticMessage($"geometry streaming {W}x{H}: flip+pad+resize peak managed growth {growth / (1 << 20)} MiB ({100.0 * growth / frameBytes:F1}% of the frame), {sw.ElapsedMilliseconds} ms");
+        long residual = LiveHeap.Total(true) - baseline;
+        TestContext.Current.SendDiagnosticMessage($"geometry streaming {W}x{H}: flip+pad+resize peak managed growth {growth / (1 << 20)} MiB ({100.0 * growth / frameBytes:F1}% of the frame), {sw.ElapsedMilliseconds} ms; still live after the run and a collection: {residual >> 20} MiB; {LiveHeap.Flatness()}; {detail}");
         // The bound is for the pooled store; a store that allocates a fresh array per tile leaves garbage the pool avoids.
-        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 10, $"peak growth {growth} exceeds 10% of the frame");
+        Assert.True(TileStores.Current is not PooledTileStore || growth < frameBytes / 10, $"peak growth {growth} exceeds 10% of the frame; at the peak: {detail}");
     }
 
     [Theory]
