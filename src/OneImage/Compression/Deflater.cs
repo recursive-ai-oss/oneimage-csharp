@@ -59,6 +59,10 @@ internal sealed class Deflater : IDisposable
     private bool _zlib;
     private bool _finished;
     private bool _disposed;
+    private bool _filtered;
+    private int _hashLen = 4;
+    private ulong _hashMask = 0xFFFFFFFFUL;
+    private int _minUseful = MinMatch;
 
     private byte[] _window = Array.Empty<byte>();
     private ushort[] _head = Array.Empty<ushort>();
@@ -125,7 +129,24 @@ internal sealed class Deflater : IDisposable
     /// (zlib's Z_FILTERED). It suits data that went through predictive filtering, such as PNG scanlines, where short
     /// matches are mostly coincidences. It is kept across <see cref="Reset"/>; levels 0-3 ignore it, as zlib does.
     /// </summary>
-    public bool FilteredStrategy { get; set; }
+    public bool FilteredStrategy
+    {
+        get => _filtered;
+        set
+        {
+            _filtered = value;
+            ConfigureHash();
+        }
+    }
+
+    // Shorter matches than this are not worth emitting. The hash covers the same number of bytes (4 or 6) so chains
+    // hold almost only candidates that can reach it: with filtered data a 6-byte hash keeps the chains short.
+    private void ConfigureHash()
+    {
+        _hashLen = _filtered ? 6 : 3;
+        _hashMask = _filtered ? 0x0000FFFFFFFFFFFFUL : 0x0000000000FFFFFFUL;
+        _minUseful = _filtered ? 6 : MinMatch;
+    }
 
     /// <summary>Starts a new stream with the given settings, keeping the buffers.</summary>
     public void Reset(int level, bool zlib)
@@ -339,17 +360,8 @@ internal sealed class Deflater : IDisposable
         ushort[] head = _head;
         ushort[] prev = _prev;
         w.AsSpan(WSize, WSize).CopyTo(w);
-        for (int i = 0; i < head.Length && i < (1 << HashBits); i++)
-        {
-            int m = head[i];
-            head[i] = (ushort)(m >= WSize ? m - WSize : 0);
-        }
-
-        for (int i = 0; i < WSize; i++)
-        {
-            int m = prev[i];
-            prev[i] = (ushort)(m >= WSize ? m - WSize : 0);
-        }
+        SlideTable(head.AsSpan(0, 1 << HashBits));
+        SlideTable(prev.AsSpan(0, WSize));
 
         _strstart -= WSize;
         _matchStart -= WSize;
@@ -357,11 +369,29 @@ internal sealed class Deflater : IDisposable
         _blockStart -= WSize;
     }
 
+    // Entries become max(entry, WSize) - WSize: positions that fall out of the window turn into 0 ("none").
+    private static void SlideTable(Span<ushort> table)
+    {
+        var k = new Vector<ushort>((ushort)WSize);
+        int i = 0;
+        for (; i <= table.Length - Vector<ushort>.Count; i += Vector<ushort>.Count)
+        {
+            Vector<ushort> v = new Vector<ushort>(table.Slice(i));
+            (Vector.Max(v, k) - k).CopyTo(table.Slice(i));
+        }
+
+        for (; i < table.Length; i++)
+        {
+            int m = table[i];
+            table[i] = (ushort)(m >= WSize ? m - WSize : 0);
+        }
+    }
+
     private int InsertString(int pos)
     {
         byte[] w = _window;
-        uint v = BinaryPrimitives.ReadUInt32LittleEndian(w.AsSpan(pos)) & 0xFFFFFF;
-        int h = (int)((v * 0x9E3779B1u) >> (32 - HashBits));
+        ulong v = BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(pos)) & _hashMask;
+        int h = (int)((v * 0x9E3779B97F4A7C15UL) >> (64 - HashBits));
         ushort[] head = _head;
         int hd = head[h];
         _prev[pos & WMask] = (ushort)hd;
@@ -379,26 +409,33 @@ internal sealed class Deflater : IDisposable
 
         int maxLen = Math.Min(MaxMatch, _lookahead);
         int nice = Math.Min(_niceMatch, maxLen);
-        int best = prevLen;
+
+        // Matches shorter than _minUseful are discarded by the caller, so only longer ones are worth finding.
+        int best = Math.Max(prevLen, _minUseful - 1);
         int scan = _strstart;
         int limit = scan > MaxDist ? scan - MaxDist : 0;
         byte[] w = _window;
         ushort[] prev = _prev;
-        while (best < maxLen)
+        if (best >= maxLen)
         {
-            if (w[curMatch + best] == w[scan + best] && w[curMatch + best - 1] == w[scan + best - 1] && w[curMatch] == w[scan])
-            {
-                int len = 0;
-                while (len < maxLen)
-                {
-                    ulong x = BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(scan + len)) ^ BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(curMatch + len));
-                    if (x != 0)
-                    {
-                        len += BitOperations.TrailingZeroCount(x) >> 3;
-                        break;
-                    }
+            return Math.Min(best, _lookahead);
+        }
 
-                    len += 8;
+        ulong scanHead = BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(scan));
+        while (true)
+        {
+            if (w[curMatch + best] == w[scan + best])
+            {
+                int len;
+                ulong x = BinaryPrimitives.ReadUInt64LittleEndian(w.AsSpan(curMatch)) ^ scanHead;
+                if (x != 0)
+                {
+                    len = BitOperations.TrailingZeroCount(x) >> 3;
+                }
+                else
+                {
+                    int rest = Math.Max(0, maxLen - 8);
+                    len = 8 + w.AsSpan(scan + 8, rest).CommonPrefixLength(w.AsSpan(curMatch + 8, rest));
                 }
 
                 if (len > maxLen)
@@ -410,7 +447,7 @@ internal sealed class Deflater : IDisposable
                 {
                     _matchStart = curMatch;
                     best = len;
-                    if (len >= nice)
+                    if (len >= nice || len >= maxLen)
                     {
                         break;
                     }
@@ -460,7 +497,7 @@ internal sealed class Deflater : IDisposable
             }
 
             int hashHead = 0;
-            if (_lookahead >= MinMatch)
+            if (_lookahead >= _hashLen)
             {
                 hashHead = InsertString(_strstart);
             }
@@ -472,11 +509,11 @@ internal sealed class Deflater : IDisposable
             }
 
             bool flush;
-            if (_matchLength >= MinMatch)
+            if (_matchLength >= _minUseful)
             {
                 flush = TallyDist(_strstart - _matchStart, _matchLength - MinMatch);
                 _lookahead -= _matchLength;
-                if (_matchLength <= _maxLazy && _lookahead >= MinMatch)
+                if (_matchLength <= _maxLazy && _lookahead >= _hashLen)
                 {
                     _matchLength--;
                     do
@@ -528,7 +565,7 @@ internal sealed class Deflater : IDisposable
             }
 
             int hashHead = 0;
-            if (_lookahead >= MinMatch)
+            if (_lookahead >= _hashLen)
             {
                 hashHead = InsertString(_strstart);
             }
@@ -540,7 +577,7 @@ internal sealed class Deflater : IDisposable
             {
                 _matchLength = LongestMatch(hashHead, _prevLength);
                 // A distant length-3 match costs more than the three literals it replaces.
-                if ((_matchLength == 3 && _strstart - _matchStart > 4096) || (FilteredStrategy && _matchLength <= 5))
+                if ((_matchLength == 3 && _strstart - _matchStart > 4096) || _matchLength < _minUseful)
                 {
                     _matchLength = MinMatch - 1;
                 }
@@ -548,7 +585,7 @@ internal sealed class Deflater : IDisposable
 
             if (_prevLength >= MinMatch && _matchLength <= _prevLength)
             {
-                int maxInsert = _strstart + _lookahead - MinMatch;
+                int maxInsert = _strstart + _lookahead - _hashLen;
                 bool flush = TallyDist(_strstart - 1 - _prevMatch, _prevLength - MinMatch);
                 _lookahead -= _prevLength - 1;
                 _prevLength -= 2;
