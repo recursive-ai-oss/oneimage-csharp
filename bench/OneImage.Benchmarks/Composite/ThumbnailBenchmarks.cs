@@ -129,8 +129,8 @@ public class WatermarkBenchmarks : IDisposable
             rgbaBase[(4 * i) + 3] = 255;
         }
 
-        _vipsBase = VipsImage.NewFromMemory(rgbaBase, W, H, 4, global::NetVips.Enums.BandFormat.Uchar);
-        _vipsOverlay = VipsImage.NewFromMemory(ov, OW, OH, 4, global::NetVips.Enums.BandFormat.Uchar);
+        _vipsBase = VipsImage.NewFromMemory(rgbaBase, W, H, 4, global::NetVips.Enums.BandFormat.Uchar).Copy(interpretation: global::NetVips.Enums.Interpretation.Srgb);
+        _vipsOverlay = VipsImage.NewFromMemory(ov, OW, OH, 4, global::NetVips.Enums.BandFormat.Uchar).Copy(interpretation: global::NetVips.Enums.Interpretation.Srgb);
     }
 
     [GlobalCleanup]
@@ -151,6 +151,20 @@ public class WatermarkBenchmarks : IDisposable
     public int OneImage()
     {
         _base.Composite(_overlay, 100, 100).CopyPixelsTo<global::OneImage.Rgb24>(_out, new ImageRect(0, 0, W, H));
+        return _out[0].R;
+    }
+
+    [Benchmark(Description = "OneImage Composite + CopyPixelsTo, maxDegree 1")]
+    public int OneImageSerial()
+    {
+        _base.Composite(_overlay, 100, 100).CopyPixelsTo<global::OneImage.Rgb24>(_out, new ImageRect(0, 0, W, H), maxDegree: 1);
+        return _out[0].R;
+    }
+
+    [Benchmark(Description = "OneImage Composite + CopyPixelsTo, maxDegree 16")]
+    public int OneImageWide()
+    {
+        _base.Composite(_overlay, 100, 100).CopyPixelsTo<global::OneImage.Rgb24>(_out, new ImageRect(0, 0, W, H), maxDegree: 16);
         return _out[0].R;
     }
 
