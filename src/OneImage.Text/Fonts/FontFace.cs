@@ -123,6 +123,8 @@ internal sealed class FontFace
         FamilyName = family ?? FullName ?? PostScriptName ?? "Unknown";
         SubfamilyName = sub ?? (IsBold ? (IsItalic ? "Bold Italic" : "Bold") : (IsItalic ? "Italic" : "Regular"));
 
+        Color = ColorGlyphs.TryCreate(Table("COLR", required: false), Table("CPAL", required: false));
+
         // GSUB, GPOS and GDEF with an unusable header are ignored: the font then shapes with plain advances.
         Layout = new OtFace(_tables, NumGlyphs);
         if (_tables.TryGetValue(Be.Tag("kern"), out ReadOnlyMemory<byte> kern))
@@ -190,6 +192,9 @@ internal sealed class FontFace
     public string? PostScriptName { get; }
 
     public bool IsCff => _cff is not null;
+
+    /// <summary>The layered color glyphs (COLR version 0 records and CPAL), or null when the font has none or they are damaged.</summary>
+    public ColorGlyphs? Color { get; }
 
     /// <summary>GSUB, GPOS and GDEF, with the shape plans built from them.</summary>
     public OtFace Layout { get; }

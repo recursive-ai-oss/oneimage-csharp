@@ -18,6 +18,7 @@ public sealed class TextOptions
     private float _wrappingLength;
     private Vector2 _origin;
     private Font _font;
+    private int _colorPalette;
 
     /// <summary>Creates options for a font with every other setting at its default.</summary>
     /// <param name="font">The font.</param>
@@ -170,6 +171,25 @@ public sealed class TextOptions
     /// </summary>
     public TextJustification TextJustification { get; set; }
 
+    /// <summary>
+    /// Gets or sets which color glyph formats are painted. The default is <see cref="ColorFontSupport.None"/>: every glyph is a
+    /// plain outline filled with the brush, as in SixLabors.Fonts. With <see cref="ColorFontSupport.MicrosoftColrFormat"/>,
+    /// <c>DrawText</c> paints the layers of COLR glyphs; measuring and layout do not change. Text-as-path (<see cref="TextBuilder.GeneratePath"/>)
+    /// is always monochrome.
+    /// </summary>
+    public ColorFontSupport ColorFontSupport { get; set; }
+
+    /// <summary>
+    /// Gets or sets the CPAL palette used for color glyphs, counting from 0 (the default). A number past the font's last palette
+    /// selects palette 0; see <see cref="Font.ColorPaletteCount"/>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
+    public int ColorPaletteIndex
+    {
+        get => _colorPalette;
+        set => _colorPalette = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value), "The palette index cannot be negative.");
+    }
+
     /// <summary>Makes a copy of these options.</summary>
     /// <returns>A new, independent object with the same settings.</returns>
     public TextOptions Clone()
@@ -197,5 +217,7 @@ public sealed class TextOptions
         Kerning = Kerning,
         WordBreaking = WordBreaking,
         TextJustification = TextJustification,
+        ColorFontSupport = ColorFontSupport,
+        _colorPalette = _colorPalette,
     };
 }

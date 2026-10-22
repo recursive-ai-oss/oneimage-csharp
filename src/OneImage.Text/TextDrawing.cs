@@ -33,8 +33,45 @@ public static class TextDrawing
     public static Image DrawText(this Image image, string text, TextOptions options, Brush? brush, Pen? pen = null, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false)
     {
         ArgumentNullException.ThrowIfNull(image);
-        Path path = Prepare(text, options, brush, pen);
+        Validate(text, options, brush, pen);
         Image result = image;
+        if (ColorText.Create(text, options) is { } color)
+        {
+            // Every fill first, layer by layer, then the pen over the plain glyphs and the text-colored layers: a stroke is never
+            // hidden by a later layer (SixLabors.Fonts draws the outlines last too).
+            if (brush is not null)
+            {
+                result = result.Fill(brush, color.Plain, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+            }
+
+            foreach (ColorFill f in color.Fills)
+            {
+                if (!f.Foreground)
+                {
+                    result = result.Fill(Brush.Solid(f.Color), f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+                else if (brush is not null)
+                {
+                    result = result.Fill(brush, f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+            }
+
+            if (pen is not null)
+            {
+                result = result.Draw(pen, color.Plain, antialias, opacity, blend, composition, linear);
+                foreach (ColorFill f in color.Fills)
+                {
+                    if (f.Foreground)
+                    {
+                        result = result.Draw(pen, f.Path, antialias, opacity, blend, composition, linear);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        Path path = TextBuilder.GeneratePath(text, options);
         if (brush is not null)
         {
             result = result.Fill(brush, path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
@@ -80,7 +117,42 @@ public static class TextDrawing
     public static void DrawText(this Canvas canvas, string text, TextOptions options, Brush? brush, Pen? pen = null, bool antialias = true, float opacity = 1f, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver, bool linear = false)
     {
         ArgumentNullException.ThrowIfNull(canvas);
-        Path path = Prepare(text, options, brush, pen);
+        Validate(text, options, brush, pen);
+        if (ColorText.Create(text, options) is { } color)
+        {
+            if (brush is not null)
+            {
+                canvas.Fill(brush, color.Plain, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+            }
+
+            foreach (ColorFill f in color.Fills)
+            {
+                if (!f.Foreground)
+                {
+                    canvas.Fill(Brush.Solid(f.Color), f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+                else if (brush is not null)
+                {
+                    canvas.Fill(brush, f.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+            }
+
+            if (pen is not null)
+            {
+                canvas.Draw(pen, color.Plain, antialias, opacity, blend, composition, linear);
+                foreach (ColorFill f in color.Fills)
+                {
+                    if (f.Foreground)
+                    {
+                        canvas.Draw(pen, f.Path, antialias, opacity, blend, composition, linear);
+                    }
+                }
+            }
+
+            return;
+        }
+
+        Path path = TextBuilder.GeneratePath(text, options);
         if (brush is not null)
         {
             canvas.Fill(brush, path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
@@ -101,7 +173,7 @@ public static class TextDrawing
     public static void DrawText(this Canvas canvas, string text, TextOptions options, Rgba32 color) =>
         canvas.DrawText(text, options, Brush.Solid(color));
 
-    private static Path Prepare(string text, TextOptions options, Brush? brush, Pen? pen)
+    private static void Validate(string text, TextOptions options, Brush? brush, Pen? pen)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(options);
@@ -109,7 +181,5 @@ public static class TextDrawing
         {
             throw new ArgumentException("Give a brush, a pen, or both.", nameof(brush));
         }
-
-        return TextBuilder.GeneratePath(text, options);
     }
 }

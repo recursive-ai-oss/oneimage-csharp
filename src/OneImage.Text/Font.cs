@@ -46,6 +46,15 @@ public sealed class Font
     /// <summary>Gets the face's metrics in design units.</summary>
     public FontMetrics Metrics => _metrics;
 
+    /// <summary>Gets the number of color palettes (CPAL) the face has; 0 when it has no color glyphs.</summary>
+    public int ColorPaletteCount => Face.Data.Color?.PaletteCount ?? 0;
+
+    /// <summary>Tells whether the face draws a code point as layered color glyphs (a COLR version 0 base glyph).</summary>
+    /// <param name="codePoint">The Unicode code point.</param>
+    /// <returns><see langword="true"/> when the code point maps to a glyph with color layers.</returns>
+    public bool HasColorGlyph(int codePoint) =>
+        Face.Data.Color is { } c && c.TryGetLayers(Face.Data.GetGlyphIndex(codePoint), out _, out _);
+
     internal FaceEntry Face { get; }
 
     /// <summary>Returns the same face at another size.</summary>

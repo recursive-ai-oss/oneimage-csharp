@@ -3,7 +3,7 @@ using OneImage.Compression;
 namespace OneImage.Text.Fonts;
 
 /// <summary>
-/// Reads the container around the tables: a plain sfnt (TrueType or OpenType), a TrueType Collection or a WOFF 1.0 wrapper.
+/// Reads the container around the tables: a plain sfnt (TrueType or OpenType), a TrueType Collection, or a WOFF 1.0 or WOFF 2.0 wrapper.
 /// The result is one table map per face; nothing here interprets the tables.
 /// </summary>
 internal static class FontFile
@@ -52,7 +52,7 @@ internal static class FontFile
         }
         else if (magic == TagWoff2)
         {
-            throw new FontFormatException("WOFF2 fonts are not supported.");
+            faces.AddRange(Woff2.Parse(data));
         }
         else
         {
