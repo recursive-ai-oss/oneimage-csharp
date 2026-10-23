@@ -216,6 +216,50 @@ internal static class TiffCcitt
         }
     }
 
+    /// <summary>
+    /// Decodes Group 4 data the way JBIG2's MMR regions are coded (T.88 6.2.6): the same decoder as <c>Decode</c> with the
+    /// Group 4 codec, but the end-of-facsimile-block code that may follow the last row is consumed when present and the
+    /// number of bytes the block occupied is returned, so consecutive blocks can be read from one buffer.
+    /// </summary>
+    /// <param name="data">The coded rows, optionally followed by an end-of-facsimile-block.</param>
+    /// <param name="width">Pixels per row.</param>
+    /// <param name="rows">Rows to decode.</param>
+    /// <param name="output">Receives <c>rows * ((width + 7) / 8)</c> bytes, 1 for black.</param>
+    /// <param name="cancellationToken">Observed once per row.</param>
+    /// <returns>The bytes used, including the end-of-facsimile-block and the padding to a byte boundary.</returns>
+    public static int DecodeMmr(ReadOnlySpan<byte> data, int width, int rows, Span<byte> output, CancellationToken cancellationToken)
+    {
+        int rowBytes = (width + 7) >> 3;
+        output[..(rowBytes * rows)].Clear();
+        int cap = width + 8;
+        int[] refLine = new int[cap];
+        int[] curLine = new int[cap];
+        int refCount = 0;
+        FillSentinels(refLine, ref refCount, width);
+        var bits = new Bits(data);
+        for (int y = 0; y < rows; y++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (bits.BitsLeft <= 0)
+            {
+                throw new ImageFormatException("CCITT data ended before all rows were decoded.");
+            }
+
+            int curCount = DecodeRow2D(ref bits, width, refLine, refCount, curLine, output.Slice(y * rowBytes, rowBytes));
+            (refLine, curLine) = (curLine, refLine);
+            refCount = curCount;
+            FillSentinels(refLine, ref refCount, width);
+        }
+
+        if (bits.BitsLeft >= 24 && bits.Peek(24) == 0x001001)
+        {
+            bits.Skip(24);
+        }
+
+        bits.AlignToByte();
+        return (int)Math.Min(bits.Position >> 3, data.Length);
+    }
+
     private static void FillSentinels(int[] line, ref int count, int width)
     {
         for (int i = 0; i < 4; i++)
