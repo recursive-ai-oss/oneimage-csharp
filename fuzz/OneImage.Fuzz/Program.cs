@@ -28,6 +28,7 @@ internal static class Program
         ["webp"] = CodecTargets.WebP,
         ["psd"] = PsdTarget.Run,
         ["jbig2"] = Jbig2Target.Run,
+        ["pdf"] = PdfTarget.Run,
         ["svg"] = DrawingTargets.Svg,
         ["svg-xml"] = SvgXmlTarget.Run,
         ["svg-render"] = SvgRenderTarget.Run,

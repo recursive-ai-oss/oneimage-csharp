@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd jbig2 svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd jbig2 pdf svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -47,6 +47,7 @@ case "$target" in
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
   psd)     seeds=psd;         prefix='';     patterns='*.psd *.psb'; maxlen=262144 ;;
   jbig2)   seeds=jbig2;       prefix="\x01"; patterns="*.jb2"; maxlen=65536 ;;
+  pdf)     seeds='';          prefix='';     patterns='';      maxlen=262144 ;;
   svg)     seeds=svgpath;     prefix='';     patterns='*.txt'; maxlen=4096 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
   font)    seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc *.woff *.woff2'; maxlen=262144 ;;
@@ -101,6 +102,7 @@ fi
 [[ "$target" != font && "$target" != breaking && "$target" != bidi && "$target" != complex && "$target" != brotli && "$target" != richtext && "$target" != sysfont && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
 [[ "$target" != svg-xml && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Svg.dll" >/dev/null
 [[ "$target" != psd ]] || "$instrument" "$bin/OneImage.Psd.dll" >/dev/null
+[[ "$target" != pdf ]] || "$instrument" "$bin/OneImage.Pdf.dll" >/dev/null
 
 corpus="$work/corpus/$target"
 findings="$work/findings/$target"
@@ -143,6 +145,14 @@ if [[ "$target" == jbig2 ]]; then
     else
       { printf '\x00'; cat "$f"; } >"$out"
     fi
+  done
+fi
+if [[ "$target" == pdf ]]; then
+  # The committed form files, plus any small PDFs in the folders named by ONEIMAGE_PDF_SEEDS (colon separated).
+  for f in "$root"/testdata/pdf/*.pdf; do [[ -f "$f" ]] && cp -n "$f" "$corpus/seed-$(basename "$f")"; done
+  IFS=: read -ra dirs <<<"${ONEIMAGE_PDF_SEEDS:-}"
+  for d in "${dirs[@]}"; do
+    while IFS= read -r f; do cp -n "$f" "$corpus/seed-$(basename "$f" | tr ' ' '_')"; done < <(find "$d" -name '*.pdf' -size -64k 2>/dev/null | sort)
   done
 fi
 [[ "$target" != breaking ]] || cp -n "$work"/breaking-seeds/* "$corpus"/ 2>/dev/null || true
