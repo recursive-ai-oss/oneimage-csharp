@@ -12,6 +12,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Fixed
 
+- `RecursiveAI.OneImage.Psd`: a pattern channel whose rectangle claims more data than the file holds is refused before its buffer is allocated, and the linear-light interpolation of a gradient glow is written and read back like that of other gradients.
 - `OneImage.Layers`: an edit of a layer's pixels now also recomputes the tiles that an inner effect (inner shadow, inner glow, inside stroke) draws from the edited shape, not only the ones outer effects reach. The pixels were correct after a fresh render; an incremental render could leave a stale tile next to the edit.
 - `RecursiveAI.OneImage.Psd`: an effect contour with a point that is not a number, or two points a hair apart that become one float, is skipped and counted in `EffectsNotDrawn` instead of throwing an argument exception (found by fuzzing).
 

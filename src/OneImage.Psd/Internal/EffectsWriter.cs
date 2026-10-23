@@ -269,18 +269,18 @@ internal static class EffectsWriter
                     .Add("Dstn", Pixels(s.Distance)).Add("Ckmt", Pixels(s.Choke * 100f)).Add("blur", Pixels(s.Size))
                     .Add("Nose", DescNode.Unitf("#Prc", 0)).Add("AntA", DescNode.Bool_(false)).Add("TrnS", Contour(s.Contour));
             case OuterGlowEffect g:
-                return Begin("OrGl", g)
+                return InterpolationOf(Begin("OrGl", g)
                     .Add("Md  ", Blend(g.Blend)).Add(g.Gradient == null ? "Clr " : "Grad", g.Gradient == null ? Color(g.Color) : Gradient(g.Gradient)).Add("Opct", Percent(g.Opacity))
                     .Add("GlwT", DescNode.Enum("BETE", "SfBL")).Add("Ckmt", Pixels(g.Spread * 100f)).Add("blur", Pixels(g.Size))
                     .Add("Nose", DescNode.Unitf("#Prc", 0)).Add("ShdN", DescNode.Unitf("#Prc", 0)).Add("AntA", DescNode.Bool_(false))
-                    .Add("TrnS", Contour(g.Contour)).Add("Inpr", DescNode.Unitf("#Prc", Pct(g.Range)));
+                    .Add("TrnS", Contour(g.Contour)).Add("Inpr", DescNode.Unitf("#Prc", Pct(g.Range))), g.Gradient);
             case InnerGlowEffect g:
-                return Begin("IrGl", g)
+                return InterpolationOf(Begin("IrGl", g)
                     .Add("Md  ", Blend(g.Blend)).Add(g.Gradient == null ? "Clr " : "Grad", g.Gradient == null ? Color(g.Color) : Gradient(g.Gradient)).Add("Opct", Percent(g.Opacity))
                     .Add("GlwT", DescNode.Enum("BETE", "SfBL")).Add("Ckmt", Pixels(g.Choke * 100f)).Add("blur", Pixels(g.Size))
                     .Add("Nose", DescNode.Unitf("#Prc", 0)).Add("ShdN", DescNode.Unitf("#Prc", 0)).Add("AntA", DescNode.Bool_(false))
                     .Add("TrnS", Contour(g.Contour)).Add("Inpr", DescNode.Unitf("#Prc", Pct(g.Range)))
-                    .Add("glwS", DescNode.Enum("IGSr", g.Source == GlowSource.Center ? "SrcC" : "SrcE"));
+                    .Add("glwS", DescNode.Enum("IGSr", g.Source == GlowSource.Center ? "SrcC" : "SrcE")), g.Gradient);
             case StrokeEffect k:
                 {
                     DescNode d = Begin("FrFX", k)
@@ -332,6 +332,10 @@ internal static class EffectsWriter
                 throw new ImageOperationException($"The layer effect '{e.Name}' has no PSD equivalent.");
         }
     }
+
+    // A glow gradient blends in linear light when the descriptor says so, as a gradient overlay does.
+    private static DescNode InterpolationOf(DescNode d, EffectGradient? gradient) =>
+        gradient is { LinearLight: true } ? d.Add("gradientsInterpolationMethod", DescNode.Enum("gradientInterpolationMethodType", "Lnr ")) : d;
 
     // The settings shared by gradient overlays and gradient strokes.
     private static void AddGradientFill(DescNode d, EffectGradientFill fill)

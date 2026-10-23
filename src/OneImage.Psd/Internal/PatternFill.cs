@@ -216,14 +216,17 @@ internal static class PatternLibrary
     {
         int bps = depth / 8;
         int rowBytes = checked(width * bps);
+
+        // The size comes from the file: the data has to be there (raw), or at least the row table and a byte per row (run-length coded), before anything that size is allocated.
+        if (compression == 0 ? data.Length < (long)rowBytes * height : compression == 1 && data.Length < 3L * height)
+        {
+            throw new ImageFormatException("A pattern channel is shorter than its size says.");
+        }
+
         byte[] raw = new byte[checked(rowBytes * height)];
         switch (compression)
         {
             case 0:
-                if (data.Length < raw.Length)
-                {
-                    throw new ImageFormatException("A pattern channel is shorter than its size says.");
-                }
 
                 data.Slice(0, raw.Length).CopyTo(raw);
                 break;
