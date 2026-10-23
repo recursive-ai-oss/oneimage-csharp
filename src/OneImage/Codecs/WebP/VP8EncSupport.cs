@@ -3,57 +3,19 @@ namespace OneImage.Codecs.WebP;
 /// <summary>
 /// The VP8 boolean entropy encoder (RFC 6386 section 7.3). The output grows in 64 KiB chunks instead of one array that doubles,
 /// so a large partition never leaves a trail of discarded half-size copies behind; <see cref="CopyTo"/> joins the chunks once.
-/// For small and medium frames the full-size chunks are rented from the shared array pool and go back in <see cref="Release"/>,
-/// so repeated encodes reuse them.
 /// </summary>
 internal sealed class VP8BoolWriter
 {
     private const int ChunkSize = 1 << 16;
     private readonly List<byte[]> _full = [];
-    private readonly List<int> _fullLengths = [];
     private byte[] _cur;
     private int _pos;
-    private int _limit;
     private int _fullBytes;
     private uint _range = 255;
     private uint _bottom;
     private int _bitCount = 24;
 
-    private readonly bool _pooled;
-
-    /// <param name="capacity">Size of the first chunk, clamped to 64 bytes to 64 KiB.</param>
-    /// <param name="pooled">Whether later chunks come from the shared array pool (and go back in <see cref="Release"/>) or are plain arrays.</param>
-    public VP8BoolWriter(int capacity = 1024, bool pooled = false)
-    {
-        _pooled = pooled;
-        _cur = new byte[Math.Clamp(capacity, 64, ChunkSize)];
-        _limit = _cur.Length;
-    }
-
-    /// <summary>Returns the rented chunks to the pool; the writer holds no data afterwards.</summary>
-    public void Release()
-    {
-        // The first chunk is a plain array (its size follows the caller's estimate); every later one is rented when pooled.
-        if (_pooled)
-        {
-            for (int i = 1; i < _full.Count; i++)
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(_full[i]);
-            }
-
-            if (_full.Count > 0)
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(_cur);
-            }
-        }
-
-        _full.Clear();
-        _fullLengths.Clear();
-        _cur = [];
-        _limit = 0;
-        _pos = 0;
-        _fullBytes = 0;
-    }
+    public VP8BoolWriter(int capacity = 1024) => _cur = new byte[Math.Clamp(capacity, 64, ChunkSize)];
 
     /// <summary>Gets the number of bytes written so far.</summary>
     public int Length => _fullBytes + _pos;
@@ -132,11 +94,10 @@ internal sealed class VP8BoolWriter
     /// <summary>Copies the bytes written (after <see cref="Finish"/>) to <paramref name="destination"/>, which must hold <see cref="Length"/> bytes.</summary>
     public void CopyTo(Span<byte> destination)
     {
-        for (int i = 0; i < _full.Count; i++)
+        foreach (byte[] chunk in _full)
         {
-            int len = _fullLengths[i];
-            _full[i].AsSpan(0, len).CopyTo(destination);
-            destination = destination[len..];
+            chunk.CopyTo(destination);
+            destination = destination[chunk.Length..];
         }
 
         _cur.AsSpan(0, _pos).CopyTo(destination);
@@ -159,7 +120,7 @@ internal sealed class VP8BoolWriter
 
                 chunk--;
                 buf = _full[chunk];
-                q = _fullLengths[chunk];
+                q = buf.Length;
             }
 
             q--;
@@ -175,13 +136,11 @@ internal sealed class VP8BoolWriter
 
     private void Append(byte b)
     {
-        if (_pos == _limit)
+        if (_pos == _cur.Length)
         {
             _full.Add(_cur);
-            _fullLengths.Add(_pos);
-            _fullBytes += _pos;
-            _cur = _pooled ? System.Buffers.ArrayPool<byte>.Shared.Rent(ChunkSize) : new byte[ChunkSize];
-            _limit = Math.Min(_cur.Length, ChunkSize);
+            _fullBytes += _cur.Length;
+            _cur = new byte[ChunkSize];
             _pos = 0;
         }
 

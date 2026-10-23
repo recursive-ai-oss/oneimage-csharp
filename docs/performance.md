@@ -444,87 +444,67 @@ lock: Ryzen 9 7950X3D, 32 logical CPUs, .NET SDK 10.0.402, load 0.1 before,
 
 ### Small and medium encodes
 
-Where the memory of a small encode goes, measured with allocation sampling and
-the gate-peak runner:
+Where the memory of a small encode goes, from allocation sampling and the
+gate-peak runner:
 
-- **Lossy, 2000x1500:** 4.5 MB of source YUV planes (1.5 bytes per pixel; the
-  segment analysis needs the whole frame before any macroblock is coded, so
-  they cannot be streamed), the coded levels (about the size of the output),
-  the token partition, and the frame the partitions are joined into.
-- **Lossless, 400x300:** the LZ77 hash table, a 1 MiB array that was allocated
-  for every entropy-coded image, and a file codes several (the picture and its
-  small transform maps, a few hundred pixels each). Those arrays were 9.7 MB of
-  the 12 MB a 400x300 encode allocated, whatever the image size.
-- **thumb-webp:** the encoder itself is 0.4 MB of 106 K pixels. What the gate
-  row shows beyond that is the runtime's tiered JIT. With one warm-up call the
-  hot methods of the JPEG decoder, resampler and WebP encoder are still
-  recompiled during the measured calls, which costs 2 to 3 MiB of resident code
-  and compiler memory in every .NET process once; native libraries have no such
-  cost. With 40 warm-up calls the same row measures 1.4 MiB at 31.6 ms.
-  `GATE_WARMUPS=N` makes `gate-peak` do N warm-ups (default 1, the gate's
-  method) to show this.
+- **Lossy, 2000x1500:** 4.5 MB of source YUV planes (1.5 bytes per pixel).
+  They are needed in full: the segment analysis looks at the whole frame
+  before any macroblock is coded, so they cannot be streamed. The rest is the
+  coded levels, the token partition and the joined frame, each about the size
+  of the output. The peak is what remains after those, about 5 MiB. Renting
+  these buffers from the array pool lowered the gate row, but only by moving
+  the memory into the pool's retention (the absolute peak and the footprint of
+  a loop of encodes went up), so the lossy encoder allocates them as before.
+- **Lossless, 400x300:** the match-search hash table, a 1 MiB array allocated
+  for every entropy-coded image. A file codes several (the picture and its
+  small transform maps, a few hundred pixels each), so those arrays were 9.7 MB
+  of the 12 MB a 400x300 lossless encode allocated, whatever the image size.
+- **thumb-webp:** the encoder itself is 0.4 MB of a 400x267 image. What the
+  gate row shows beyond that is the runtime's tiered JIT, a one-time cost. With
+  the gate's single warm-up call, hot methods of the JPEG decoder, resampler
+  and WebP encoder are still recompiled during the measured calls, which costs
+  2 to 3 MiB of resident code and compiler memory once per .NET process;
+  native libraries do not pay it. `GATE_WARMUPS=N` makes `gate-peak` do N
+  warm-ups (default 1, the gate's method, unchanged) to show this: with 40
+  the same row is 2.0 MiB at 31.6 ms (information only, not a gate figure).
 
-What changed (output bytes are identical, see the hash check below):
-
-- Frames up to 4 MiB of luma samples (about 4 MP) rent the source planes, the
-  per-row levels and the 64 KiB output chunks from the shared array pool, and
-  give them back as soon as they are consumed (the planes before the token
-  stream is built, also on cancellation and errors). Bigger frames allocate as
-  before, so a 24 MP encode leaves nothing in the pool.
-- The lossless LZ77 hash table of a small image (up to 16384 pixels) is an
-  open-addressing map sized to the image, with the same answers as the 2^18
-  table (same hash, same chains); bigger images rent the table from the pool.
+What changed: the lossless match search of an image of up to 16384 pixels
+uses an open-addressing map sized to the image instead of the 2^18-entry
+table. It has the same hash and chain order, so matches and output bytes do
+not change. Bigger images keep the full table, so the 24 MP lossless row is
+unaffected. A 400x300 lossless encode allocates 4.9 MB instead of 12 MB and a
+2000x1500 one 44 MB instead of 54 MB.
 
 Hash check: 456 SHA-256 hashes of the output (lossy q30 to 100 and lossless;
 effort 0, 2, 4, 5, 6; degrees 1, 4, 16; RGB, gradient alpha and cut-out alpha;
 11 sizes from 1x1 to 2000x1500; repeating, flat and noisy images; an animated
 GIF to lossy and lossless WebP) are the same before and after on default
 hardware, `DOTNET_EnableAVX512=0`, `DOTNET_EnableAVX2=0` and
-`DOTNET_EnableHWIntrinsic=0`; four encodes above the pooling limit (2400x1800
-and 3000x2000, lossy and lossless, degrees 1, 4 and 16) are the same too.
+`DOTNET_EnableHWIntrinsic=0`; six larger encodes (2400x1800 and 3000x2000
+lossy and lossless at degrees 1, 4 and 16, 400x300 lossless, 6000x4000
+lossless) are the same too.
 
-Gate-peak, AVX-512 off, on the worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET
-SDK 10.0.402, load 1.0 to 1.6 before, during and after, nothing else running
-under the benchmark lock). Peak minus resident-before in MiB, median of three
-processes (spread), one warm-up unless stated. The competitors' rows are from
-the new run:
+Gate-peak, AVX-512 off, peak minus resident-before in MiB and the absolute
+peak, median of three processes (spread), one warm-up. **Local run** on the
+development host (main against this change, same method, alternating):
 
-| Task | Before | After | After, 40 warm-ups (before) | SkiaSharp | Magick.NET | NetVips | ImageSharp |
-|---|--:|--:|--:|--:|--:|--:|--:|
-| webp-encode (lossy 2000x1500) | 5.4 (±3.3) | 2.3 (±0.3) | 1.9 (5.1) | 1.2 | 1.5 | 61.1 | 91.2 |
-| thumb-webp | 3.3 (±0.4) | 3.5 (±0.6) | 1.4 (2.0) | 0.9 | 0.6 | 62.0 | 9.6 |
-| png-to-webp (photo) | 23.1 (±4.6) | 16.4 (±1.1) | 16.1 (18.1) | 37.7 | 25.6 | 112.9 | 87.1 |
-| webp-encode-lossless 2000x1500 | 42.7 (±2.0) | 37.0 (±1.9) | | 57.4 | 83.8 | 49.5 | 136.8 |
-| webp-encode-24mp (lossy) | 100.1 (±3.1) | 99.9 (±4.3) | | 88.0 | 174.2 | 267.3 | 1486.9 |
-| webp-encode-lossless-24mp | 378.0 (±3.2) | 364.8 (±2.6) | | 665.5 | 733.6 | 1145.4 | 1026.2 |
+| Task | Before: delta / absolute peak | After: delta / absolute peak |
+|---|--:|--:|
+| webp-encode (lossy 2000x1500) | 4.6 (±0.6) / 223.7 | 4.6 (±0.8) / 223.9 |
+| thumb-webp | 4.1 (±0.9) / 217.9 | 3.7 (±1.4) / 217.4 |
+| png-to-webp (photo) | 19.3 (±0.8) / 108.2 | 19.0 (±5.3) / 107.9 |
+| webp-encode-lossless 2000x1500 | 44.1 (±2.2) / 279.2 | 40.1 (±1.6) / 276.1 |
+| webp-encode-24mp (lossy) | 102.6 (±0.3) / 1172.8 | 101.1 (±3.4) / 1172.9 |
+| webp-encode-lossless-24mp | 375.9 (±3.4) / 1457.5 | 369.4 (±0.2) / 1451.7 |
 
-The two 24 MP rows are not meant to change (they do not use the pools); the
-lossless one gains the 1 MiB-per-image table. thumb-webp does not change under
-the gate's method because its excess is the one-time JIT described above, not
-the operation.
-
-**Pool retention counts in this method.** The lossy 2000x1500 gain comes from
-renting the source planes, which moves 6 MiB or so from "working memory"
-(allocated afresh and gone after each call) to "retained by the pool" (counted
-in resident-before, trimmed by the pool when idle). The process footprint does
-not shrink: the gate row's absolute peak went from 229.6 to 240.1 MiB, and a
-loop of 150 encodes of that image without forced collections ends with a peak
-resident set of about 136 MiB against 129 MiB. What renting does give is fewer
-garbage collections: 12 full collections in 150 encodes instead of 74, at the
-same 136 to 140 ms per encode. SkiaSharp's 1.2 is the same effect (libwebp's
-allocations are freed to the C library's heap and reused). Setting
-`PooledLumaLimit` in `VP8Encoder` to 0 turns the pooling off.
-
-Time and allocation, BenchmarkDotNet ShortRun, AVX-512 off, same worker, base
-and new one after the other, mean per call:
-
-| Case | Before | After | Allocated before | Allocated after |
-|---|--:|--:|--:|--:|
-| lossy 400x300 | 5.28 ms | 5.03 ms | 920 KB | 511 KB |
-| lossy 2000x1500 | 105.2 ms | 103.1 ms | 9.27 MB | 2.34 MB |
-| lossless 2000x1500 | 128.0 ms | 131.1 ms (noise: ±3 ms StdDev, ±40 ms error) | 53.7 MB | 44.4 MB |
-| thumb-webp | 30.61 ms | 30.59 ms | 832 KB | 517 KB |
-| png-to-webp (natural / photo / screenshot) | 71.2 / 82.2 / 92.9 ms | 70.7 / 81.9 / 91.2 ms | 18.4 / 18.5 / 20.1 MB | 13.7 / 13.8 / 14.3 MB |
+On the worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET SDK 10.0.402, load 0.5 to
+1.8, under the benchmark lock) the changed build measured: lossy 2000x1500
+4.9 / 229.8 (SkiaSharp 1.2), thumb-webp 3.8 / 221.9 (Skia 0.6; 2.0 with 40
+warm-ups), png-to-webp 23.0 / 116.5 (Skia 37.6), lossless 2000x1500 38.8 /
+279.9 (Skia 57.6), lossy 24 MP 98.8 / 1175.3 (Skia 87.8) and lossless 24 MP
+371.0 / 1459.0 (Skia 664.6). Times: the lossless 2000x1500 encode took 128.0 ms on main and 131.1 ms with the hash-map change plus the lossy pooling since removed (BenchmarkDotNet ShortRun, StdDev ±3 ms), and the 150-encode local loops ran at 138 to 140 ms (lossy) and 177 to 179 ms (lossless) on both builds; The
+SkiaSharp gaps on the lossy 2000x1500 and thumb-webp rows remain (about 4 MiB
+and 3 MiB); the first is the source planes above, the second is JIT.
 
 ## Drawing and clipping exceptions
 

@@ -911,8 +911,7 @@ internal static class VP8LEncoder
             const int HashBits = 18;
             // The hash table maps each 18-bit hash to the latest pixel with it. A full table is 1 MiB, which the small images that
             // make up most of a file's work (predictor and color-transform maps, palettes) must not pay on every call, so they use
-            // an exact stand-in with the same answers: an open-addressing map sized to the pixel count. Larger images rent the table
-            // from the pool instead of allocating it.
+            // an exact stand-in with the same answers: an open-addressing map sized to the pixel count.
             bool small = n <= SmallHashPixels;
             int[] head = [];
             int[] keys = [];
@@ -921,15 +920,15 @@ internal static class VP8LEncoder
             if (small)
             {
                 int cap = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(16, 2 * n));
-                keys = System.Buffers.ArrayPool<int>.Shared.Rent(cap);
-                vals = System.Buffers.ArrayPool<int>.Shared.Rent(cap);
+                keys = new int[cap];
+                vals = new int[cap];
                 mask = cap - 1;
-                Array.Fill(keys, -1, 0, cap);
+                Array.Fill(keys, -1);
             }
             else
             {
-                head = System.Buffers.ArrayPool<int>.Shared.Rent(1 << HashBits);
-                Array.Fill(head, -1, 0, 1 << HashBits);
+                head = new int[1 << HashBits];
+                Array.Fill(head, -1);
             }
 
             int bands = (n + BandPixels - 1) / BandPixels;
@@ -1017,15 +1016,6 @@ internal static class VP8LEncoder
             finally
             {
                 System.Buffers.ArrayPool<int>.Shared.Return(chain);
-                if (small)
-                {
-                    System.Buffers.ArrayPool<int>.Shared.Return(keys);
-                    System.Buffers.ArrayPool<int>.Shared.Return(vals);
-                }
-                else
-                {
-                    System.Buffers.ArrayPool<int>.Shared.Return(head);
-                }
             }
         }
 
