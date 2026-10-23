@@ -45,15 +45,15 @@ public class Jbig2CorpusTests
                     result = "match";
                     ok++;
                 }
+                else if (IsInverted(page, rdata))
+                {
+                    // The extractor applies /Decode [1 0] or /ImageMask polarity; the decoder returns 1 = black.
+                    result = "match-inverted";
+                    ok++;
+                }
                 else
                 {
-                    int diff = 0;
-                    for (int i = 0; i < rdata.Length; i++)
-                    {
-                        diff += System.Numerics.BitOperations.PopCount((uint)(page.Data[i] ^ rdata[i]));
-                    }
-
-                    result = $"DIFF {diff} pixels";
+                    result = "DIFF";
                 }
             }
             catch (ImageException e)
@@ -61,7 +61,7 @@ public class Jbig2CorpusTests
                 result = "ERROR " + e.GetType().Name + ": " + e.Message;
             }
 
-            if (result != "match")
+            if (result != "match" && result != "match-inverted")
             {
                 bad++;
                 failures.Add(name + " " + result);
@@ -70,8 +70,26 @@ public class Jbig2CorpusTests
             table.Append(name).Append(' ').Append(rw).Append('x').Append(rh).Append(' ').Append(result).Append('\n');
         }
 
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "jbig2-corpus.txt"), table.ToString());
+        File.WriteAllText(Path.Combine(Environment.GetEnvironmentVariable("ONEIMAGE_JBIG2_TABLE") ?? Path.GetTempPath(), "jbig2-corpus.txt"), table.ToString());
         Assert.True(bad == 0, $"{ok} matched, {bad} did not:\n" + string.Join('\n', failures.Take(40)));
+    }
+
+    private static bool IsInverted(Jbig2Page page, byte[] reference)
+    {
+        for (int y = 0; y < page.Height; y++)
+        {
+            for (int x = 0; x < page.Width; x++)
+            {
+                int i = y * page.Stride + (x >> 3);
+                int m = 0x80 >> (x & 7);
+                if (((page.Data[i] ^ reference[i]) & m) == 0)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private static (int Width, int Height, byte[] Data) ReadPbm(string path)

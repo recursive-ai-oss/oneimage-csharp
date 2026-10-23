@@ -27,6 +27,7 @@ internal static class Program
         ["gif"] = CodecTargets.Gif,
         ["webp"] = CodecTargets.WebP,
         ["psd"] = PsdTarget.Run,
+        ["jbig2"] = Jbig2Target.Run,
         ["svg"] = DrawingTargets.Svg,
         ["svg-xml"] = SvgXmlTarget.Run,
         ["svg-render"] = SvgRenderTarget.Run,

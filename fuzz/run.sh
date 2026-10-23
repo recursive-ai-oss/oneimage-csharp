@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd jbig2 svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -46,6 +46,7 @@ case "$target" in
   gif)     seeds=gif;         prefix='\x00'; patterns='*.gif'; maxlen=65536 ;;
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
   psd)     seeds=psd;         prefix='';     patterns='*.psd *.psb'; maxlen=262144 ;;
+  jbig2)   seeds=jbig2;       prefix="\x01"; patterns="*.jb2"; maxlen=65536 ;;
   svg)     seeds=svgpath;     prefix='';     patterns='*.txt'; maxlen=4096 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
   font)    seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc *.woff *.woff2'; maxlen=262144 ;;
@@ -126,6 +127,22 @@ if [[ "$target" == svg-xml || "$target" == svg-render ]]; then
     [[ -f "$f" && $(stat -c %s "$f") -lt 16384 ]] || continue
     out="$corpus/seed-svg-$(basename "$f")"
     [[ -e "$out" ]] || cp "$f" "$out"
+  done
+fi
+if [[ "$target" == jbig2 ]]; then
+  # Embedded streams as PDF files carry them: mode 2 (globals length, globals, page data) or mode 0 (no globals).
+  for f in "$root"/tests/testdata/jbig2/pdf-*.jb2e; do
+    [[ -f "$f" ]] || continue
+    g="${f%.jb2e}.jb2g"
+    out="$corpus/seed-$(basename "$f")"
+    [[ -e "$out" ]] && continue
+    if [[ -f "$g" ]]; then
+      n=$(stat -c %s "$g")
+      lenbytes=$(printf '\\x%02x\\x%02x' $((n >> 8)) $((n & 255)))
+      { printf '\x02'; printf "$lenbytes"; cat "$g" "$f"; } >"$out"
+    else
+      { printf '\x00'; cat "$f"; } >"$out"
+    fi
   done
 fi
 [[ "$target" != breaking ]] || cp -n "$work"/breaking-seeds/* "$corpus"/ 2>/dev/null || true
