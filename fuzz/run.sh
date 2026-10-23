@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -45,6 +45,7 @@ case "$target" in
   ico)     seeds=ico;         prefix='\x00'; patterns='*.ico'; maxlen=65536 ;;
   gif)     seeds=gif;         prefix='\x00'; patterns='*.gif'; maxlen=65536 ;;
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
+  psd)     seeds=psd;         prefix='';     patterns='*.psd *.psb'; maxlen=262144 ;;
   svg)     seeds=svgpath;     prefix='';     patterns='*.txt'; maxlen=4096 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
   font)    seeds=fonts;       prefix='';     patterns='*.ttf *.otf *.ttc *.woff *.woff2'; maxlen=262144 ;;
@@ -98,6 +99,7 @@ fi
 "$instrument" "$bin/OneImage.dll" >/dev/null
 [[ "$target" != font && "$target" != breaking && "$target" != bidi && "$target" != complex && "$target" != brotli && "$target" != richtext && "$target" != sysfont && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
 [[ "$target" != svg-xml && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Svg.dll" >/dev/null
+[[ "$target" != psd ]] || "$instrument" "$bin/OneImage.Psd.dll" >/dev/null
 
 corpus="$work/corpus/$target"
 findings="$work/findings/$target"

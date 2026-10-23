@@ -822,5 +822,32 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// PSD: a layered document written, read back as layers and as a merged image, and written again identically.
+{
+    var psdDoc = new OneImage.Layers.Document(64, 48, new OneImage.Layers.DocumentOptions { Background = new Rgba32(255, 255, 255, 255) });
+    OneImage.Layers.PixelLayer psdLayer = psdDoc.Add(psdDoc.CreatePixelLayer("layer", 40, 30, 5, 6));
+    psdLayer.Pixels.Clear(new Rgba32(200, 30, 30, 255));
+    psdLayer.Opacity = 0.5f;
+    psdLayer.BlendMode = OneImage.BlendMode.Multiply;
+    psdDoc.Add(psdDoc.CreateFillLayer("tint", new Rgba32(0, 0, 255, 255))).Opacity = 0.1f;
+    using var psdFile = OneImage.Psd.PsdFile.FromDocument(psdDoc);
+    using var psdBytes = new MemoryStream();
+    psdFile.Save(psdBytes);
+    using var psdLoaded = OneImage.Psd.PsdFile.Load(psdBytes.ToArray());
+    using var psdBytes2 = new MemoryStream();
+    psdLoaded.Save(psdBytes2);
+    using var psdLoaded2 = OneImage.Psd.PsdFile.Load(psdBytes2.ToArray());
+    using var psdBytes3 = new MemoryStream();
+    psdLoaded2.Save(psdBytes3);
+    Image merged = Image.Load(psdBytes.ToArray(), new LoadOptions { Configuration = new ImageConfiguration().Add(OneImage.Psd.PsdFormat.Instance) });
+    Rgba32[] mergedPixels = merged.ToArray<Rgba32>();
+    Rgba32[] renderedPixels = psdDoc.Render().ToArray<Rgba32>();
+    if (psdLoaded.Document.Root.Children.Count != 2 || !psdBytes2.ToArray().AsSpan().SequenceEqual(psdBytes3.ToArray()) || !mergedPixels.AsSpan().SequenceEqual(renderedPixels))
+    {
+        Console.Error.WriteLine("psd smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

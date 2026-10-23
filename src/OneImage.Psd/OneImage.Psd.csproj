@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>$(LibName).Psd</AssemblyName>
+    <RootNamespace>$(LibName).Psd</RootNamespace>
+    <PackageId>$(PackagePrefix)$(LibName).Psd</PackageId>
+    <Description>Photoshop PSD and PSB support for OneImage: reads the merged composite as an image format, loads and saves the layer tree as a OneImage layered document.</Description>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>image;imaging;psd;psb;photoshop;layers;nativeaot;trimmable</PackageTags>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneImage/OneImage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="$(LibName).Psd.Tests" />
+    <InternalsVisibleTo Include="$(LibName).Fuzz" />
+    <InternalsVisibleTo Include="$(LibName).Benchmarks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!-- The package uses internals of OneImage (InternalsVisibleTo), so it only works with the exact version it was built against. -->
+  <Target Name="RequireExactProjectReferenceVersions" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)">
+        <ProjectVersion>[%(ProjectVersion)]</ProjectVersion>
+      </_ProjectReferencesWithVersions>
+    </ItemGroup>
+  </Target>
+
+</Project>

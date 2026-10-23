@@ -41,6 +41,7 @@
     <InternalsVisibleTo Include="$(LibName).Tools" />
     <InternalsVisibleTo Include="$(LibName).Fuzz" />
     <InternalsVisibleTo Include="$(LibName).Text" />
+    <InternalsVisibleTo Include="$(LibName).Psd" />
   </ItemGroup>
 
   <ItemGroup>
