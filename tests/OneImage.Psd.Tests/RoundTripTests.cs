@@ -151,11 +151,11 @@ internal static class TestDocuments
         doc.Add(doc.CreateFillLayer("tint", new Rgba32(255, 200, 100, 255))).Opacity = 0.2f;
         AdjustmentLayer lv = doc.Add(doc.CreateAdjustmentLayer("levels", Adjustment.Levels(inBlack: 20 / 255.0, inWhite: 235 / 255.0, gamma: 1.2, outBlack: 10 / 255.0, outWhite: 245 / 255.0)));
         lv.Opacity = 128 / 255f;
-        doc.Add(doc.CreateAdjustmentLayer("curves", Adjustment.Curves([new CurvePoint(0, 0), new CurvePoint(77 / 255.0, 102 / 255.0), new CurvePoint(1, 1)])));
+        doc.Add(doc.CreateAdjustmentLayer("curves", Adjustment.Curves([new CurvePoint(0, 0), new CurvePoint(77 / 255.0, 102 / 255.0), new CurvePoint(1, 1)], ColorChannel.All, false, CurveInterpolation.Natural)));
         doc.Add(doc.CreateAdjustmentLayer("hue", Adjustment.HueSaturation(hue: 20, saturation: 0.1, lightness: -0.05)));
-        doc.Add(doc.CreateAdjustmentLayer("b/c", Adjustment.BrightnessContrast(brightness: 0.2, contrast: 0.3)));
+        doc.Add(doc.CreateAdjustmentLayer("b/c", Adjustment.BrightnessContrast(0.2, 0.3, false, BrightnessContrastMode.PhotoshopLegacy)));
         doc.Add(doc.CreateAdjustmentLayer("exposure", Adjustment.Exposure(0.5)));
-        doc.Add(doc.CreateAdjustmentLayer("posterize", Adjustment.Posterize(8)));
+        doc.Add(doc.CreateAdjustmentLayer("posterize", Adjustment.Posterize(8, false, PosterizeMode.Buckets)));
         doc.Add(doc.CreateAdjustmentLayer("threshold", Adjustment.Threshold(230 / 255.0))).Visible = false;
         doc.Add(doc.CreateAdjustmentLayer("invert", Adjustment.Invert())).Visible = false;
 

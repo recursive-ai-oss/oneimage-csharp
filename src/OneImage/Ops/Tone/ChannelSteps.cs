@@ -54,6 +54,76 @@ internal sealed class BrightnessContrastStep : ChannelStep
     }
 }
 
+/// <summary>Photoshop's brightness/contrast: the legacy linear formula, or a fitted approximation of the current bent-curve mode.</summary>
+internal sealed class PhotoshopBrightnessContrastStep : ChannelStep
+{
+    private readonly double _brightness;
+    private readonly double _contrast;
+    private readonly bool _smooth;
+    private readonly bool _positive;
+    private readonly float _k;
+    private readonly float _shift;
+
+    public PhotoshopBrightnessContrastStep(double brightness, double contrast, bool smooth, bool linear)
+        : base(linear)
+    {
+        _brightness = brightness;
+        _contrast = contrast;
+        _smooth = smooth;
+        _positive = contrast >= 0;
+        _shift = (float)(brightness * 150.0);
+        if (smooth)
+        {
+            // The legacy slope, softened: the current mode changes contrast far less than the linear formula does.
+            double c = Math.Min(contrast, 0.99);
+            double k0 = c >= 0 ? 1.0 / (1.0 - c) : 1.0 + c;
+            _k = (float)Math.Pow(k0, 0.2);
+        }
+        else
+        {
+            // The contrast is quantized to whole levels of 255, as stored values are; the epsilon keeps 0.2 * 255 from truncating to 50.
+            int c8 = (int)Math.Truncate((contrast * 255.0) + (contrast >= 0 ? 1e-9 : -1e-9));
+            c8 = Math.Clamp(c8, -255, 254);
+            _k = _positive ? 255f / (255 - c8) : (255 + c8) / 255f;
+        }
+    }
+
+    public override string Name => "brightness_contrast";
+
+    public override OpParameter[] Parameters() => With(P("brightness", _brightness), P("contrast", _contrast), P("mode", _smooth ? "photoshop-smooth" : "photoshop-legacy"));
+
+    public override bool IsNoOp(PixelFormat input) => _brightness == 0 && _contrast == 0;
+
+    protected override void Map(Span<float> values)
+    {
+        float k = _k;
+        if (_smooth)
+        {
+            float a = 1.7f * (float)_brightness;
+            for (int i = 0; i < values.Length; i++)
+            {
+                float x = values[i];
+                x = x < 0f ? 0f : x > 1f ? 1f : x;
+                float y = x + (a * x * (1f - x));
+                y = (k * (y - 0.5f)) + 0.5f;
+                values[i] = y < 0f ? 0f : y > 1f ? 1f : y;
+            }
+
+            return;
+        }
+
+        float b = _shift;
+        bool positive = _positive;
+        for (int i = 0; i < values.Length; i++)
+        {
+            float v = values[i] * 255f;
+            float y = positive ? (k * (v + b - 127f)) + 127f : (k * (v - 127f)) + 127f + b;
+            y = y < 0f ? 0f : y > 255f ? 255f : y;
+            values[i] = y / 255f;
+        }
+    }
+}
+
 /// <summary>v * 2^stops.</summary>
 internal sealed class ExposureStep(double stops, bool linear) : ChannelStep(linear)
 {
@@ -182,10 +252,12 @@ internal sealed class CurvesStep : ChannelStep
     private readonly float[] _m;
     private readonly ColorChannel _channel;
     private readonly bool _identity;
+    private readonly bool _natural;
 
-    public CurvesStep(ReadOnlySpan<CurvePoint> points, ColorChannel channel, bool linear)
+    public CurvesStep(ReadOnlySpan<CurvePoint> points, ColorChannel channel, bool linear, CurveInterpolation interpolation = CurveInterpolation.Monotone)
         : base(linear)
     {
+        _natural = interpolation == CurveInterpolation.Natural;
         if (points.Length < 2)
         {
             throw new ArgumentException("A curve needs at least two points.", nameof(points));
@@ -217,6 +289,36 @@ internal sealed class CurvesStep : ChannelStep
         }
 
         var m = new double[n];
+        if (_natural)
+        {
+            NaturalSecondDerivatives(p, m);
+        }
+        else
+        {
+            MonotoneTangents(d, m);
+        }
+
+        _x = new float[n];
+        _y = new float[n];
+        _m = new float[n];
+        bool identity = true;
+        for (int i = 0; i < n; i++)
+        {
+            _x[i] = (float)p[i].X;
+            _y[i] = (float)p[i].Y;
+            _m[i] = (float)m[i];
+            identity &= p[i].X == p[i].Y;
+        }
+
+        // Points on y = x are the identity only if the curve spans the whole range (it is flat beyond its ends).
+        _identity = identity && p[0].X == 0 && p[n - 1].X == 1;
+        _channel = channel;
+        Points = p;
+    }
+
+    private static void MonotoneTangents(double[] d, double[] m)
+    {
+        int n = m.Length;
         m[0] = d[0];
         m[n - 1] = d[n - 2];
         for (int i = 1; i < n - 1; i++)
@@ -245,31 +347,47 @@ internal sealed class CurvesStep : ChannelStep
             }
         }
 
-        _x = new float[n];
-        _y = new float[n];
-        _m = new float[n];
-        bool identity = true;
-        for (int i = 0; i < n; i++)
+    }
+
+    /// <summary>Second derivatives of the natural cubic spline through the points (zero at both ends), by the tridiagonal (Thomas) algorithm.</summary>
+    private static void NaturalSecondDerivatives(CurvePoint[] p, double[] m)
+    {
+        int n = p.Length;
+        if (n == 2)
         {
-            _x[i] = (float)p[i].X;
-            _y[i] = (float)p[i].Y;
-            _m[i] = (float)m[i];
-            identity &= p[i].X == p[i].Y;
+            return;
         }
 
-        // Points on y = x are the identity only if the curve spans the whole range (it is flat beyond its ends).
-        _identity = identity && p[0].X == 0 && p[n - 1].X == 1;
-        _channel = channel;
-        Points = p;
+        var c = new double[n];
+        var r = new double[n];
+        for (int i = 1; i < n - 1; i++)
+        {
+            double h0 = p[i].X - p[i - 1].X;
+            double h1 = p[i + 1].X - p[i].X;
+            double diag = 2 * (h0 + h1);
+            double rhs = 6 * (((p[i + 1].Y - p[i].Y) / h1) - ((p[i].Y - p[i - 1].Y) / h0));
+            double lower = i == 1 ? 0 : h0;
+            double w = diag - (lower * c[i - 1]);
+            c[i] = h1 / w;
+            r[i] = (rhs - (lower * r[i - 1])) / w;
+        }
+
+        for (int i = n - 2; i >= 1; i--)
+        {
+            m[i] = r[i] - (c[i] * m[i + 1]);
+        }
     }
 
     public CurvePoint[] Points { get; }
 
     public override string Name => "curves";
 
-    public override OpParameter[] Parameters() => With(
-        P("points", string.Join(';', Points.Select(static c => Num(c.X) + "," + Num(c.Y)))),
-        P("channel", _channel.ToString()));
+    public override OpParameter[] Parameters()
+    {
+        OpParameter points = P("points", string.Join(';', Points.Select(static c => Num(c.X) + "," + Num(c.Y))));
+        OpParameter channel = P("channel", _channel.ToString());
+        return _natural ? With(points, channel, P("interpolation", "natural")) : With(points, channel);
+    }
 
     public override void Validate(PixelFormat input)
     {
@@ -289,6 +407,7 @@ internal sealed class CurvesStep : ChannelStep
         float[] xs = _x;
         float[] ys = _y;
         float[] ms = _m;
+        bool natural = _natural;
         int last = xs.Length - 1;
         for (int i = 0; i < values.Length; i++)
         {
@@ -312,6 +431,15 @@ internal sealed class CurvesStep : ChannelStep
             }
 
             float h = xs[s + 1] - xs[s];
+            if (natural)
+            {
+                float a = (xs[s + 1] - v) / h;
+                float b = (v - xs[s]) / h;
+                float y = (a * ys[s]) + (b * ys[s + 1]) + ((((a * a * a) - a) * ms[s]) + (((b * b * b) - b) * ms[s + 1])) * (h * h) / 6f;
+                values[i] = y < 0f ? 0f : y > 1f ? 1f : y;
+                continue;
+            }
+
             float t = (v - xs[s]) / h;
             float t2 = t * t;
             float t3 = t2 * t;
@@ -386,21 +514,58 @@ internal sealed class ThresholdStep(double level, bool perChannel, bool linear) 
     }
 }
 
-/// <summary>Rounds each channel to one of n evenly spaced levels.</summary>
-internal sealed class PosterizeStep(int levels, bool linear) : ChannelStep(linear)
+/// <summary>Rounds each channel to one of n evenly spaced levels, or (Photoshop buckets) cuts the range into n bins and rounds each bin down.</summary>
+internal sealed class PosterizeStep(int levels, bool linear, PosterizeMode mode = PosterizeMode.Nearest, bool eightBit = true) : ChannelStep(linear)
 {
     public override string Name => "posterize";
 
-    public override OpParameter[] Parameters() => With(P("levels", (long)levels));
+    public override OpParameter[] Parameters() => mode == PosterizeMode.Nearest
+        ? With(P("levels", (long)levels))
+        : With(P("levels", (long)levels), P("mode", "buckets"));
 
     protected override void Map(Span<float> values)
     {
         float n = levels - 1;
+        if (mode == PosterizeMode.Buckets)
+        {
+            MapBuckets(values);
+            return;
+        }
+
         for (int i = 0; i < values.Length; i++)
         {
             float v = values[i];
             v = v < 0f ? 0f : v > 1f ? 1f : v;
             values[i] = MathF.Floor((v * n) + 0.5f) / n;
+        }
+    }
+
+    private void MapBuckets(Span<float> values)
+    {
+        float n = levels - 1;
+        // The small offsets keep a value that sits exactly on a bin edge (128 with two levels) from falling below it in float arithmetic.
+        if (eightBit)
+        {
+            float scale = levels * (255f / 256f);
+            for (int i = 0; i < values.Length; i++)
+            {
+                float v = values[i];
+                v = v < 0f ? 0f : v > 1f ? 1f : v;
+                float k = MathF.Floor((v * scale) + 1e-4f);
+                k = k > n ? n : k;
+                values[i] = MathF.Floor(((k * 255f) / n) + 1e-4f) / 255f;
+            }
+
+            return;
+        }
+
+        for (int i = 0; i < values.Length; i++)
+        {
+            float v = values[i];
+            v = v < 0f ? 0f : v > 1f ? 1f : v;
+            float k = MathF.Floor((v * levels) + 1e-4f);
+            k = k > n ? n : k;
+            values[i] = k / n;
         }
     }
 }

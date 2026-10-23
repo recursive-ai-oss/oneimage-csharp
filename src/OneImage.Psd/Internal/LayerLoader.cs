@@ -257,7 +257,7 @@ internal sealed class LayerLoader
         {
             if (AdjustmentCodec.IsAdjustmentKey(b.Key))
             {
-                Adjustment? adj = AdjustmentCodec.Read(b.Key, b.Data.Span, _s.Header.Mode);
+                Adjustment? adj = AdjustmentCodec.Read(b.Key, b.Data.Span, _s.Header.Mode, rl.Blocks, _psd);
                 info.SourceAdjustmentBlock = b;
                 consumed = b;
                 if (adj == null)

@@ -11,7 +11,7 @@ internal static class AdjustmentCodec
     public static bool IsAdjustmentKey(string key) => Array.IndexOf(Keys, key) >= 0 && key is not ("GdFl" or "PtFl");
 
     /// <summary>Reads an adjustment block. Returns null when the block is malformed or holds settings the model cannot reproduce.</summary>
-    public static Adjustment? Read(string key, ReadOnlySpan<byte> data, PsdColorMode mode)
+    public static Adjustment? Read(string key, ReadOnlySpan<byte> data, PsdColorMode mode, IReadOnlyList<PsdBlock>? siblings = null, PsdLimits? limits = null)
     {
         // Photoshop applies these to the ink or Lab channels; the model works on the RGB document, so they are kept but not reproduced.
         if ((mode is PsdColorMode.Cmyk or PsdColorMode.Lab or PsdColorMode.Multichannel) && key is "levl" or "curv" or "hue2" or "brit" or "expA")
@@ -27,11 +27,11 @@ internal static class AdjustmentCodec
                 "levl" => ReadLevels(data, gray),
                 "curv" => ReadCurves(data, gray),
                 "hue2" => ReadHueSaturation(data),
-                "brit" => ReadBrightness(data),
+                "brit" => ReadBrightness(data, siblings, limits ?? PsdLimits.Default),
                 "expA" => ReadExposure(data),
                 "nvrt" => Adjustment.Invert(),
                 "thrs" => data.Length >= 2 ? Adjustment.Threshold(Math.Clamp((int)BinaryPrimitives.ReadInt16BigEndian(data), 1, 255) / 255.0) : null,
-                "post" => data.Length >= 2 ? Adjustment.Posterize(Math.Clamp((int)BinaryPrimitives.ReadInt16BigEndian(data), 2, 255)) : null,
+                "post" => data.Length >= 2 ? Adjustment.Posterize(Math.Clamp((int)BinaryPrimitives.ReadInt16BigEndian(data), 2, 255), false, PosterizeMode.Buckets) : null,
                 _ => null,
             };
         }
@@ -160,7 +160,7 @@ internal static class AdjustmentCodec
             }
 
             ColorChannel ch = gray || channel == 0 ? ColorChannel.All : channel == 1 ? ColorChannel.Red : channel == 2 ? ColorChannel.Green : ColorChannel.Blue;
-            steps.Add(Adjustment.Curves(points, ch));
+            steps.Add(Adjustment.Curves(points, ch, false, CurveInterpolation.Natural));
         }
 
         return Combine("curves", steps);
@@ -230,12 +230,44 @@ internal static class AdjustmentCodec
         return Adjustment.HueSaturation(hue, sat / 100.0, light / 100.0);
     }
 
-    private static Adjustment? ReadBrightness(ReadOnlySpan<byte> data)
+    // Brightness/contrast: the 'brit' block holds the settings of the legacy mode (brightness, contrast, mean, lab flag). Photoshop CS3 and later
+    // store the real settings in a 'CgEd' descriptor next to a zeroed 'brit', with a 'useLegacy' flag choosing between the two formulas.
+    private static Adjustment? ReadBrightness(ReadOnlySpan<byte> data, IReadOnlyList<PsdBlock>? siblings, PsdLimits limits)
     {
         var r = new SpanReader(data);
         int brightness = r.I16();
         int contrast = r.I16();
-        return Adjustment.BrightnessContrast(Math.Clamp(brightness, -150, 150) / 150.0, Math.Clamp(contrast, -50, 100) / 100.0);
+        bool legacy = true;
+        if (siblings != null)
+        {
+            foreach (PsdBlock b in siblings)
+            {
+                if (b.Key != "CgEd" || b.Data.Length < 8)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Descriptor d = Descriptor.Parse(b.Data.Span.Slice(4), limits);
+                    if (d.Number("Brgh") is { } bd && d.Number("Cntr") is { } cd)
+                    {
+                        brightness = (int)bd;
+                        contrast = (int)cd;
+                        legacy = d.Get("useLegacy") is true;
+                    }
+                }
+                catch (ImageFormatException)
+                {
+                    // A descriptor that does not parse leaves the 'brit' values (the legacy formula) in charge.
+                }
+
+                break;
+            }
+        }
+
+        return Adjustment.BrightnessContrast(Math.Clamp(brightness, -150, 150) / 150.0, Math.Clamp(contrast, -100, 100) / 100.0, false,
+            legacy ? BrightnessContrastMode.PhotoshopLegacy : BrightnessContrastMode.PhotoshopSmooth);
     }
 
     private static Adjustment? ReadExposure(ReadOnlySpan<byte> data)
@@ -370,6 +402,7 @@ internal static class AdjustmentCodec
                 }
 
             case "brightness-contrast":
+                // The legacy block is all a model-built adjustment can write; a loaded current-mode layer keeps its own block and descriptor.
                 U16((int)Math.Round(Get("brightness") * 150));
                 U16((int)Math.Round(Get("contrast") * 100));
                 U16(127);

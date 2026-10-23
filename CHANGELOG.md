@@ -4,8 +4,13 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- Photoshop-style options on three tone operations, with the existing overloads unchanged: `Image.Posterize(levels, linear, PosterizeMode.Buckets)` (equal input bins rounded down), `Image.Curves(points, channel, linear, CurveInterpolation.Natural)` (a natural cubic spline) and `Image.BrightnessContrast(brightness, contrast, linear, BrightnessContrastMode)` with `PhotoshopLegacy` (exact) and `PhotoshopSmooth` (an approximation of the current mode). `Adjustment.Posterize`, `Curves` and `BrightnessContrast` have the same overloads. They fuse with other tone steps like the rest.
+
 ### Changed
 
+- `RecursiveAI.OneImage.Psd`: posterize, curves and brightness/contrast layers read from PSD files use Photoshop's formulas, and brightness/contrast in Photoshop's current mode is read from its `CgEd` descriptor (it was read as no adjustment). Against the stored composites of 19 sample files the median mean error went from 10.5 to 0.005 levels, and the median over the 152 fully modelled files from 0.275 to 0.134. A model-built posterize, curves or brightness/contrast adjustment saved to PSD reads back with those formulas. See [docs/psd.md](docs/psd.md#adjustment-formulas).
 - Full-size JPEG decoding is faster, with identical output. The per-row transform is split in two (inverse DCT; then upsampling, color conversion and delivery) and, with three or more cores, each runs on its own thread beside the entropy decoder; the plane ring gained a fourth slot so a row is transformed while the previous one is emitted. With two cores the entropy thread does the inverse DCT itself, and progressive or multi-scan frames overlap the delivery with the transform. A 24 MP 4:2:0 photograph decodes into a reused buffer in 32 ms (was 44-55 on the same loaded worker; ImageSharp 82-97) (noisy 8.9 MB files stay entropy-bound at 43 ms; a smooth 2 MB one goes from 34 to 20 ms on a desktop host). The entropy decoder may now fail on data past the last row a request needs without failing the request, as the single-threaded path never read it.
 
 ## [1.4.0] - 2026-10-23

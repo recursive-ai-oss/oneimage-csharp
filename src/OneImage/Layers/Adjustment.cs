@@ -43,7 +43,7 @@ public sealed class Adjustment
             i => i.Levels(inBlack, inWhite, gamma, outBlack, outWhite, channel, linear));
     }
 
-    /// <summary>Curves through control points (monotone interpolation), see <see cref="Image.Curves"/>.</summary>
+    /// <summary>Curves through control points (monotone interpolation), see <see cref="Image.Curves(ReadOnlySpan{CurvePoint}, ColorChannel, bool)"/>.</summary>
     /// <param name="points">At least two points with X and Y in 0..1.</param>
     /// <param name="channel">The channel to adjust; the default is all color channels.</param>
     /// <param name="linear">Work in linear light; the default is the encoded values.</param>
@@ -55,6 +55,27 @@ public sealed class Adjustment
         _ = Probe().Curves(copy, channel, linear);
         string text = string.Join(';', copy.Select(static p => Layer.Num(p.X) + "," + Layer.Num(p.Y)));
         return new("curves", [new("points", text), new("channel", channel.ToString().ToLowerInvariant()), new("linear", linear)], i => i.Curves(copy, channel, linear));
+    }
+
+    /// <summary>Curves through control points with a choice of interpolation, see <see cref="Image.Curves(ReadOnlySpan{CurvePoint}, ColorChannel, bool, CurveInterpolation)"/>.</summary>
+    /// <param name="points">At least two points with X and Y in 0..1.</param>
+    /// <param name="channel">The channel to adjust.</param>
+    /// <param name="linear">Work in linear light.</param>
+    /// <param name="interpolation">The interpolation; <see cref="CurveInterpolation.Natural"/> is Photoshop's.</param>
+    /// <returns>The adjustment.</returns>
+    public static Adjustment Curves(IReadOnlyList<CurvePoint> points, ColorChannel channel, bool linear, CurveInterpolation interpolation)
+    {
+        ArgumentNullException.ThrowIfNull(points);
+        CurvePoint[] copy = [.. points];
+        _ = Probe().Curves(copy, channel, linear, interpolation);
+        string text = string.Join(';', copy.Select(static p => Layer.Num(p.X) + "," + Layer.Num(p.Y)));
+        var parameters = new List<OpParameter> { new("points", text), new("channel", channel.ToString().ToLowerInvariant()), new("linear", linear) };
+        if (interpolation != CurveInterpolation.Monotone)
+        {
+            parameters.Add(new("interpolation", interpolation.ToString().ToLowerInvariant()));
+        }
+
+        return new("curves", parameters, i => i.Curves(copy, channel, linear, interpolation));
     }
 
     /// <summary>Hue, saturation and lightness shifts, see <see cref="Image.HueSaturationLightness"/>.</summary>
@@ -70,7 +91,7 @@ public sealed class Adjustment
             i => i.HueSaturationLightness(hue, saturation, lightness, linear));
     }
 
-    /// <summary>Brightness and contrast, see <see cref="Image.BrightnessContrast"/>.</summary>
+    /// <summary>Brightness and contrast, see <see cref="Image.BrightnessContrast(double, double, bool)"/>.</summary>
     /// <param name="brightness">Brightness change, -1..1.</param>
     /// <param name="contrast">Contrast change, -1..1.</param>
     /// <param name="linear">Work in linear light; the default is the encoded values.</param>
@@ -79,6 +100,24 @@ public sealed class Adjustment
     {
         _ = Probe().BrightnessContrast(brightness, contrast, linear);
         return new("brightness-contrast", [new("brightness", brightness), new("contrast", contrast), new("linear", linear)], i => i.BrightnessContrast(brightness, contrast, linear));
+    }
+
+    /// <summary>Brightness and contrast with a choice of formula, see <see cref="Image.BrightnessContrast(double, double, bool, BrightnessContrastMode)"/>.</summary>
+    /// <param name="brightness">Brightness change, -1..1 (Photoshop's -150..150).</param>
+    /// <param name="contrast">Contrast change, -1..1 (Photoshop's -100..100).</param>
+    /// <param name="linear">Work in linear light.</param>
+    /// <param name="mode">The formula.</param>
+    /// <returns>The adjustment.</returns>
+    public static Adjustment BrightnessContrast(double brightness, double contrast, bool linear, BrightnessContrastMode mode)
+    {
+        _ = Probe().BrightnessContrast(brightness, contrast, linear, mode);
+        var parameters = new List<OpParameter> { new("brightness", brightness), new("contrast", contrast), new("linear", linear) };
+        if (mode != BrightnessContrastMode.Linear)
+        {
+            parameters.Add(new("mode", mode == BrightnessContrastMode.PhotoshopLegacy ? "photoshop-legacy" : "photoshop-smooth"));
+        }
+
+        return new("brightness-contrast", parameters, i => i.BrightnessContrast(brightness, contrast, linear, mode));
     }
 
     /// <summary>Exposure in stops, see <see cref="Image.Exposure"/> (linear light by default).</summary>
@@ -117,7 +156,7 @@ public sealed class Adjustment
         return new("threshold", [new("level", level), new("per-channel", perChannel), new("linear", linear)], i => i.Threshold(level, perChannel, linear));
     }
 
-    /// <summary>Reduces each channel to a number of levels, see <see cref="Image.Posterize"/>.</summary>
+    /// <summary>Reduces each channel to a number of levels, see <see cref="Image.Posterize(int, bool)"/>.</summary>
     /// <param name="levels">Levels per channel, 2 or more.</param>
     /// <param name="linear">Work in linear light; the default is the encoded values.</param>
     /// <returns>The adjustment.</returns>
@@ -125,6 +164,23 @@ public sealed class Adjustment
     {
         _ = Probe().Posterize(levels, linear);
         return new("posterize", [new("levels", (long)levels), new("linear", linear)], i => i.Posterize(levels, linear));
+    }
+
+    /// <summary>Reduces each channel to a number of levels with a choice of rounding, see <see cref="Image.Posterize(int, bool, PosterizeMode)"/>.</summary>
+    /// <param name="levels">Levels per channel, 2 or more.</param>
+    /// <param name="linear">Work in linear light.</param>
+    /// <param name="mode">How inputs map to levels; <see cref="PosterizeMode.Buckets"/> is Photoshop's.</param>
+    /// <returns>The adjustment.</returns>
+    public static Adjustment Posterize(int levels, bool linear, PosterizeMode mode)
+    {
+        _ = Probe().Posterize(levels, linear, mode);
+        var parameters = new List<OpParameter> { new("levels", (long)levels), new("linear", linear) };
+        if (mode != PosterizeMode.Nearest)
+        {
+            parameters.Add(new("mode", "buckets"));
+        }
+
+        return new("posterize", parameters, i => i.Posterize(levels, linear, mode));
     }
 
     /// <summary>Desaturates to gray values kept in the document's format, see <see cref="Image.Grayscale"/> (linear light by default).</summary>

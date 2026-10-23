@@ -37,6 +37,30 @@ public sealed partial class Image
         return ApplyTone(new BrightnessContrastStep(brightness, contrast, linear));
     }
 
+    /// <summary>
+    /// Brightness and contrast with one of Photoshop's formulas (see <see cref="BrightnessContrastMode"/>). Brightness -1..1 stands for Photoshop's
+    /// -150..150 and contrast -1..1 for -100..100, so a PSD setting of (20, 57) is <c>(20 / 150.0, 57 / 100.0)</c>. Integer results clamp.
+    /// </summary>
+    /// <param name="brightness">-1..1.</param>
+    /// <param name="contrast">-1..1.</param>
+    /// <param name="linear">Work in linear light instead of on the stored values. Photoshop works on stored values, so leave it <see langword="false"/> to match it.</param>
+    /// <param name="mode">The formula. <see cref="BrightnessContrastMode.Linear"/> gives the same result as <see cref="BrightnessContrast(double, double, bool)"/>.</param>
+    /// <returns>The adjusted image.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">A value is outside -1..1 or not finite, or <paramref name="mode"/> is undefined.</exception>
+    /// <exception cref="ImageOperationException">The image is CMYK or Lab.</exception>
+    public Image BrightnessContrast(double brightness, double contrast, bool linear, BrightnessContrastMode mode)
+    {
+        CheckRange(brightness, -1, 1, nameof(brightness));
+        CheckRange(contrast, -1, 1, nameof(contrast));
+        return mode switch
+        {
+            BrightnessContrastMode.Linear => ApplyTone(new BrightnessContrastStep(brightness, contrast, linear)),
+            BrightnessContrastMode.PhotoshopLegacy => ApplyTone(new PhotoshopBrightnessContrastStep(brightness, contrast, false, linear)),
+            BrightnessContrastMode.PhotoshopSmooth => ApplyTone(new PhotoshopBrightnessContrastStep(brightness, contrast, true, linear)),
+            _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+        };
+    }
+
     /// <summary>Multiplies by 2^<paramref name="stops"/>. Integer results clamp; float results are not clamped.</summary>
     /// <param name="stops">Exposure change in stops (+1 doubles the light). Between -16 and 16.</param>
     /// <param name="linear">Multiply in linear light. This is the default, because exposure is a physical scale; <see langword="false"/> scales the stored values.</param>
@@ -119,6 +143,29 @@ public sealed partial class Image
     }
 
     /// <summary>
+    /// Like <see cref="Curves(ReadOnlySpan{CurvePoint}, ColorChannel, bool)"/> with a choice of interpolation. <see cref="CurveInterpolation.Natural"/>
+    /// follows Photoshop's curves (a natural cubic spline in 0..1, flat beyond the first and last point, results clamped to 0..1).
+    /// </summary>
+    /// <param name="points">At least two points with distinct X, both coordinates in 0..1.</param>
+    /// <param name="channel">One channel or <see cref="ColorChannel.All"/>.</param>
+    /// <param name="linear">Work in linear light.</param>
+    /// <param name="interpolation">The interpolation between points.</param>
+    /// <returns>The adjusted image.</returns>
+    /// <exception cref="ArgumentException">Fewer than two points or duplicate X values.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A coordinate is outside 0..1, or <paramref name="interpolation"/> is undefined.</exception>
+    /// <exception cref="ImageOperationException">The image is CMYK or Lab, or the channel does not exist.</exception>
+    public Image Curves(ReadOnlySpan<CurvePoint> points, ColorChannel channel, bool linear, CurveInterpolation interpolation)
+    {
+        if (interpolation is not (CurveInterpolation.Monotone or CurveInterpolation.Natural))
+        {
+            throw new ArgumentOutOfRangeException(nameof(interpolation));
+        }
+
+        CheckChannel(channel);
+        return ApplyTone(new CurvesStep(points, channel, linear, interpolation));
+    }
+
+    /// <summary>
     /// Shifts hue, saturation and lightness in the HSL model (values clamped to 0..1 first; pixels with no saturation keep their gray).
     /// Saturation scales S by (1 + saturation); lightness moves L toward white (positive) or black (negative) by that fraction of the remaining distance.
     /// On gray images only lightness has an effect. This differs from the matrix-based saturate and hue-rotate of other libraries,
@@ -175,6 +222,29 @@ public sealed partial class Image
         ArgumentOutOfRangeException.ThrowIfLessThan(levels, 2);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(levels, 65536);
         return ApplyTone(new PosterizeStep(levels, linear));
+    }
+
+    /// <summary>
+    /// Like <see cref="Posterize(int, bool)"/> with a choice of rounding. <see cref="PosterizeMode.Buckets"/> is Photoshop's: equal input bins, each mapped
+    /// down to its level (see <see cref="PosterizeMode.Buckets"/> for the exact rule on 8-bit samples).
+    /// </summary>
+    /// <param name="levels">Number of output values per channel, 2 to 65536.</param>
+    /// <param name="linear">Quantize linear-light values.</param>
+    /// <param name="mode">How inputs map to levels.</param>
+    /// <returns>The posterized image.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="levels"/> is out of range or <paramref name="mode"/> is undefined.</exception>
+    /// <exception cref="ImageOperationException">The image is CMYK or Lab.</exception>
+    public Image Posterize(int levels, bool linear, PosterizeMode mode)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(levels, 2);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(levels, 65536);
+        if (mode is not (PosterizeMode.Nearest or PosterizeMode.Buckets))
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+
+        bool eightBit = _frames[0].Format.Sample == SampleType.U8;
+        return ApplyTone(new PosterizeStep(levels, linear, mode, eightBit));
     }
 
     /// <summary>
