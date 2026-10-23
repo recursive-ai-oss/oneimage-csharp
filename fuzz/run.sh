@@ -96,7 +96,7 @@ if [[ "$target" == breaking && -z "$(ls -A "$work/breaking-seeds" 2>/dev/null)" 
   done
 fi
 "$instrument" "$bin/OneImage.dll" >/dev/null
-[[ "$target" != font && "$target" != breaking && "$target" != bidi && "$target" != complex && "$target" != brotli && "$target" != richtext && "$target" != sysfont ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
+[[ "$target" != font && "$target" != breaking && "$target" != bidi && "$target" != complex && "$target" != brotli && "$target" != richtext && "$target" != sysfont && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Text.dll" >/dev/null
 [[ "$target" != svg-xml && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Svg.dll" >/dev/null
 
 corpus="$work/corpus/$target"

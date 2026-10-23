@@ -29,11 +29,35 @@ internal static class SvgRenderTarget
         MaxImageDepth = 2,
         MaxFilterPixels = 1 << 20,
         MaxFilterPrimitives = 32,
+        MaxTextCharacters = 20_000,
     };
+
+    // The committed Noto subsets, so text elements lay out and draw instead of being left out for want of a font.
+    private static SvgFontOptions Fonts()
+    {
+        var options = new SvgFontOptions { UseSystemFonts = false };
+        if (Environment.GetEnvironmentVariable("ONEIMAGE_FUZZ_FONT_DIR") is { Length: > 0 } dir && System.IO.Directory.Exists(dir))
+        {
+            foreach (string file in System.IO.Directory.GetFiles(dir, "NotoSans*.ttf"))
+            {
+                try
+                {
+                    options.AddFont(file);
+                }
+                catch (OneImage.Text.FontFormatException)
+                {
+                }
+            }
+
+            options.SetGenericFamily("sans-serif", "Noto Sans");
+        }
+
+        return options;
+    }
 
     private static readonly LoadOptions Options = new()
     {
-        Configuration = new ImageConfiguration().Add(new SvgFormat(Limits)),
+        Configuration = new ImageConfiguration().Add(new SvgFormat(Limits, fonts: Fonts())),
         Limits = Targets.Limits,
     };
 

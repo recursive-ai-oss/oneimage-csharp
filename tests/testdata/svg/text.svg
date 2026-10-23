@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 400 260" width="400" height="260" font-family="Noto Sans" font-size="16">
+  <defs>
+    <path id="wave" d="M 20 200 C 90 140 150 260 220 200 S 340 150 380 200"/>
+    <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#d33"/><stop offset="1" stop-color="#36c"/></linearGradient>
+    <clipPath id="c"><text x="20" y="120" font-size="64" font-weight="bold">Clip</text></clipPath>
+  </defs>
+  <text x="20" y="30" fill="url(#g)" font-size="24" text-decoration="underline">Gradient <tspan font-weight="bold" fill="#080">bold</tspan> text</text>
+  <text x="20 40 60 80 100 120" y="60" dy="0 2 -2 3" rotate="0 10 -10 20" letter-spacing="1">Per-character</text>
+  <text x="200" y="60" text-anchor="middle" word-spacing="6" xml:space="preserve">  anchored   words  </text>
+  <text x="20" y="90" font-size="12" textLength="300" lengthAdjust="spacingAndGlyphs">Stretched to a given length</text>
+  <rect width="400" height="260" fill="#fc6" clip-path="url(#c)" opacity="0.5"/>
+  <use href="#wave" fill="none" stroke="#999"/>
+  <text font-size="18" stroke="#000" stroke-width="0.4" fill="#06c"><textPath href="#wave" startOffset="10%">Text laid along a curved path with <tspan dy="-4" baseline-shift="super">super</tspan> and <tspan dy="3">sub</tspan> runs</textPath></text>
+  <text x="20" y="240" font-size="14">AVA <tspan font-size="28">To</tspan> אב mixed <tspan direction="rtl" unicode-bidi="bidi-override">override</tspan> fi ffl</text>
+</svg>

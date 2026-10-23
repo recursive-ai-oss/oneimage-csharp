@@ -616,6 +616,36 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// SVG text: fonts added from files, a text element with tspans, text along a path and text as a clip path, through the Svg and Text packages.
+{
+    var fontOptions = new OneImage.Svg.SvgFontOptions { UseSystemFonts = false };
+    fontOptions.AddFont(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSans-Subset-Regular.ttf"));
+    fontOptions.AddFont(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSans-Subset-Bold-kern.ttf"));
+    fontOptions.SetGenericFamily("sans-serif", "Noto Sans");
+    var textConfig = new ImageConfiguration().Add(new OneImage.Svg.SvgFormat(fonts: fontOptions));
+    byte[] textDoc = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 100 50' width='100' height='50' font-family='Noto Sans'>"
+        + "<defs><path id='p' d='M 5 45 L 95 45'/><clipPath id='c'><text x='60' y='25' font-size='30'>I</text></clipPath></defs>"
+        + "<text x='5' y='20' font-size='16' fill='#0000ff' text-decoration='underline'>Hi <tspan font-weight='bold' dx='2' rotate='5'>there</tspan></text>"
+        + "<text font-size='8'><textPath xlink:href='#p'>along</textPath></text>"
+        + "<rect x='50' width='50' height='30' fill='#ff0000' clip-path='url(#c)'/></svg>");
+    Rgba32[] textPixels = Image.Load(textDoc, new LoadOptions { Configuration = textConfig }).ToArray<Rgba32>();
+    bool blue = false, red = false, path = false;
+    for (int i = 0; i < textPixels.Length; i++)
+    {
+        int x = i % 100, y = i / 100;
+        blue |= y < 25 && x < 50 && textPixels[i].B > 200 && textPixels[i].A > 200;
+        red |= x >= 50 && y < 30 && textPixels[i].R > 200 && textPixels[i].A > 200;
+        path |= y > 35 && textPixels[i].A > 200;
+    }
+
+    if (!blue || !red || !path)
+    {
+        Console.Error.WriteLine("svg text smoke failed");
+        return 1;
+    }
+}
+
 // Complex scripts: Devanagari (reph, pre-base matra) and Khmer (coeng, pre-base vowel) through the Indic and USE shapers.
 {
     var fonts = new OneImage.Text.FontCollection();
