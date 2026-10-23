@@ -196,7 +196,7 @@ public class IncrementalBenchmarks : IDisposable
 [SimpleJob(RunStrategy.Throughput, warmupCount: 1, iterationCount: 8)]
 public class SpillBenchmarks
 {
-    private readonly string _dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "oneimage-spill-bench");
+    private readonly string _dir = System.IO.Path.Combine(Environment.GetEnvironmentVariable("ONEIMAGE_SPILL_DIR") ?? System.IO.Path.GetTempPath(), "oneimage-spill-bench");
 
     [Benchmark(Description = "Spill 1024 tiles (64 MiB) to disk and read them all back")]
     public long RoundTrip()
@@ -233,6 +233,7 @@ internal static class LayerScenarios
             "incremental" => Incremental(),
             "rowcost" => RowCost(),
             "hw" => Hardware(),
+            "overcost" => OverCost(),
             "spill" => Spill(args.Length > 2 ? int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 100, args.Length > 3 ? long.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : 256),
             "memory" => Spill(args.Length > 2 ? int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 100, 0),
             _ => 2,
@@ -268,6 +269,28 @@ internal static class LayerScenarios
     private static int Hardware()
     {
         Console.WriteLine($"Vector128 {System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated}, Vector256 {System.Runtime.Intrinsics.Vector256.IsHardwareAccelerated}, Vector512 {System.Runtime.Intrinsics.Vector512.IsHardwareAccelerated}, Avx2 {System.Runtime.Intrinsics.X86.Avx2.IsSupported}, Avx512F {System.Runtime.Intrinsics.X86.Avx512F.IsSupported}");
+        return 0;
+    }
+
+    private static int OverCost()
+    {
+        int N = int.Parse(Environment.GetEnvironmentVariable("OVER_N") ?? "16384", System.Globalization.CultureInfo.InvariantCulture);
+        var a = new Rgba32[N];
+        var b = new Rgba32[N];
+        var seedRow = new Rgba32[LayerData.W];
+        LayerData.FillRows(seedRow, 0, 1, 3);
+        for (int i = 0; i < N; i++) { a[i] = seedRow[i % 6000]; b[i] = new Rgba32(seedRow[(i * 7) % 6000].R, seedRow[i % 6000].G, 9, 255); }
+        byte[] back = System.Runtime.InteropServices.MemoryMarshal.AsBytes(b.AsSpan()).ToArray();
+        byte[] over = System.Runtime.InteropServices.MemoryMarshal.AsBytes(a.AsSpan()).ToArray();
+        byte[] dst = new byte[N * 4];
+        for (int round = 0; round < 8; round++)
+        {
+            int Reps = 2000 * 16384 / N;
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < Reps; i++) { OneImage.Kernels.CompositeKernel.OverRgba8(back, over, dst, N, 0.5f); }
+            Console.WriteLine($"OverRgba8 over an opaque backdrop, cache-resident: {sw.Elapsed.TotalMilliseconds * 1e6 / Reps / N:F3} ns/px");
+        }
+
         return 0;
     }
 
@@ -374,6 +397,7 @@ internal static class LayerScenarios
             Console.WriteLine($"  spill: written {s.TilesWritten}, read {s.TilesRead}, peak resident {s.PeakResidentBytes >> 20} MiB, file {s.FileBytes >> 20} MiB, budget {s.BudgetBytes >> 20} MiB");
         }
 
+        Console.WriteLine($"  managed heap {GC.GetTotalMemory(false) >> 20} MiB, collections gen0/1/2 = {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}, evicted-but-waiting {SpillEpochs.LimboBytes >> 20} MiB, idle reusable {SpillEpochs.FreeBytes >> 20} MiB, pool {PooledTileStore.Instance.PooledBytes >> 20} MiB");
         Console.WriteLine($"checksum {sum}");
         return 0;
     }

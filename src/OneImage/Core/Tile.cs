@@ -44,6 +44,9 @@ internal sealed partial class Tile
 
     public int Length { get; }
 
+    /// <summary>Gets the number of references held right now; only meaningful to code that knows nobody else can take one.</summary>
+    internal int RefCount => Volatile.Read(ref _refs);
+
     /// <summary>Gets the tile's bytes. Every read and write of tile memory goes through here, so a store that spills tiles can make them resident at this point.</summary>
     public Span<byte> Span => _spill == null ? _buffer!.AsSpan(0, Length) : SpillSpan();
 

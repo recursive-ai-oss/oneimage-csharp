@@ -297,6 +297,8 @@ internal static class Render
         /// <summary>Copies (and converts) the part of <paramref name="tile"/> inside the region, then releases the tile.</summary>
         public void CopyTile(int tx, int ty, Span<byte> destination, Tile tile)
         {
+            // A spilling tile may be evicted and its memory reused while this copy reads it, unless the read is announced.
+            using SpillEpochs.Scope read = tile.EnterRead();
             try
             {
                 Prepare(tx, ty, out ImageRect part, out int first, out int length);
@@ -310,6 +312,8 @@ internal static class Render
 
         public void CopyTile(int tx, int ty, PinnedDestination destination, Tile tile)
         {
+            // A spilling tile may be evicted and its memory reused while this copy reads it, unless the read is announced.
+            using SpillEpochs.Scope read = tile.EnterRead();
             try
             {
                 Prepare(tx, ty, out ImageRect part, out int first, out int length);

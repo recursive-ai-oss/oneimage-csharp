@@ -253,66 +253,10 @@ internal sealed class TileJob
 
             for (int k = first + 1; k < end; k++)
             {
-                LayerState c = layers[k];
-                if (!c.Visible || c.Opacity <= 0f)
-                {
-                    continue;
-                }
-
-                // Source-atop keeps the surface's own coverage, so a clipped layer can never extend the base's shape.
-                // 'surface' is nulled while a callee that consumes it runs, so the catch below never releases it twice.
-                switch (c.Kind)
-                {
-                    case LayerKind.Pixel or LayerKind.Fill:
-                        if (Touches(c))
-                        {
-                            if (c.Mask == null)
-                            {
-                                Tile s = surface;
-                                surface = null;
-                                surface = Over(s, c.Node!, c.Bounds.X, c.Bounds.Y, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
-                            }
-                            else if (MaskedContent(c) is { } content)
-                            {
-                                Tile s = surface;
-                                surface = null;
-                                surface = OverHeld(s, content, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
-                            }
-                        }
-
-                        break;
-                    case LayerKind.Group:
-                        if (c.Children.Length > 0)
-                        {
-                            byte[]? cov = c.Mask != null ? Coverage(c.Mask, out _, out _) : null;
-                            try
-                            {
-                                Tile? g = IsolatedGroup(c, cov);
-                                if (g != null)
-                                {
-                                    Tile s = surface;
-                                    surface = null;
-                                    surface = OverHeld(s, g, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
-                                }
-                            }
-                            finally
-                            {
-                                if (cov != null)
-                                {
-                                    ArrayPool<byte>.Shared.Return(cov);
-                                }
-                            }
-                        }
-
-                        break;
-                    default:
-                        {
-                            Tile s = surface;
-                            surface = null;
-                            surface = ApplyAdjustment(c, s);
-                            break;
-                        }
-                }
+                // DrawClipped consumes the surface (also when it fails), so it is not ours to release while the call runs.
+                Tile s = surface;
+                surface = null;
+                surface = DrawClipped(layers[k], s);
             }
         }
         catch
@@ -323,6 +267,156 @@ internal sealed class TileJob
         }
 
         return OverHeld(back, surface, b.Opacity, b.Blend, AlphaComposition.SrcOver);
+    }
+
+    /// <summary>
+    /// Draws one layer onto a clipping surface with source-atop, which keeps the surface's own coverage, so a clipped layer can never extend the base's shape.
+    /// Consumes <paramref name="surface"/>, also when it throws.
+    /// </summary>
+    private Tile DrawClipped(LayerState c, Tile surface)
+    {
+        if (!c.Visible || c.Opacity <= 0f)
+        {
+            return surface;
+        }
+
+        switch (c.Kind)
+        {
+            case LayerKind.Pixel or LayerKind.Fill:
+                {
+                    Tile? content;
+                    try
+                    {
+                        if (!Touches(c))
+                        {
+                            return surface;
+                        }
+
+                        content = c.Mask == null ? null : MaskedContent(c);
+                        if (c.Mask != null && content == null)
+                        {
+                            return surface;
+                        }
+                    }
+                    catch
+                    {
+                        surface.Release();
+                        throw;
+                    }
+
+                    return content == null
+                        ? Over(surface, c.Node!, c.Bounds.X, c.Bounds.Y, c.Opacity, c.Blend, AlphaComposition.SrcAtop)
+                        : OverHeld(surface, content, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
+                }
+
+            case LayerKind.Group:
+                return c.Children.Length == 0 ? surface : c.PassThrough ? DrawClippedChildren(c, surface) : DrawClippedIsolated(c, surface);
+            default:
+                return ApplyAdjustment(c, surface);
+        }
+    }
+
+    /// <summary>An isolated group clipped to the base: its layers are composited on their own, and the result is drawn onto the surface with the group's blend mode, opacity and mask.</summary>
+    private Tile DrawClippedIsolated(LayerState c, Tile surface)
+    {
+        byte[]? cov = null;
+        Tile? g;
+        try
+        {
+            cov = c.Mask != null ? Coverage(c.Mask, out _, out _) : null;
+            g = IsolatedGroup(c, cov);
+        }
+        catch
+        {
+            surface.Release();
+            throw;
+        }
+        finally
+        {
+            if (cov != null)
+            {
+                ArrayPool<byte>.Shared.Return(cov);
+            }
+        }
+
+        return g == null ? surface : OverHeld(surface, g, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
+    }
+
+    /// <summary>
+    /// A pass-through group clipped to the base: its layers are drawn onto the surface one after another, each as if it were clipped to the base itself (the group has no
+    /// surface of its own, so a child's blend mode sees what is already on the surface). The group's opacity and mask mix the result with the surface as it was.
+    /// </summary>
+    private Tile DrawClippedChildren(LayerState g, Tile surface)
+    {
+        byte[]? cov = null;
+        Tile? before = null;
+        try
+        {
+            if (g.Mask != null)
+            {
+                cov = Coverage(g.Mask, out bool zero, out bool full);
+                if (zero || full)
+                {
+                    ArrayPool<byte>.Shared.Return(cov);
+                    cov = null;
+                    if (zero)
+                    {
+                        return surface;
+                    }
+                }
+            }
+
+            if (g.Opacity < 1f || cov != null)
+            {
+                before = surface.Retain();
+            }
+        }
+        catch
+        {
+            surface.Release();
+            throw;
+        }
+
+        Tile? inner = surface;
+        try
+        {
+            foreach (LayerState child in g.Children)
+            {
+                // Each call consumes the tile it is given, also when it fails, so nothing is left for us to release then.
+                Tile s = inner!;
+                inner = null;
+                inner = DrawClipped(child, s);
+            }
+
+            if (before == null)
+            {
+                return inner!;
+            }
+
+            if (ReferenceEquals(inner, before))
+            {
+                inner!.Release();
+                return before;
+            }
+
+            Tile target = inner!;
+            inner = null;
+            Tile mixed = before;
+            before = null;
+            return Mix(mixed, target, cov, g.Opacity);
+        }
+        catch
+        {
+            before?.Release();
+            throw;
+        }
+        finally
+        {
+            if (cov != null)
+            {
+                ArrayPool<byte>.Shared.Return(cov);
+            }
+        }
     }
 
     private Tile? BaseContent(LayerState b)
@@ -463,22 +557,55 @@ internal sealed class TileJob
     /// <summary>Lays an overlay node (whose top-left corner is at document (x, y)) over the backdrop tile, as <c>Image.Composite</c> would.</summary>
     private Tile Over(Tile back, Node overlay, int x, int y, float opacity, BlendMode blend, AlphaComposition composition)
     {
+        if (_doc.Linear)
+        {
+            return OverLinear(back, overlay, x, y, opacity, blend, composition);
+        }
+
+        Tile result = TileCompositor.Over(back, _rect.Width, _rect.Height, _format, overlay, x - _rect.X, y - _rect.Y, opacity, blend, composition, Exclusive(back), _context);
+        return Claim(result, back);
+    }
+
+    private Tile OverHeld(Tile back, Tile overlay, float opacity, BlendMode blend, AlphaComposition composition)
+    {
+        try
+        {
+            if (_doc.Linear)
+            {
+                return OverLinear(back, new HeldTileNode(overlay, _rect, _format), _rect.X, _rect.Y, opacity, blend, composition);
+            }
+
+            Tile result = TileCompositor.OverTile(back, _rect.Width, _rect.Height, _format, overlay, _format, opacity, blend, composition, Exclusive(back));
+            return Claim(result, back);
+        }
+        finally
+        {
+            overlay.Release();
+        }
+    }
+
+    /// <summary>True when this job made the tile and nothing else holds it, so compositing may write into it instead of copying it first.</summary>
+    private bool Exclusive(Tile tile) => ReferenceEquals(tile.Owner, this) && tile.RefCount == 1;
+
+    /// <summary>Marks a tile this job just made as its own. A result that is the input itself keeps whatever owner it had (it may be shared).</summary>
+    private Tile Claim(Tile result, Tile input)
+    {
+        if (!ReferenceEquals(result, input))
+        {
+            result.Owner = this;
+        }
+
+        return result;
+    }
+
+    private Tile OverLinear(Tile back, Node overlay, int x, int y, float opacity, BlendMode blend, AlphaComposition composition)
+    {
         try
         {
             var held = new HeldTileNode(back, _rect, _format);
-            Tile result;
-            if (_doc.Linear)
-            {
-                Image b = Image.FromNode(held).WithMetadata(_doc.Metadata);
-                Image o = Image.FromNode(overlay).WithMetadata(_doc.Metadata);
-                result = b.Composite(o, x - _rect.X, y - _rect.Y, opacity, linear: true, blend, composition).Root.GetTile(0, 0, _context, useCache: false);
-            }
-            else
-            {
-                var node = new CompositeNode(held, overlay, x - _rect.X, y - _rect.Y, opacity, blend, composition) { Ephemeral = true };
-                result = node.GetTile(0, 0, _context);
-            }
-
+            Image b = Image.FromNode(held).WithMetadata(_doc.Metadata);
+            Image o = Image.FromNode(overlay).WithMetadata(_doc.Metadata);
+            Tile result = b.Composite(o, x - _rect.X, y - _rect.Y, opacity, linear: true, blend, composition).Root.GetTile(0, 0, _context, useCache: false);
             back.Release();
             return result;
         }
@@ -486,18 +613,6 @@ internal sealed class TileJob
         {
             back.Release();
             throw;
-        }
-    }
-
-    private Tile OverHeld(Tile back, Tile overlay, float opacity, BlendMode blend, AlphaComposition composition)
-    {
-        try
-        {
-            return Over(back, new HeldTileNode(overlay, _rect, _format), _rect.X, _rect.Y, opacity, blend, composition);
-        }
-        finally
-        {
-            overlay.Release();
         }
     }
 

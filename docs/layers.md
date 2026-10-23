@@ -68,7 +68,16 @@ GroupLayer g = doc.Add(doc.CreateGroup("highlights", passThrough: true));
 
 ### Clipping
 
-A layer with `ClipToBelow = true` is drawn only where the nearest layer below it that is not itself clipped (its *base*) has coverage. The base and the layers clipped to it are drawn into a transparent surface (the base normally, each clipped layer with its own blend mode, opacity and mask, source-atop so the base's shape never grows), and that surface is laid over the backdrop with the **base's** blend mode, opacity and mask. This is Photoshop's "blend clipped layers as group". A hidden base hides its clipped layers; a clipped layer at the bottom of its group has no base and is drawn normally. An adjustment layer cannot be a base: layers after it are drawn as ordinary layers. A group in a clipping run counts as isolated. An adjustment clipped to a base adjusts only the base's surface.
+A layer with `ClipToBelow = true` is drawn only where the nearest layer below it that is not itself clipped (its *base*) has coverage. The base and the layers clipped to it are drawn into a transparent surface (the base normally, each clipped layer with its own blend mode, opacity and mask, source-atop so the base's shape never grows), and that surface is laid over the backdrop with the **base's** blend mode, opacity and mask. This is Photoshop's "blend clipped layers as group" (Adobe's help: clipped layers take the opacity and blending mode of the base layer).
+
+The edge cases, and where they follow Photoshop and where they do not:
+
+- **Hidden base.** A hidden base, or one with zero opacity, hides everything clipped to it, whatever the clipped layers' own settings. Photoshop does the same: the base's visibility is the clipping group's visibility. A hidden *clipped* layer is skipped and the run goes on.
+- **Fill opacity of the base.** The model has no layer styles, so `FillOpacity` multiplies into the opacity of the whole clipping group. Photoshop applies a base's fill opacity to the base's own pixels only (the usual trick of fill 0% on the base to show just the clipped layers, which needs the "blend clipped layers as group" option off). That is a deliberate difference; an "off" mode is not modelled.
+- **No base.** A clipped layer at the bottom of its group, or after an adjustment layer (which cannot be a base), is drawn as an ordinary layer.
+- **Group as the base.** Layers clipped to a group clip to the group's composited shape; the group is drawn on its own surface (isolated), whatever its pass-through setting, and its blend mode, opacity and mask are the clipping group's. Photoshop allows a group as a base.
+- **Group clipped to a base.** Photoshop cannot clip a group (only layers); the flag exists in PSD files written by other tools, so it is handled here as an extension. An *isolated* group is composited on its own and drawn onto the surface source-atop with the group's blend mode, opacity and mask. A *pass-through* group has no surface of its own: its layers are drawn onto the clipping surface one after another, each as if it were clipped to the base (a child's blend mode sees what is already on the surface, an adjustment inside adjusts the surface), so at full opacity and no mask it is bit-identical to the same layers clipped one by one. Below full opacity, or with a mask, the result is mixed with the surface as it was before the group. A child's own `ClipToBelow` is ignored inside such a group, because every child is clipped to the base.
+- **Adjustment layers.** A clipped adjustment adjusts only the base's surface.
 
 ### Adjustment layers
 
@@ -103,7 +112,7 @@ Console.WriteLine(doc.SpillStatistics);   // tiles written/read, resident and fi
 - Eviction is least-recently-used with a second chance. A tile is written once; later evictions of the same unchanged tile only drop the memory.
 - The file is created on first use, named `oneimage-spill-*.tmp`, unlinked immediately on Unix and opened delete-on-close on Windows, so it cannot outlive the process. `SpillOptions.MaxFileBytes` (64 GiB) bounds it; going over throws `ImageLimitException`. Dispose the document to close it.
 - Images rendered from a spilling document read from the file: do not use them after the document is disposed.
-- The collector finds evicted buffers late, so the store requests a full collection whenever about half a budget of them has piled up; this keeps the process close to the budget plus the layer being painted.
+- An evicted tile's memory is reused once no reader can still see it, with no forced garbage collection. Code that reads spill tiles for a known stretch wraps it in a read scope (the layer renderer does this per rectangle it composites, and the copy-out per tile it copies); a buffer evicted meanwhile waits in an epoch until every scope that was open at eviction has closed, then goes to a small free list that rentals and page-ins draw from. A tile read by code outside a scope (a user reading a layer canvas, a codec saving a canvas) is marked, and its buffer is left to the garbage collector when evicted, since a span may still point at it. The wait is bounded (32 MiB of waiting buffers, 64 MiB of idle ones); past that, buffers go to the collector. Peak resident memory is the budget plus the layer being painted, the tile objects and the usual slack of the managed heap (about 540 MB for 100 layers of 24 MP under 256 MiB).
 
 ## Descriptions
 
@@ -133,14 +142,16 @@ Console.WriteLine(doc.SpillStatistics);   // tiles written/read, resident and fi
 
 ## Measured
 
-Ryzen 9 7950X3D (16 cores, 32 threads), .NET 10.0.13, a lightly loaded shared machine; documents of full-size 24 MP Rgba8 layers at 50% opacity, Normal blend. "Default" is the library per-call thread limit (4); "32" raises it for the call. The ImageSharp 3.1.12 rows clone a 24 MP image and chain DrawImage calls, using every core.
+Ryzen 9 7950X3D (16 cores, 32 threads), .NET 10.0.13, on a shared machine with other jobs running (load 4-12 during the runs); documents of full-size 24 MP Rgba8 layers at 50% opacity, Normal blend. "Default" is the library per-call thread limit (4); "32" raises it for the call. The ImageSharp 3.1.12 rows clone a 24 MP image and chain DrawImage calls, using every core. "AVX2 only" rows run with `DOTNET_EnableAVX512=0`. Figures in brackets are the previous release.
 
 | Task | OneImage, default | OneImage, 32 threads | ImageSharp |
 |---|---|---|---|
-| Flatten 10 layers, every tile recomputed | 111 ms | 46-49 ms | 62-72 ms |
-| Flatten 50 layers, every tile recomputed | 535-547 ms | 192-212 ms | 241-342 ms |
-| Stroke on one of 20 layers, re-render, 512 x 512 viewport | 0.8-4.4 ms | | |
-| Same, whole image into a caller buffer (24 MP copy-out dominates) | 7.5-11 ms | | |
-| Same document, all 1504 tiles recomputed | 438 ms | | |
+| Flatten 10 layers, every tile recomputed | 77 ms (113), 0.25 MB allocated (9.6) | 34 ms (49) | 72 ms |
+| Flatten 50 layers, every tile recomputed | 361 ms (541), 0.25 MB allocated (47) | 129 ms (196) | 297 ms |
+| Flatten 10 layers, AVX2 only | 115 ms (806) | 40 ms (153) | 91 ms |
+| Flatten 50 layers, AVX2 only | 544 ms (4,403) | 157 ms (746) | 340 ms |
+| Stroke on one of 20 layers, re-render, 512 x 512 viewport | 0.48 ms (0.67) | | |
+| Same, whole image into a caller buffer (24 MP copy-out dominates) | 8.0 ms (7.6) | | |
+| Same document, all 1504 tiles recomputed | 358 ms (438) | | |
 
-After a stroke, 2 of the 1504 tiles are recomputed and the other 1502 come from the cache. A 100-layer 24 MP document (9.6 GB of pixels) renders in 1.4 s fully in memory (10 GB resident), or in 4.3 s with a 256 MiB spill budget at about 500 MiB resident: 151,862 tiles written, 150,368 read back.
+After a stroke, 2 of the 1504 tiles are recomputed and the other 1502 come from the cache. A 100-layer 24 MP document (9.6 GB of pixels) renders in 1.4 s with a 256 MiB spill budget (4.1 s before) at about 540 MB peak resident (510 before); 151,862 tiles are written and 150,368 read back, and the process makes no forced collection.

@@ -125,6 +125,8 @@ internal sealed class DocumentNode : Node
             return hit;
         }
 
+        // Reads of spill tiles announce themselves where they happen (TileCompositor, the copy-out), for the length of one rectangle,
+        // so evicted memory is reused within microseconds instead of waiting for a whole tile job to end.
         Tile tile = new TileJob(_snapshot, TileRect(tx, ty), context.Nested).Run();
         cache.CountComputed();
         cache.Put(index, tile, _snapshot.Revision, _snapshot.Background);

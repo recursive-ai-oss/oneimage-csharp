@@ -12,8 +12,9 @@ namespace OneImage;
 /// place are never moved, so they count against the budget but cannot be evicted: seal often (render, or flush the layer) while
 /// building. All file access is positional through <see cref="RandomAccess"/>; the file is unlinked at creation on Unix and
 /// opened delete-on-close on Windows, so it disappears when the store is disposed or the process ends.
-/// An evicted buffer is dropped for the garbage collector rather than pooled, because a reader that took its span just before
-/// the eviction may still be using it.
+/// An evicted buffer is not reused at once, because a reader that took its span just before the eviction may still be using it:
+/// it waits for the readers that were active at eviction to leave (see <see cref="SpillEpochs"/>), or goes to the garbage collector when
+/// its tile was read by code that did not announce itself.
 /// </summary>
 internal sealed class SpillTileStore : ITileStore, IDisposable
 {
@@ -28,7 +29,6 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
     private long _written;
     private long _read;
     private long _fileLength;
-    private long _garbage;
     private int _compactAt = 4096;
     private SafeFileHandle? _handle;
     private bool _disposed;
@@ -55,7 +55,19 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
     public byte[] Rent(int length, bool clear)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        byte[] buf = PooledTileStore.Instance.Rent(length, clear);
+        byte[]? buf = SpillEpochs.Take(length);
+        if (buf != null)
+        {
+            if (clear)
+            {
+                buf.AsSpan(0, length).Clear();
+            }
+        }
+        else
+        {
+            buf = PooledTileStore.Instance.Rent(length, clear);
+        }
+
         AddResident(buf.Length);
         return buf;
     }
@@ -63,7 +75,10 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
     public void Return(byte[] buffer)
     {
         Interlocked.Add(ref _resident, -buffer.Length);
-        PooledTileStore.Instance.Return(buffer);
+        if (!SpillEpochs.TryFree(buffer))
+        {
+            PooledTileStore.Instance.Return(buffer);
+        }
     }
 
     public void Dispose()
@@ -162,7 +177,7 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
                 handle = _handle;
             }
 
-            buf = GC.AllocateUninitializedArray<byte>(tile.Length);
+            buf = SpillEpochs.Take(tile.Length) ?? PooledTileStore.Instance.Rent(tile.Length, clear: false);
             int done = 0;
             while (done < buf.Length)
             {
@@ -182,12 +197,12 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
             Enqueue(tile, e);
         }
 
-        EnforceBudget();
+        EnforceBudget(tile);
         return buf;
     }
 
     /// <summary>Evicts sealed tiles, least recently used first (second chance), until the resident bytes fit the budget or nothing more can go.</summary>
-    internal void EnforceBudget()
+    internal void EnforceBudget(Tile? keep = null)
     {
         if (Interlocked.Read(ref _resident) <= _budget)
         {
@@ -214,7 +229,7 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
             }
 
             Tile.SpillEntry e = victim.Spill!;
-            if (e.Touched)
+            if (ReferenceEquals(victim, keep) || e.Touched)
             {
                 e.Touched = false;
                 lock (_gate)
@@ -251,29 +266,17 @@ internal sealed class SpillTileStore : ITileStore, IDisposable
 
                 victim.DropBuffer();
                 Interlocked.Add(ref _resident, -buf.Length);
-                Interlocked.Add(ref _garbage, buf.Length);
+
+                // After the drop: a reader that was not in a scope marks the tile before it looks at the buffer, so one of us sees the other.
+                if (Interlocked.Exchange(ref e.Unscoped, 0) == 0)
+                {
+                    SpillEpochs.Defer(buf);
+                }
             }
             finally
             {
                 Monitor.Exit(e);
             }
-        }
-
-        CollectEvicted();
-    }
-
-    /// <summary>
-    /// Evicted buffers are not pooled (see the type remarks) and by the time they are evicted they have usually been promoted, so the
-    /// collector would find them late and the process would drift well past the budget. Once about half a budget of them has piled up
-    /// we ask for one full collection; the arrays hold no references, so it is cheap.
-    /// </summary>
-    private void CollectEvicted()
-    {
-        long limit = Math.Clamp(_budget / 2, 16L << 20, 128L << 20);
-        long seen = Interlocked.Read(ref _garbage);
-        if (seen >= limit && Interlocked.CompareExchange(ref _garbage, 0, seen) == seen)
-        {
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: false);
         }
     }
 
@@ -387,7 +390,10 @@ internal sealed partial class Tile
         public SpillTileStore Store { get; } = store;
 
         public long Slot = -1;
-        public bool Sealed;
+        public volatile bool Sealed;
+
+        /// <summary>Set when the current buffer was read outside a read scope; its memory is then never reused.</summary>
+        public int Unscoped;
         public bool Queued;
         public bool Dead;
         public volatile bool Touched;
@@ -401,7 +407,7 @@ internal sealed partial class Tile
 
     internal void SetBuffer(byte[] buffer) => Volatile.Write(ref _buffer, buffer);
 
-    internal void DropBuffer() => Volatile.Write(ref _buffer, null);
+    internal void DropBuffer() => Interlocked.Exchange(ref _buffer, null);
 
     internal byte[]? TakeBuffer()
     {
@@ -409,6 +415,9 @@ internal sealed partial class Tile
         _buffer = null;
         return b;
     }
+
+    /// <summary>Announces a read of this tile's pixels for as long as the returned scope lives; a no-op for ordinary tiles.</summary>
+    internal SpillEpochs.Scope EnterRead() => _spill == null ? default : SpillEpochs.Enter();
 
     /// <summary>Marks this tile immutable, which lets a spilling store move it to disk. No effect on ordinary tiles.</summary>
     public void Seal() => _spill?.Store.Seal(this);
@@ -425,13 +434,22 @@ internal sealed partial class Tile
     private Span<byte> SpillSpan()
     {
         SpillEntry e = _spill!;
-        byte[]? b = Volatile.Read(ref _buffer);
-        if (b != null)
+        while (true)
         {
+            byte[] b = Volatile.Read(ref _buffer) ?? e.Store.PageIn(this);
+            if (e.Sealed && !SpillEpochs.InScope)
+            {
+                // A read nobody announced: this buffer must never be reused while the span may be alive. Mark it, then make sure it is still
+                // the tile's buffer. An eviction drops the buffer and then looks at the mark, so either it sees the mark or we see the drop.
+                Interlocked.Exchange(ref e.Unscoped, 1);
+                if (!ReferenceEquals(Volatile.Read(ref _buffer), b))
+                {
+                    continue;
+                }
+            }
+
             e.Touched = true;
             return b.AsSpan(0, Length);
         }
-
-        return e.Store.PageIn(this).AsSpan(0, Length);
     }
 }

@@ -67,6 +67,40 @@ public class CompositeRgbaKernelTests
     }
 
     [Fact]
+    public void EveryChannelValueAndAlphaCombinationMatches()
+    {
+        // The vector kernel replaces the division by 255 with a fused correction that is exact for whole numbers 0..255; this covers every channel value on both sides.
+        const int N = 65536;
+        foreach (byte ba in new byte[] { 0, 1, 77, 128, 254, 255 })
+        {
+            foreach (byte oa in new byte[] { 0, 1, 77, 128, 200, 254, 255 })
+            {
+                byte[] back = new byte[N * 4];
+                byte[] over = new byte[N * 4];
+                for (int i = 0; i < N; i++)
+                {
+                    back[i * 4] = (byte)i;
+                    back[(i * 4) + 1] = (byte)(i >> 8);
+                    back[(i * 4) + 2] = (byte)((i * 7) + (i >> 8));
+                    back[(i * 4) + 3] = ba;
+                    over[i * 4] = (byte)(i >> 8);
+                    over[(i * 4) + 1] = (byte)i;
+                    over[(i * 4) + 2] = (byte)((i * 13) ^ (i >> 5));
+                    over[(i * 4) + 3] = oa;
+                }
+
+                foreach (float opacity in new[] { 1f, 0.5f, 0.3f, 0.123456f, 0.999f, 0.001f, 0f })
+                {
+                    byte[] expected = General(back, over, N, opacity);
+                    byte[] vec = new byte[N * 4];
+                    CompositeKernel.OverRgba8(back, over, vec, N, opacity);
+                    Assert.True(expected.AsSpan().SequenceEqual(vec), $"vector differs: backdrop alpha {ba}, overlay alpha {oa}, opacity {opacity}");
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void OddOffsetsAndStrides()
     {
         // Slices that start at odd byte offsets still work.

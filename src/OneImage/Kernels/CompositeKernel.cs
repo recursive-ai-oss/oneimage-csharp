@@ -118,6 +118,7 @@ internal static class CompositeKernel
         ReadOnlySpan<uint> o32 = MemoryMarshal.Cast<byte, uint>(overlay);
         Span<uint> d32 = MemoryMarshal.Cast<byte, uint>(destination);
         int x = 0;
+        bool opacityInRange = opacity >= 0f && opacity <= 1f;
         if (Vector256.IsHardwareAccelerated)
         {
             Vector256<float> op = Vector256.Create(opacity);
@@ -130,21 +131,39 @@ internal static class CompositeKernel
             {
                 Vector256<uint> pb = Vector256.Create(b32.Slice(x, 8));
                 Vector256<uint> po = Vector256.Create(o32.Slice(x, 8));
-                Vector256<float> oa = Vector256.ConvertToSingle(Vector256.ShiftRightLogical(po, 24)) / c255;
-                Vector256<float> ba = Vector256.ConvertToSingle(Vector256.ShiftRightLogical(pb, 24)) / c255;
+                Vector256<float> oa = Vector256.ConvertToSingle(Vector256.ShiftRightLogical(po, 24).AsInt32()) / c255;
                 Vector256<float> sa = oa * op;
                 Vector256<float> fb = one + (Vector256.Create(-1f) * sa);
-                Vector256<float> outA = sa + (ba * fb);
-                Vector256<float> positive = Vector256.GreaterThan(outA, zero);
-                Vector256<uint> packed = Vector256.ShiftLeft(ToByte8(outA, c255, half, zero), 24);
-                for (int c = 0; c < 3; c++)
+                Vector256<uint> backAlpha = Vector256.ShiftRightLogical(pb, 24);
+                Vector256<uint> packed;
+                if (opacityInRange && Vector256.EqualsAll(backAlpha, Vector256.Create(255u)))
                 {
-                    int sh = 8 * c;
-                    Vector256<float> s = ((Vector256.ConvertToSingle(Vector256.ShiftRightLogical(po, sh) & mask) / c255) * oa) * op;
-                    Vector256<float> d = (Vector256.ConvertToSingle(Vector256.ShiftRightLogical(pb, sh) & mask) / c255) * ba;
-                    Vector256<float> v = s + (d * fb);
-                    Vector256<float> unit = Vector256.ConditionalSelect(positive, v / outA, zero);
-                    packed |= Vector256.ShiftLeft(ToByte8(unit, c255, half, zero), sh);
+                    // An opaque backdrop: its alpha is exactly 1, so the result alpha is 1·(1 − sa) + sa, which rounds to exactly 1 for every sa in 0..1
+                    // (the stored value is 255 and every division by it is by 1). Only the colors need work.
+                    packed = Vector256.Create(0xFF000000u);
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int sh = 8 * c;
+                        Vector256<float> s = ((Vector256.ConvertToSingle((Vector256.ShiftRightLogical(po, sh) & mask).AsInt32()) / c255) * oa) * op;
+                        Vector256<float> d = Vector256.ConvertToSingle((Vector256.ShiftRightLogical(pb, sh) & mask).AsInt32()) / c255;
+                        packed |= Vector256.ShiftLeft(ToByte8(s + (d * fb), c255, half, zero), sh);
+                    }
+                }
+                else
+                {
+                    Vector256<float> ba = Vector256.ConvertToSingle(backAlpha.AsInt32()) / c255;
+                    Vector256<float> outA = sa + (ba * fb);
+                    Vector256<float> positive = Vector256.GreaterThan(outA, zero);
+                    packed = Vector256.ShiftLeft(ToByte8(outA, c255, half, zero), 24);
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int sh = 8 * c;
+                        Vector256<float> s = ((Vector256.ConvertToSingle((Vector256.ShiftRightLogical(po, sh) & mask).AsInt32()) / c255) * oa) * op;
+                        Vector256<float> d = (Vector256.ConvertToSingle((Vector256.ShiftRightLogical(pb, sh) & mask).AsInt32()) / c255) * ba;
+                        Vector256<float> v = s + (d * fb);
+                        Vector256<float> unit = Vector256.ConditionalSelect(positive, v / outA, zero);
+                        packed |= Vector256.ShiftLeft(ToByte8(unit, c255, half, zero), sh);
+                    }
                 }
 
                 packed.CopyTo(d32.Slice(x, 8));
@@ -163,21 +182,39 @@ internal static class CompositeKernel
             {
                 Vector128<uint> pb = Vector128.Create(b32.Slice(x, 4));
                 Vector128<uint> po = Vector128.Create(o32.Slice(x, 4));
-                Vector128<float> oa = Vector128.ConvertToSingle(Vector128.ShiftRightLogical(po, 24)) / c255;
-                Vector128<float> ba = Vector128.ConvertToSingle(Vector128.ShiftRightLogical(pb, 24)) / c255;
+                Vector128<float> oa = Vector128.ConvertToSingle(Vector128.ShiftRightLogical(po, 24).AsInt32()) / c255;
                 Vector128<float> sa = oa * op;
                 Vector128<float> fb = one + (Vector128.Create(-1f) * sa);
-                Vector128<float> outA = sa + (ba * fb);
-                Vector128<float> positive = Vector128.GreaterThan(outA, zero);
-                Vector128<uint> packed = Vector128.ShiftLeft(ToByte4(outA, c255, half, zero), 24);
-                for (int c = 0; c < 3; c++)
+                Vector128<uint> backAlpha = Vector128.ShiftRightLogical(pb, 24);
+                Vector128<uint> packed;
+                if (opacityInRange && Vector128.EqualsAll(backAlpha, Vector128.Create(255u)))
                 {
-                    int sh = 8 * c;
-                    Vector128<float> s = ((Vector128.ConvertToSingle(Vector128.ShiftRightLogical(po, sh) & mask) / c255) * oa) * op;
-                    Vector128<float> d = (Vector128.ConvertToSingle(Vector128.ShiftRightLogical(pb, sh) & mask) / c255) * ba;
-                    Vector128<float> v = s + (d * fb);
-                    Vector128<float> unit = Vector128.ConditionalSelect(positive, v / outA, zero);
-                    packed |= Vector128.ShiftLeft(ToByte4(unit, c255, half, zero), sh);
+                    // An opaque backdrop: its alpha is exactly 1, so the result alpha is 1·(1 − sa) + sa, which rounds to exactly 1 for every sa in 0..1
+                    // (the stored value is 255 and every division by it is by 1). Only the colors need work.
+                    packed = Vector128.Create(0xFF000000u);
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int sh = 8 * c;
+                        Vector128<float> s = ((Vector128.ConvertToSingle((Vector128.ShiftRightLogical(po, sh) & mask).AsInt32()) / c255) * oa) * op;
+                        Vector128<float> d = Vector128.ConvertToSingle((Vector128.ShiftRightLogical(pb, sh) & mask).AsInt32()) / c255;
+                        packed |= Vector128.ShiftLeft(ToByte4(s + (d * fb), c255, half, zero), sh);
+                    }
+                }
+                else
+                {
+                    Vector128<float> ba = Vector128.ConvertToSingle(backAlpha.AsInt32()) / c255;
+                    Vector128<float> outA = sa + (ba * fb);
+                    Vector128<float> positive = Vector128.GreaterThan(outA, zero);
+                    packed = Vector128.ShiftLeft(ToByte4(outA, c255, half, zero), 24);
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int sh = 8 * c;
+                        Vector128<float> s = ((Vector128.ConvertToSingle((Vector128.ShiftRightLogical(po, sh) & mask).AsInt32()) / c255) * oa) * op;
+                        Vector128<float> d = (Vector128.ConvertToSingle((Vector128.ShiftRightLogical(pb, sh) & mask).AsInt32()) / c255) * ba;
+                        Vector128<float> v = s + (d * fb);
+                        Vector128<float> unit = Vector128.ConditionalSelect(positive, v / outA, zero);
+                        packed |= Vector128.ShiftLeft(ToByte4(unit, c255, half, zero), sh);
+                    }
                 }
 
                 packed.CopyTo(d32.Slice(x, 4));
@@ -190,10 +227,10 @@ internal static class CompositeKernel
         }
     }
 
-    // (unit·255 + 0.5) clamped to 0..255 and truncated: the scalar ToByte, with the same NaN-free inputs.
+    // (unit·255 + 0.5) clamped to 0..255 and truncated: the scalar ToByte, with the same NaN-free inputs. Signed conversions: AVX2 has no unsigned ones, and every value here is far below 2^31.
     private static Vector256<uint> ToByte8(Vector256<float> unit, Vector256<float> c255, Vector256<float> half, Vector256<float> zero) =>
-        Vector256.ConvertToUInt32(Vector256.Min(Vector256.Max((unit * c255) + half, zero), c255));
+        Vector256.ConvertToInt32(Vector256.Min(Vector256.Max((unit * c255) + half, zero), c255)).AsUInt32();
 
     private static Vector128<uint> ToByte4(Vector128<float> unit, Vector128<float> c255, Vector128<float> half, Vector128<float> zero) =>
-        Vector128.ConvertToUInt32(Vector128.Min(Vector128.Max((unit * c255) + half, zero), c255));
+        Vector128.ConvertToInt32(Vector128.Min(Vector128.Max((unit * c255) + half, zero), c255)).AsUInt32();
 }
