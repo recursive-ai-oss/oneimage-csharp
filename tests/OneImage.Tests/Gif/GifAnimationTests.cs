@@ -243,7 +243,7 @@ public class GifAnimationTests
 
         // Bounds are relative to the state before the loop: the test process also holds whatever other tests left behind.
         GC.Collect();
-        long heapBefore = GC.GetTotalMemory(true);
+        long heapBefore = LiveHeap.Total(collect: true);
         long rssBefore = Rss();
         var rss = new long[iterations];
         var heap = new long[iterations];
@@ -277,10 +277,8 @@ public class GifAnimationTests
             Image c = Image.Load(hugeGif, new LoadOptions { Configuration = config });
             c.Frames[0].CopyPixelsTo<Rgba32>(new Rgba32[64 * 64], new ImageRect(0, 0, 64, 64));
 
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            heap[it] = GC.GetTotalMemory(true);
+            // Surviving bytes net of idle pool buffers: GetTotalMemory reads well above the live data on Apple-silicon runners.
+            heap[it] = LiveHeap.Total(collect: true);
             rss[it] = Rss();
         }
 
