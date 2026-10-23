@@ -1,5 +1,6 @@
 using OneImage.Codecs.Jbig2;
 using OneImage.Codecs.Jpeg;
+using OneImage.Codecs.Jpx;
 using OneImage.Pdf.Render;
 using OnePdf;
 
@@ -7,17 +8,17 @@ namespace OneImage.Pdf;
 
 /// <summary>
 /// Registers the image decoders OnePDF calls for the image codecs it does not implement itself. DCT (JPEG) and JBIG2 are OneImage's own
-/// decoders; the JPEG 2000 decoder attaches through <see cref="Jpx"/> when OneImage has one.
+/// decoders, and so is the JPEG 2000 one (reachable through <see cref="Jpx"/>).
 /// </summary>
 public static class PdfImageCodecs
 {
-    private static IPdfImageDecoder? s_jpx;
+    private static IPdfImageDecoder? s_jpx = JpxImageDecoder.Instance;
     private static IPdfImageDecoder? s_jbig2 = Jbig2ImageDecoder.Instance;
 
     /// <summary>
-    /// Gets or sets the decoder used for <c>JPXDecode</c> images. <see langword="null"/> (the default) draws no JPEG 2000 images: OnePDF hands
-    /// the device the undecoded data, which this package does not show. Set it before the first <see cref="PdfFormat"/> is created or call
-    /// <see cref="Register"/> afterwards.
+    /// Gets or sets the decoder used for <c>JPXDecode</c> images. The default is OneImage's own JPEG 2000 decoder; an image that is damaged
+    /// or beyond the limits is not drawn (see <see cref="PdfFormat"/>) and the rest of the page is. Setting <see langword="null"/> draws no
+    /// JPEG 2000 images: OnePDF then hands the device the undecoded data, which this package does not show.
     /// </summary>
     public static IPdfImageDecoder? Jpx
     {
@@ -222,5 +223,156 @@ internal sealed class Jbig2ImageDecoder : IPdfImageDecoder
         {
             return null;
         }
+    }
+}
+
+/// <summary>
+/// OneImage's JPEG 2000 decoder behind OnePDF's decoder contract. Colour channels come out in the file's colour space converted to one PDF
+/// can express (sYCC to RGB; ICC-described RGB, gray and CMYK are converted to sRGB or gray here, because OnePDF cannot be handed a profile);
+/// the opacity channel, if any, is last with <see cref="PdfDecodedImage.HasAlpha"/> set, and OnePDF applies <c>/SMaskInData</c>, <c>/Decode</c> and
+/// masks. A file that is damaged inside its tile data gives no image at all (null), like the other decoders, so the page carries on without it.
+/// </summary>
+internal sealed class JpxImageDecoder : IPdfImageDecoder
+{
+    // An image beyond this many pixels is decoded at a reduced resolution (1/2, 1/4, ...): the page could not show the detail, and the
+    // sample planes would otherwise run into the memory the render limits allow for one picture.
+    private const long MaxFullPixels = 1L << 26;
+
+    public static JpxImageDecoder Instance { get; } = new();
+
+    public PdfDecodedImage? Decode(in PdfImageDecodeRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return DecodeCore(request.Data, cancellationToken);
+        }
+        catch (ImageException)
+        {
+            return null;
+        }
+    }
+
+    private static PdfDecodedImage? DecodeCore(ReadOnlyMemory<byte> data, CancellationToken ct)
+    {
+        JpxInfo info = JpxCodec.Identify(data);
+        int reduction = 0;
+        long pixels = (long)info.Width * info.Height;
+        while (pixels > MaxFullPixels && reduction < info.MaxReduction)
+        {
+            reduction++;
+            pixels = (pixels + 3) / 4;
+        }
+
+        JpxImage image = JpxCodec.Decode(data, new JpxDecodeOptions { ReductionLevels = reduction }, ct);
+        if (image.Damaged || image.Width < 1 || image.Height < 1)
+        {
+            return null;
+        }
+
+        int colors = image.ColorChannelCount;
+        bool alpha = image.AlphaChannel >= 0 && image.AlphaChannel == colors && image.ChannelCount == colors + 1;
+        if (colors < 1)
+        {
+            return null;
+        }
+
+        int depth = 0;
+        for (int c = 0; c < image.ChannelCount; c++)
+        {
+            depth = Math.Max(depth, image.BitDepths[c]);
+        }
+
+        int bits = depth <= 8 ? 8 : 16;
+        int total = colors + (alpha ? 1 : 0);
+        PdfColorSpace? space = image.ColorSpace switch
+        {
+            JpxColorSpace.Srgb or JpxColorSpace.ESrgb => colors == 3 ? PdfColorSpace.Rgb : null,
+            JpxColorSpace.Sycc => colors == 3 && image.ConvertedFromSycc ? PdfColorSpace.Rgb : null,
+            JpxColorSpace.Gray => colors == 1 ? PdfColorSpace.Gray : null,
+            JpxColorSpace.Cmyk => colors == 4 ? PdfColorSpace.Cmyk : null,
+            _ => null,
+        };
+
+        byte[] samples = image.ToInterleaved(bits, total);
+        if (image.ColorSpace == JpxColorSpace.Icc && colors is 1 or 3 or 4)
+        {
+            (samples, colors, bits) = ConvertIcc(image, samples, bits, colors, alpha, out space);
+        }
+
+        return new PdfDecodedImage(image.Width, image.Height, colors, bits, samples)
+        {
+            HasAlpha = alpha,
+            ColorSpace = space,
+        };
+    }
+
+    /// <summary>Converts the colour channels of an ICC-described image to sRGB (or the gray profile), keeping the opacity channel as it is.</summary>
+    private static (byte[] Samples, int Colors, int Bits) ConvertIcc(JpxImage image, byte[] samples, int bits, int colors, bool alpha, out PdfColorSpace? space)
+    {
+        space = null;
+        if (!ColorProfile.TryFromIcc(image.IccProfile.Span, out ColorProfile? profile) || profile is null)
+        {
+            return (samples, colors, bits);
+        }
+
+        if (profile.Model != (colors switch { 1 => ColorModel.Gray, 3 => ColorModel.Rgb, _ => ColorModel.Cmyk }))
+        {
+            return (samples, colors, bits);
+        }
+
+        // Work in 8 bits: the conversion tables are 8-bit grids in the engine's fast path anyway.
+        byte[] eight = bits == 8 ? samples : To8(samples);
+        int total = colors + (alpha ? 1 : 0);
+        int w = image.Width, h = image.Height;
+        bool toGray = colors == 1;
+        int outColors = toGray ? 1 : 3;
+        ColorProfile dest = toGray ? ColorProfile.Gray : ColorProfile.Srgb;
+        ColorTransform transform = ColorTransform.Get(profile, dest, RenderingIntent.RelativeColorimetric, blackPointCompensation: false);
+        PixelFormat sf = colors switch { 1 => PixelFormat.Gray8, 3 => PixelFormat.Rgb8, _ => PixelFormat.Cmyk8 };
+        PixelFormat df = toGray ? PixelFormat.Gray8 : PixelFormat.Rgb8;
+        int outTotal = outColors + (alpha ? 1 : 0);
+        var result = new byte[checked(w * h * outTotal)];
+        var srcRow = new byte[w * colors];
+        var dstRow = new byte[w * outColors];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int s = ((y * w) + x) * total;
+                for (int c = 0; c < colors; c++)
+                {
+                    srcRow[(x * colors) + c] = eight[s + c];
+                }
+            }
+
+            transform.ConvertRow(srcRow, sf, dstRow, df, w);
+            for (int x = 0; x < w; x++)
+            {
+                int d = ((y * w) + x) * outTotal;
+                for (int c = 0; c < outColors; c++)
+                {
+                    result[d + c] = dstRow[(x * outColors) + c];
+                }
+
+                if (alpha)
+                {
+                    result[d + outColors] = eight[(((y * w) + x) * total) + colors];
+                }
+            }
+        }
+
+        space = toGray ? PdfColorSpace.Gray : PdfColorSpace.Rgb;
+        return (result, outColors, 8);
+    }
+
+    private static byte[] To8(byte[] sixteen)
+    {
+        var r = new byte[sixteen.Length / 2];
+        for (int i = 0; i < r.Length; i++)
+        {
+            r[i] = sixteen[2 * i];
+        }
+
+        return r;
     }
 }

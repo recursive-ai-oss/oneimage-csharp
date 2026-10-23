@@ -261,7 +261,7 @@ public class StrokeTests
 
     // 11.7.4.4: with B the fill and stroke are one object, a non-isolated knockout group: where the stroke overlaps the fill it replaces it
     // (blue at 50% over the page), it is not composited on top of the fill.
-    [Fact(Skip = "Defect: B/B*/b/b* composite the stroke over the fill; 11.7.4.4 requires a non-isolated knockout group, so the stroke replaces the fill where they overlap")]
+    [Fact]
     [Trait("Section", "11.7.4.4")]
     public void FillAndStrokeKnockOutEachOther()
     {

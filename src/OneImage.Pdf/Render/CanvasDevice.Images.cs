@@ -13,6 +13,7 @@ internal sealed partial class CanvasDevice
     /// </summary>
     public void DrawImage(in PdfImage image, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         if (Skip)
         {
             return;
@@ -115,6 +116,7 @@ internal sealed partial class CanvasDevice
     /// <summary>The <c>sh</c> operator: the shading paints everything inside the current clip.</summary>
     public void PaintShading(PdfShading shading, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         if (Skip)
         {
             return;

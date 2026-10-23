@@ -222,6 +222,8 @@ internal sealed class PageRender
 
         public override void StrokePath(in PdfPath path, in PdfGraphicsState state) => list.StrokePath(in path, in state);
 
+        public override void FillStrokePath(in PdfPath path, bool evenOdd, in PdfGraphicsState state) => list.FillStrokePath(in path, evenOdd, in state);
+
         public override void PushClip(in PdfPath path, bool evenOdd, in PdfGraphicsState state) => list.PushClip(in path, evenOdd, in state);
 
         public override void PushTextClip(in PdfGraphicsState state) => list.PushTextClip(in state);

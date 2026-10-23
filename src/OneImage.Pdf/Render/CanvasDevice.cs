@@ -79,12 +79,14 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 
     public void EndPage()
     {
+        CloseTextKnockout();
     }
 
     // ---- paths ----
 
     public void FillPath(in PdfPath path, bool evenOdd, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         if (Skip)
         {
             return;
@@ -101,6 +103,7 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 
     public void StrokePath(in PdfPath path, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         if (Skip)
         {
             return;
@@ -109,6 +112,41 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
         _ct.ThrowIfCancellationRequested();
         PdfMatrix m = state.Ctm.Then(_view);
         DrawingPath? outline = StrokeOutline(path, state, m);
+        if (outline is not null)
+        {
+            Paint(outline, IntersectionRule.NonZero, state.StrokeColor, state.StrokeAlpha, state);
+        }
+    }
+
+    /// <summary>
+    /// <c>B</c>, <c>B*</c>, <c>b</c>, <c>b*</c> (11.7.4.4): the fill and the stroke are one knockout group, so where a translucent
+    /// stroke lies over the fill it replaces the fill instead of compositing over it. The fill is painted without the stroke's
+    /// area; with an opaque stroke nothing of the fill shows there anyway, so the two plain calls are exact.
+    /// </summary>
+    public void FillStrokePath(in PdfPath path, bool evenOdd, in PdfGraphicsState state)
+    {
+        if (Skip || !(state.StrokeAlpha < 1))
+        {
+            FillPath(path, evenOdd, state);
+            StrokePath(path, state);
+            return;
+        }
+
+        CloseTextKnockout();
+        _ct.ThrowIfCancellationRequested();
+        PdfMatrix m = state.Ctm.Then(_view);
+        DrawingPath? fill = PathConvert.ToPath(path, m);
+        DrawingPath? outline = StrokeOutline(path, state, m);
+        IntersectionRule rule = evenOdd ? IntersectionRule.EvenOdd : IntersectionRule.NonZero;
+        if (fill is not null)
+        {
+            DrawingPath visible = outline is null ? fill : fill.Subtract(outline, rule, IntersectionRule.NonZero);
+            if (!visible.IsEmpty)
+            {
+                Paint(visible, IntersectionRule.NonZero, state.FillColor, state.FillAlpha, state);
+            }
+        }
+
         if (outline is not null)
         {
             Paint(outline, IntersectionRule.NonZero, state.StrokeColor, state.StrokeAlpha, state);
@@ -358,6 +396,7 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 
     public void PushClip(in PdfPath path, bool evenOdd, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         if (_clips.Count >= Limits.MaxClipDepth)
         {
             throw new ImageLimitException($"Clips are nested deeper than {Limits.MaxClipDepth}.");
@@ -383,6 +422,7 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 
     public void PushTextClip(in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         if (_clips.Count >= Limits.MaxClipDepth)
         {
             throw new ImageLimitException($"Clips are nested deeper than {Limits.MaxClipDepth}.");
@@ -402,6 +442,7 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 
     public void PopClip()
     {
+        CloseTextKnockout();
         if (_clips.Count > 0)
         {
             _clip = _clips[^1];
@@ -566,18 +607,46 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 
     public void BeginAnnotation(in PdfAnnotationInfo annotation)
     {
+        CloseTextKnockout();
     }
 
     public void EndAnnotation()
     {
+        CloseTextKnockout();
     }
 
     // A Type 3 glyph's content arrives as ordinary drawing calls whose CTM already includes the font matrix.
     public void BeginType3Glyph(in PdfType3GlyphInfo glyph, in PdfGraphicsState state)
     {
+        // 9.3.8: with /TK true (the initial value) the glyphs of one text object are a knockout group. Type 3 glyphs are drawn as
+        // content, so overlapping translucent ones would accumulate; they share one knockout layer instead, which stays open until
+        // something other than a glyph is drawn. A translucent fill is the only case where it shows.
+        if (_t3Depth == 0 && !_textKnockout && state.TextKnockout && state.FillAlpha < 1 && !Skip)
+        {
+            BeginKnockoutLayer(state);
+            _textKnockout = true;
+        }
+
+        _t3Depth++;
     }
 
     public void EndType3Glyph()
     {
+        if (_t3Depth > 0)
+        {
+            _t3Depth--;
+        }
+    }
+
+    private int _t3Depth;
+    private bool _textKnockout;
+
+    private void CloseTextKnockout()
+    {
+        if (_textKnockout && _t3Depth == 0)
+        {
+            _textKnockout = false;
+            EndGroup();
+        }
     }
 }

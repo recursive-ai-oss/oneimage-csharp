@@ -202,7 +202,7 @@ public class StructureTests
     ];
 
     // 9.3.8: with Tk true (the initial value) the glyphs of one text object form a knockout group: overlapping glyphs do not accumulate.
-    [Fact(Skip = "Defect: glyphs of one text object accumulate when alpha < 1; 9.3.8 makes the initial Tk true, a knockout group (overlap shows 50%, renderer gives 75%)")]
+    [Fact]
     [Trait("Section", "9.3.8")]
     public void TextKnockoutIsOnByDefault()
     {

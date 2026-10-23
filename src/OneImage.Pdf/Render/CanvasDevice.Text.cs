@@ -13,6 +13,16 @@ internal sealed partial class CanvasDevice
     /// </summary>
     public void ShowGlyphRun(in PdfGlyphRun run, in PdfGraphicsState state)
     {
+        // The run of a Type 3 font carries no outlines (its glyph procedures follow); any other run ends an open text knockout layer.
+        foreach (PdfGlyph g in run.Glyphs.Span)
+        {
+            if (!g.Outline.IsEmpty)
+            {
+                CloseTextKnockout();
+                break;
+            }
+        }
+
         PdfTextRenderMode mode = run.RenderMode;
         if (mode == PdfTextRenderMode.Invisible)
         {

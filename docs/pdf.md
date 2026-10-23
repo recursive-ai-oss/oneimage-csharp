@@ -1,6 +1,6 @@
 # PDF
 
-`RecursiveAI.OneImage.Pdf` (namespace `OneImage.Pdf`) draws PDF pages as an ordinary image format. It parses and interprets with [OnePDF](https://www.nuget.org/packages/RecursiveAI.OnePdf) (`RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts`, 1.1.0 or later) and draws on OneImage's drawing engine, so a page is an `Image` like any other: it can be resized, cropped, converted and saved, and only the part of the page that is asked for is drawn.
+`RecursiveAI.OneImage.Pdf` (namespace `OneImage.Pdf`) draws PDF pages as an ordinary image format. It parses and interprets with [OnePDF](https://www.nuget.org/packages/RecursiveAI.OnePdf) (`RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts`, 1.2.0 or later) and draws on OneImage's drawing engine, so a page is an `Image` like any other: it can be resized, cropped, converted and saved, and only the part of the page that is asked for is drawn.
 
 ```csharp
 var config = new ImageConfiguration().Add(new PdfFormat(new PdfRenderOptions { Dpi = 150 }));
@@ -29,7 +29,7 @@ Image.Load("report.pdf", new LoadOptions { Configuration = config }).Resize(widt
 
 - **DCT** is OneImage's own JPEG decoder, returning the components as stored (no Adobe inversion; OnePDF applies `/Decode`).
 - **JBIG2** is OneImage's own decoder (see [jbig2.md](jbig2.md)). It returns the page in the standard's sense, 1 for black, and OnePDF applies the PDF inversion, `/Decode` and `/ImageMask`. `/JBIG2Globals` are passed separately. A **damaged stream throws in the decoder; the bridge treats that as an image that cannot be decoded, leaves it out and draws the rest of the page** (OnePDF records a diagnostic). A stream that exceeds a `Jbig2Limits` or `ImageLimits` bound is left out the same way.
-- **JPEG 2000** has a hook (`PdfImageCodecs.Jpx`) and no decoder registered yet: such images are not drawn.
+- **JPEG 2000** is OneImage's own decoder (see [jpx.md](jpx.md)), registered at `PdfImageCodecs.Jpx`. Colour channels come out in the colour space the file states (sRGB, gray, CMYK; sYCC is converted to RGB; ICC-described RGB, gray and CMYK are converted to sRGB or gray, because a profile cannot be handed to OnePDF) and the opacity channel, if any, comes last, so OnePDF applies `/SMaskInData`, the declared `/ColorSpace` and masks. ISO 32000-2 7.4.9 has `/Decode` ignored for JPX images that are not masks, and OnePDF follows it. An image of more than 2^26 pixels is decoded at a reduced resolution. A file that is damaged inside its tile data, or beyond a limit, gives no image: it is left out and the page draws. The decoder is not told how large the page shows the picture, so smaller placements still decode at full size (only the pixel budget reduces).
 
 ## Limits
 
@@ -55,7 +55,7 @@ A pattern that paints with itself is bounded by the nesting limit. The tests bui
 ## Known approximations and limitations
 
 - Transparency groups: a non-isolated group that needs compositing (opacity below 1, a blend mode or a soft mask) is painted on a copy of its backdrop with its own coverage tracked apart, so blend modes inside it see the page and the backdrop is not counted twice (11.4.5, 11.4.8); an opaque backdrop is assumed, a translucent one is approximated. A knockout group (11.4.6) replaces what is under each object instead of accumulating; blend modes of objects inside a knockout group are not applied. A non-isolated group with none of these needs is drawn straight onto its parent, which is exact. Overprint is ignored.
-- **Text and fill-and-stroke knockout need OnePDF.** The initial text knockout (9.3.8, `/TK` true) and the knockout group of `B`, `B*`, `b` and `b*` (11.7.4.4) are not applied: OnePDF's device interface does not report the `/TK` value or that a fill and a stroke came from one operator. Overlapping translucent glyphs of separate Type 3 glyph procedures, and a translucent fill with a translucent stroke over it, therefore accumulate. Glyphs of one run are already one shape. A full fix is a `/TK` flag on the graphics state and a combined fill-and-stroke device call (or a group bracket around `B`). These are the two documented exceptions in the spec-truth suite (`TextKnockoutIsOnByDefault` and `FillAndStrokeKnockOutEachOther`, skipped with their reason); they close once OnePDF exposes that information.
+- **Knockout of text and of fill-and-stroke.** `B`, `B*`, `b` and `b*` (11.7.4.4) arrive as one device call; with a translucent stroke the fill is painted without the stroke's area, so the stroke replaces it instead of compositing over it. Text knockout (9.3.8, `/TK`, true by default) is applied to the glyphs of Type 3 fonts, which are drawn as content: while translucent glyph procedures follow each other they share one knockout layer. Outline glyphs of one string are already one shape; overlapping translucent glyphs of *different* strings of a text object (separate `Tj`/`TJ` elements) still accumulate, because the device is not told where a text object begins and ends.
 - Image edges are anti-aliased rather than snapped to the pixel grid. A picture shown larger than its samples is drawn with square samples unless it sets `/Interpolate true` (8.9.5.3: interpolation is off by default); the references often smooth it anyway. A reduced picture is area-averaged, then sampled bilinearly.
 - Text is unhinted and drawn with exact-area coverage, which looks lighter than PDFium's and heavier than MuPDF's.
 
@@ -63,9 +63,7 @@ A pattern that paints with itself is bounded by the nesting limit. The tests bui
 
 - **Soft-mask `/TR` is treated as identity.** OnePDF does not expose function evaluation to devices. Needed from OnePDF: either a public `PdfFunction.Create(PdfObject)`/`Evaluate(ReadOnlySpan<double>, Span<double>)`, or a 256-entry transfer table on `PdfSoftMaskInfo` (null for identity).
 - **Text in a non-embedded CJK font draws blank.** The package carries only the standard Latin fonts; there is no CJK fallback font yet.
-- **Check boxes, radio buttons and push buttons under `/NeedAppearances true` keep their stored appearance.** OnePDF 1.1 regenerates text and choice fields only.
-- **Some embedded CJK TrueType outlines are drawn with missing strokes** (page `cjk-04-zen2631893`, an embedded MingLiU subset; the glyph for U+6700 comes out of OnePDF's outline decoding with garbled strokes under both fill rules, while all three references draw it). This is an upstream outline-decoding issue, recorded as an `ours-wrong` verdict.
-- **JPEG 2000 images are not drawn** until a JPEG 2000 decoder is registered at `PdfImageCodecs.Jpx`.
+- **Check boxes, radio buttons and push buttons under `/NeedAppearances true` keep their stored appearance.** OnePDF regenerates text and choice fields only.
 
 ## Render gate
 
@@ -86,15 +84,15 @@ Every flagged page gets a row in `tools/pdf-gate/verdicts.csv`: the page, a verd
 
 The unflagged pages stay unflagged only while the rule holds, so the gate is re-run after any renderer change and new flags get verdicts. A separate suite of generated PDFs with analytically known pixels (`tests/OneImage.Pdf.Tests/SpecTruth`) checks the specification directly, without any reference renderer.
 
-### Result: 34 of 307 pages flagged
+### Result: 26 of 307 pages flagged
 
 | verdict | pages |
 |---|---|
 | ambiguous | 24 |
-| ours-wrong | 9 |
-| ours-correct | 1 |
+| ours-wrong | 0 |
+| ours-correct | 2 |
 
-All 34 have a verdict. By cause:
+All 26 have a verdict. By cause:
 
 - **ambiguous, 10.7 scan conversion (edge anti-aliasing only), 10 pages:** cjk-03, cjk-05, math-02, math-04, math-08, multi-column-01, multi-column-02, old-08, report-08, table-02. No renderer is singled out: each differs from the others at glyph edges, PDFium furthest.
 - **ambiguous, 10.7 plus 9.6.2.2 and 9.8 (edge anti-aliasing plus non-embedded fonts whose substitutes differ), 7 pages:** cjk-01, cjk-06, rotated-08, rtl-04, rtl-05, table-09, table-05 (PDFium draws lighter, about 83% of our ink).
@@ -104,8 +102,7 @@ All 34 have a verdict. By cause:
 - **ambiguous, 12.5.5 (markup annotations without appearance streams), 2 pages:** raw-appearance-markup and raw-appearance-markup-needap; PDFium omits the shapes.
 - **ambiguous, 7.5.6 (damaged file), 1 page:** raw-broken-truncated-stream; all four renderers refuse it.
 - **ours-correct, 8.9.5.3 (no interpolation by default), 1 page:** slides-07-zen14027747. A 1536 x 864 noise texture with `/Interpolate false` is shown about 1.3 times enlarged; we draw square samples as the specification asks, and PDFium, MuPDF and pdf.js all smooth it.
-- **ours-wrong, 7.4.9 (JPEG 2000 images not drawn), 8 pages:** 966677 and the seven veraPDF `6-2-8-3-*` pages. The references agree with each other. Listed under the known limitations.
-- **ours-wrong, 9.6.4 (embedded TrueType outlines with missing strokes), 1 page:** cjk-04-zen2631893. Listed under the known limitations.
+- **ours-correct, 7.4.9 (`/Decode` is ignored for JPEG 2000 images), 1 page:** 966677. The banner is one JPEG 2000 image with `/Decode [1 0]` in a Separation color space; we use the samples as stored, as the specification says, and PDFium, MuPDF and pdf.js all apply the array and draw the banner with inverted tones.
 
 By source (flagged / pages; the last column is the strict count, information below):
 
@@ -118,9 +115,9 @@ By source (flagged / pages; the last column is the strict count, information bel
 | generated-tex | 1 | 0 | 1 |
 | govdocs | 30 | 2 | 14 |
 | pdf20examples | 7 | 0 | 7 |
-| realworld | 92 | 22 | 33 |
-| verapdf | 110 | 7 | 100 |
-| all | 307 | 34 | 216 |
+| realworld | 92 | 21 | 33 |
+| verapdf | 110 | 0 | 107 |
+| all | 307 | 26 | 223 |
 
 ### SSIM tables (information only)
 
@@ -136,20 +133,20 @@ The strict rule (SSIM at least 0.98 to at least two of the other three renderers
 | govdocs | 30 | 14 | 6 | 12 | 13 |
 | pdf20examples | 7 | 7 | 6 | 7 | 6 |
 | realworld | 92 | 33 | 12 | 38 | 31 |
-| verapdf | 110 | 100 | 107 | 107 | 107 |
-| all | 307 | 216 | 190 | 215 | 218 |
+| verapdf | 110 | 107 | 107 | 107 | 107 |
+| all | 307 | 223 | 190 | 215 | 218 |
 
 By content class (`classify.py`), mean / min SSIM per pair of renderers:
 
 | class | pages | flagged | ours-PDFium | ours-MuPDF | ours-pdf.js | PDFium-MuPDF | PDFium-pdf.js | MuPDF-pdf.js |
 |---|---|---|---|---|---|---|---|---|
-| dense text | 103 | 22 | 0.945 / 0.783 | 0.968 / 0.856 | 0.977 / 0.891 | 0.948 / 0.788 | 0.938 / 0.786 | 0.970 / 0.843 |
+| dense text | 103 | 21 | 0.945 / 0.783 | 0.968 / 0.856 | 0.977 / 0.891 | 0.948 / 0.788 | 0.938 / 0.786 | 0.970 / 0.843 |
 | forms | 21 | 0 | 0.958 / 0.868 | 0.981 / 0.935 | 0.981 / 0.885 | 0.958 / 0.857 | 0.951 / 0.860 | 0.976 / 0.885 |
 | images | 13 | 2 | 0.926 / 0.787 | 0.965 / 0.877 | 0.975 / 0.895 | 0.955 / 0.893 | 0.934 / 0.802 | 0.971 / 0.883 |
-| sparse | 153 | 8 | 0.993 / 0.901 | 0.994 / 0.901 | 0.994 / 0.902 | 0.998 / 0.927 | 0.997 / 0.939 | 0.998 / 0.952 |
+| sparse | 153 | 1 | 0.998 / 0.939 | 0.998 / 0.982 | 0.998 / 0.952 | 0.998 / 0.927 | 0.997 / 0.939 | 0.998 / 0.952 |
 | transparency | 16 | 2 | 0.976 / 0.946 | 0.967 / 0.865 | 0.909 / 0.349 | 0.954 / 0.812 | 0.900 / 0.350 | 0.901 / 0.313 |
 | vector | 1 | 0 | 0.996 / 0.996 | 0.999 / 0.999 | 0.998 / 0.998 | 0.997 / 0.997 | 0.996 / 0.996 | 0.998 / 0.998 |
-| all | 307 | 34 | 0.971 / 0.783 | 0.981 / 0.856 | 0.982 / 0.349 | 0.974 / 0.788 | 0.966 / 0.350 | 0.981 / 0.313 |
+| all | 307 | 26 | 0.973 / 0.783 | 0.984 / 0.856 | 0.984 / 0.349 | 0.974 / 0.788 | 0.966 / 0.350 | 0.981 / 0.313 |
 
 On 67 pages no two references agree at 0.98, so a copy of any one reference would fail the strict rule there. The vector row has a single page and says little.
 

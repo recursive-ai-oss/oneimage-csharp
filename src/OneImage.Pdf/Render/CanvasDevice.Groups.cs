@@ -51,6 +51,7 @@ internal sealed partial class CanvasDevice
 
     public void BeginGroup(in PdfGroupInfo group, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         BlendMode blend = ParseBlend(state.BlendMode);
         bool maskKnown = state.SoftMaskId != 0 && _masks.ContainsKey(state.SoftMaskId);
         if (!group.Isolated && !group.Knockout && state.FillAlpha >= 1 && blend == BlendMode.Normal && !maskKnown)
@@ -91,11 +92,23 @@ internal sealed partial class CanvasDevice
     /// <summary>The coverage canvas of the non-isolated group being painted directly into the current target, if any.</summary>
     private Canvas? ShapeShadow => _frames.Count > 0 && _frames[^1] is { Kind: FrameKind.Group, Shape: { } s } f && ReferenceEquals(f.Layer, _target) ? s : null;
 
+    /// <summary>Opens a knockout layer composited with the state's blend mode and soft mask (not its opacity: objects carry their own).</summary>
+    private void BeginKnockoutLayer(in PdfGraphicsState state)
+    {
+        BlendMode blend = ParseBlend(state.BlendMode);
+        bool maskKnown = state.SoftMaskId != 0 && _masks.ContainsKey(state.SoftMaskId);
+        CheckNesting();
+        var layer = new Canvas(_w, _h, PixelFormat.Rgba8);
+        _frames.Add(new Frame(FrameKind.Group, layer, _target, 1, blend, maskKnown ? state.SoftMaskId : 0) { Knockout = true });
+        _target = layer;
+    }
+
     /// <summary>True while painting directly into the layer of a knockout group, where each object replaces what is under it.</summary>
     private bool InKnockoutGroup => _frames.Count > 0 && _frames[^1] is { Kind: FrameKind.Group, Knockout: true } f && ReferenceEquals(f.Layer, _target);
 
     public void EndGroup()
     {
+        CloseTextKnockout();
         int last = _frames.Count - 1;
         if (last < 0 || _frames[last].Kind == FrameKind.Mask)
         {
@@ -148,6 +161,7 @@ internal sealed partial class CanvasDevice
 
     public void BeginSoftMask(in PdfSoftMaskInfo mask, in PdfGraphicsState state)
     {
+        CloseTextKnockout();
         CheckNesting();
         var layer = new Canvas(_w, _h, PixelFormat.Rgba8);
         if (mask.Luminosity)
@@ -164,6 +178,7 @@ internal sealed partial class CanvasDevice
 
     public void EndSoftMask()
     {
+        CloseTextKnockout();
         int last = _frames.Count - 1;
         if (last < 0 || _frames[last].Kind != FrameKind.Mask)
         {
