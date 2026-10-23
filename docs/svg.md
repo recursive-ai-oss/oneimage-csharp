@@ -1,6 +1,6 @@
 # SVG
 
-Design of `RecursiveAI.OneImage.Svg` (assembly and namespace `OneImage.Svg`): SVG as an image format that renders directly at the size you ask for. This page describes what the package is, how it is built, and where it stands. The package detects SVG, reads its natural size and draws shapes, paths, strokes, gradients, patterns, groups with opacity, transforms, viewports, `use` and `symbol`, clip paths, masks, style sheets, `switch` and `data:` images at any size and one region at a time; the rest of the feature list arrives in the order given under [Roadmap](#roadmap). It is not published yet.
+Design of `RecursiveAI.OneImage.Svg` (assembly and namespace `OneImage.Svg`): SVG as an image format that renders directly at the size you ask for. This page describes what the package is, how it is built, and where it stands. The package detects SVG, reads its natural size and draws shapes, paths, strokes, gradients, patterns, markers, groups with opacity and blend modes, transforms, viewports, `use` and `symbol`, clip paths, masks, style sheets, `switch`, `data:` images, filters and text at any size and one region at a time.
 
 ```csharp
 using OneImage;
