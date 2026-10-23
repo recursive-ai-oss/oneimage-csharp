@@ -22,6 +22,6 @@ Image.Load("report.pdf", load).Resize(width: 400).Save("thumb.webp");  // drawn 
 - Hostile files are bounded (`PdfRenderLimits`, `ImageLimits` and OnePDF's own limits) before memory is allocated; only typed exceptions leave the load and draw calls.
 - JPEG 2000 images are not drawn yet.
 
-See the [PDF page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/main/docs/pdf.md) for the options, limits, render-gate results against PDFium, MuPDF and pdf.js, and the known approximations.
+See the [PDF page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/main/docs/pdf.md) for the options, limits, render-gate method and verdicts (PDFium, MuPDF and pdf.js as a signal), and the known limitations.
 
 Licensed under MIT or Apache-2.0.

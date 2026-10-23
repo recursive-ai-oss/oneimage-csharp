@@ -29,7 +29,7 @@ Image.Load("report.pdf", new LoadOptions { Configuration = config }).Resize(widt
 
 - **DCT** is OneImage's own JPEG decoder, returning the components as stored (no Adobe inversion; OnePDF applies `/Decode`).
 - **JBIG2** is OneImage's own decoder (see [jbig2.md](jbig2.md)). It returns the page in the standard's sense, 1 for black, and OnePDF applies the PDF inversion, `/Decode` and `/ImageMask`. `/JBIG2Globals` are passed separately. A **damaged stream throws in the decoder; the bridge treats that as an image that cannot be decoded, leaves it out and draws the rest of the page** (OnePDF records a diagnostic). A stream that exceeds a `Jbig2Limits` or `ImageLimits` bound is left out the same way.
-- **JPEG 2000** has a hook (`PdfImageCodecs.Jpx`) and no decoder yet: such images are not drawn.
+- **JPEG 2000** has a hook (`PdfImageCodecs.Jpx`) and no decoder registered yet: such images are not drawn.
 
 ## Limits
 
@@ -52,60 +52,106 @@ A pattern that paints with itself is bounded by the nesting limit. The tests bui
 
 `fuzz/run.sh pdf <seconds>` loads a file, draws a resized whole page and two regions under small limits, seeded from `testdata/pdf` and any folders in `ONEIMAGE_PDF_SEEDS`. Seeded from the 307 files of OnePDF's test set and run for 10 minutes: 85,718 executions, no crashes, hangs or out-of-memory inputs.
 
-## Known approximations
+## Known approximations and limitations
 
 - A transparency group that is non-isolated and needs compositing (opacity below 1, a blend mode or a soft mask) is drawn as isolated; a non-isolated group with none of those is drawn straight onto its parent, which is exact. Knockout groups are drawn as non-knockout. Overprint is ignored.
-- A soft mask's `/TR` transfer function is not applied (identity). OnePDF does not expose function evaluation to devices; see the API need below.
-- Image edges are anti-aliased rather than snapped to the pixel grid.
+- Image edges are anti-aliased rather than snapped to the pixel grid. A picture enlarged to at least 2x on both axes is sampled nearest-neighbour unless it sets `/Interpolate true` (ISO 32000-2 8.9.5.3: interpolation is off by default); smaller enlargements are sampled bilinearly.
 - Text is unhinted and drawn with exact-area coverage, which looks lighter than PDFium's and heavier than MuPDF's.
-- Glyphs with no font to draw them (for example CJK text in a font that is not embedded) are left out: the package carries only the standard Latin fonts.
 
-### What the bridge would like from OnePDF
+### Known limitations
 
-- **Function evaluation or a transfer table** for `PdfSoftMaskInfo.Transfer`: either a public `PdfFunction.Create(PdfObject)`/`Evaluate(ReadOnlySpan<double>, Span<double>)`, or a `ReadOnlyMemory<byte>` 256-entry table on `PdfSoftMaskInfo` (null for identity). With it, `/TR` is one table lookup per mask pixel.
-- **Regeneration of check boxes, radio buttons and push buttons under `/NeedAppearances true`**, as PDFium does; they currently draw their stale stored appearance.
+- **Soft-mask `/TR` is treated as identity.** OnePDF does not expose function evaluation to devices. Needed from OnePDF: either a public `PdfFunction.Create(PdfObject)`/`Evaluate(ReadOnlySpan<double>, Span<double>)`, or a 256-entry transfer table on `PdfSoftMaskInfo` (null for identity).
+- **Text in a non-embedded CJK font draws blank.** The package carries only the standard Latin fonts; there is no CJK fallback font yet.
+- **Check boxes, radio buttons and push buttons under `/NeedAppearances true` keep their stored appearance.** OnePDF 1.1 regenerates text and choice fields only.
+- **Some embedded CJK TrueType outlines are drawn with missing strokes** (page `cjk-04-zen2631893`, an embedded MingLiU subset; the glyph for U+6700 comes out of OnePDF's outline decoding with garbled strokes under both fill rules, while all three references draw it). This is an upstream outline-decoding issue, recorded as an `ours-wrong` verdict.
+- **JPEG 2000 images are not drawn** until a JPEG 2000 decoder is registered at `PdfImageCodecs.Jpx`.
 
 ## Render gate
 
-Method: page 1 of each of the 307 files in OnePDF's test set (generated, real-world, US government, PDF 2.0 examples and veraPDF files) is drawn at 150 dpi by this package and by three reference renderers used as black-box programs: PDFium (pypdfium2, with a form environment), MuPDF (`mutool draw`) and pdf.js (headless Chrome). A page **passes when its SSIM (luminance, 7 × 7 window) is at least 0.98 against at least two of the three**. Tools are in `tools/pdf-gate`: `make_manifest.py`, `render_oracles.py`, `compare.py`, `classify.py`, `triage.py`.
+SSIM against other renderers is a signal, not the bar: three renderers disagree with each other on many pages, and none of them is the standard. The standard is ISO 32000-2, so the gate finds the pages worth a look and a person judges each against the specification.
 
-Result: **217 of 307 pages pass**.
+**Method.** Page 1 of each of the 307 files in OnePDF's test set (generated, real-world, US government, PDF 2.0 examples and veraPDF files) is drawn at 150 dpi by this package and by three reference renderers used as black-box programs: PDFium (pypdfium2, with a form environment), MuPDF (`mutool draw`) and pdf.js (headless Chrome). SSIM is computed on luminance with a 7 x 7 window. `tools/pdf-gate/gate.py` flags a page when any of these holds:
 
-| source | pages | pass |
-|---|---|---|
-| generated (Chrome, LibreOffice, TeX, encrypted, hand-written) | 68 | 63 |
-| PDF 2.0 examples | 7 | 6 |
-| veraPDF | 110 | 100 |
-| US government (govdocs) | 30 | 14 |
-| real-world (forms, papers, slides, scans, CJK, RTL, rotated) | 92 | 34 |
+1. our SSIM is below 0.98 to at least two references **and** our SSIM to the closest reference is below the best SSIM between any two references on that page (we are further from the references than they are from each other);
+2. our SSIM to the closest reference is below 0.90 (floor, a gross-error alarm);
+3. we did not draw the page, or no reference drew it;
+4. only one reference drew it and we are below 0.98 to it.
 
-### The references disagree with each other
+Every flagged page gets a row in `tools/pdf-gate/verdicts.csv`: the page, a verdict, the ISO 32000-2 section, the reason and the renderers that deviate. A flagged page without a row is reported as `unreviewed`. The verdicts are:
 
-The same rule applied to each reference in turn (a page passes when it scores 0.98 against at least two of the *other three* renderers): ours 216, MuPDF 216, pdf.js 219, **PDFium 191** of 307. The bar is not reached by every reference itself, on text-heavy pages most of all. By content (`classify.py`; mean / min SSIM per pair):
+- **ours-correct**: we follow the specification and the named renderer deviates.
+- **ours-wrong**: we depart from the specification. It is fixed or listed under the known limitations.
+- **ambiguous**: the specification allows both results. Glyph-edge anti-aliasing is implementation-defined (10.7, scan conversion), so a page that differs only there is `ambiguous`; it counts as `ours-wrong` only if glyph shape, position, weight or coverage departs from what the specification defines. An edge-only page is recognised by: embedded outlines, the same ink within 5%, no offset (best sub-pixel shift 0), and a blurred SSIM (Gaussian sigma 2) of at least 0.99 to the closest reference.
 
-| class | pages | pass | ours-PDFium | ours-MuPDF | ours-pdf.js | PDFium-MuPDF | PDFium-pdf.js | MuPDF-pdf.js |
+The unflagged pages stay unflagged only while the rule holds, so the gate is re-run after any renderer change and new flags get verdicts. A separate suite of generated PDFs with analytically known pixels (`tests/OneImage.Pdf.Tests/SpecTruth`) checks the specification directly, without any reference renderer.
+
+### Result: 33 of 307 pages flagged
+
+| verdict | pages |
+|---|---|
+| ambiguous | 24 |
+| ours-wrong | 9 |
+| ours-correct | 0 |
+
+All 33 have a verdict. By cause:
+
+- **ambiguous, 10.7 scan conversion (edge anti-aliasing only), 10 pages:** cjk-03, cjk-05, math-02, math-04, math-08, multi-column-01, multi-column-02, old-08, report-08, table-02. No renderer is singled out: each differs from the others at glyph edges, PDFium furthest.
+- **ambiguous, 10.7 plus 9.6.2.2 and 9.8 (edge anti-aliasing plus non-embedded fonts whose substitutes differ), 7 pages:** cjk-01, cjk-06, rotated-08, rtl-04, rtl-05, table-09, table-05 (PDFium draws lighter, about 83% of our ink).
+- **ambiguous, 10.7 and 8.4.3.2 (zero-width rules are drawn as the thinnest line the device can), 1 page:** rotated-07; MuPDF draws the hairlines lighter.
+- **ambiguous, 9.6.2.2 and 9.8 (non-embedded Times-like fonts, each renderer substitutes differently), 2 pages:** multi-column-08 and report-10. report-10 is the only page below the 0.90 floor (0.891).
+- **ambiguous, 8.9.5.3 (reduction filter of a bilevel scan), 1 page:** 378647; PDFium and MuPDF agree exactly, ours matches pdf.js.
+- **ambiguous, 12.5.5 (markup annotations without appearance streams), 2 pages:** raw-appearance-markup and raw-appearance-markup-needap; PDFium omits the shapes.
+- **ambiguous, 7.5.6 (damaged file), 1 page:** raw-broken-truncated-stream; all four renderers refuse it.
+- **ours-wrong, 7.4.9 (JPEG 2000 images not drawn), 8 pages:** 966677 and the seven veraPDF `6-2-8-3-*` pages. The references agree with each other. Listed under the known limitations.
+- **ours-wrong, 9.6.4 (embedded TrueType outlines with missing strokes), 1 page:** cjk-04-zen2631893. Listed under the known limitations.
+
+By source (flagged / pages; the last column is the strict count, information below):
+
+| source | pages | flagged | 0.98 to two references |
+|---|---|---|---|
+| generated-chrome | 18 | 0 | 18 |
+| generated-enc | 12 | 0 | 12 |
+| generated-lo | 6 | 0 | 6 |
+| generated-raw | 31 | 3 | 25 |
+| generated-tex | 1 | 0 | 1 |
+| govdocs | 30 | 2 | 14 |
+| pdf20examples | 7 | 0 | 7 |
+| realworld | 92 | 21 | 34 |
+| verapdf | 110 | 7 | 100 |
+| all | 307 | 33 | 217 |
+
+### SSIM tables (information only)
+
+The strict rule (SSIM at least 0.98 to at least two of the other three renderers) applied to each renderer in turn, pages out of the total. It is not the bar; it shows that no renderer, PDFium least of all, meets it everywhere:
+
+| source | pages | ours | PDFium | MuPDF | pdf.js |
+|---|---|---|---|---|---|
+| generated-chrome | 18 | 18 | 18 | 18 | 18 |
+| generated-enc | 12 | 12 | 12 | 3 | 12 |
+| generated-lo | 6 | 6 | 5 | 4 | 5 |
+| generated-raw | 31 | 25 | 23 | 25 | 25 |
+| generated-tex | 1 | 1 | 1 | 1 | 1 |
+| govdocs | 30 | 14 | 6 | 12 | 13 |
+| pdf20examples | 7 | 7 | 6 | 7 | 6 |
+| realworld | 92 | 34 | 12 | 39 | 32 |
+| verapdf | 110 | 100 | 107 | 107 | 107 |
+| all | 307 | 217 | 190 | 216 | 219 |
+
+By content class (`classify.py`), mean / min SSIM per pair of renderers:
+
+| class | pages | flagged | ours-PDFium | ours-MuPDF | ours-pdf.js | PDFium-MuPDF | PDFium-pdf.js | MuPDF-pdf.js |
 |---|---|---|---|---|---|---|---|---|
-| dense text (≥ 400 glyphs) | 103 | 43 | 0.945 / 0.783 | 0.968 / 0.856 | 0.977 / 0.891 | 0.948 / 0.788 | 0.938 / 0.786 | 0.970 / 0.843 |
-| forms (widgets) | 21 | 13 | 0.958 / 0.868 | 0.981 / 0.935 | 0.981 / 0.885 | 0.958 / 0.857 | 0.951 / 0.860 | 0.976 / 0.885 |
-| images (≥ 20% of the page) | 13 | 5 | 0.934 / 0.820 | 0.975 / 0.896 | 0.982 / 0.961 | 0.955 / 0.893 | 0.934 / 0.802 | 0.971 / 0.883 |
-| transparency (groups, masks, alpha, blend) | 16 | 11 | 0.977 / 0.946 | 0.967 / 0.865 | 0.909 / 0.350 | 0.954 / 0.812 | 0.900 / 0.350 | 0.901 / 0.313 |
-| vector (≥ 40 fills and strokes) | 1 | 1 | 0.996 / 0.996 | 0.999 / 0.999 | 0.998 / 0.998 | 0.997 / 0.997 | 0.996 / 0.996 | 0.998 / 0.998 |
-| sparse (everything else) | 153 | 143 | 0.993 / 0.901 | 0.994 / 0.901 | 0.994 / 0.902 | 0.998 / 0.927 | 0.997 / 0.939 | 0.998 / 0.952 |
-| all | 307 | 216 | 0.971 / 0.783 | 0.982 / 0.856 | 0.982 / 0.350 | 0.974 / 0.788 | 0.966 / 0.350 | 0.981 / 0.313 |
+| dense text | 103 | 22 | 0.945 / 0.783 | 0.968 / 0.856 | 0.977 / 0.891 | 0.948 / 0.788 | 0.938 / 0.786 | 0.970 / 0.843 |
+| forms | 21 | 0 | 0.958 / 0.868 | 0.981 / 0.935 | 0.981 / 0.885 | 0.958 / 0.857 | 0.951 / 0.860 | 0.976 / 0.885 |
+| images | 13 | 1 | 0.934 / 0.820 | 0.975 / 0.896 | 0.982 / 0.961 | 0.955 / 0.893 | 0.934 / 0.802 | 0.971 / 0.883 |
+| sparse | 153 | 8 | 0.993 / 0.901 | 0.994 / 0.901 | 0.994 / 0.902 | 0.998 / 0.927 | 0.997 / 0.939 | 0.998 / 0.952 |
+| transparency | 16 | 2 | 0.977 / 0.946 | 0.967 / 0.865 | 0.909 / 0.349 | 0.954 / 0.812 | 0.900 / 0.350 | 0.901 / 0.313 |
+| vector | 1 | 0 | 0.996 / 0.996 | 0.999 / 0.999 | 0.998 / 0.998 | 0.997 / 0.997 | 0.996 / 0.996 | 0.998 / 0.998 |
+| all | 307 | 33 | 0.971 / 0.783 | 0.982 / 0.856 | 0.982 / 0.349 | 0.974 / 0.788 | 0.966 / 0.350 | 0.981 / 0.313 |
 
-(The corpus has one page that is mostly line art; the vector row says little. The pass column counts a page that fewer than two references can draw as failing; `compare.py` counts it as passing, hence 216 against 217.)
+On 67 pages no two references agree at 0.98, so a copy of any one reference would fail the strict rule there. The vector row has a single page and says little.
 
-### Why the failing pages fail
-
-By the triage count 91 pages fail (the gate script counts 90: it lets a page pass when fewer than two references could draw it).
-
-| cause | pages | note |
-|---|---|---|
-| the references do not agree: no two of them reach 0.98 with each other | 64 | includes the damaged file that has no page to draw (a typed error). A copy of any one reference would fail these too. Mostly text-weight and positioning differences; also generated markup that PDFium does not draw, and PDF/A transparency files on which pdf.js disagrees with both others |
-| text drawing: the references agree, ours is 0.95–0.98 from the best of them | 19 | exact-area, unhinted glyph coverage against each renderer's own; spot checks of the difference images show edge pixels of glyphs, not missing or moved content |
-| JPEG 2000 images (no decoder yet) | 8 | references agree; ours is blank where the picture is |
-
-Bugs found by the triage and fixed: images reduced by area averaging came out white (one divisor; it affected every image shown smaller than stored, including the slides with banner images); JBIG2 scans drew blank (now drawn; scan pages went from 0.63–0.90 to 0.82–0.98).
+Tools are in `tools/pdf-gate`: `make_manifest.py`, `render_oracles.py`, `classify.py` and `gate.py`.
 
 ## Speed
 

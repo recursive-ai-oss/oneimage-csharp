@@ -135,7 +135,7 @@ def main():
             verdicts[r["page"]] = r
 
     def strict(n, who):
-        # The 0.98 against two rule for one renderer, against the other three renderers (information only).
+        # The strict rule (0.98 to two others) for one renderer, against the other three renderers (information only).
         others = [r for r in R if r != who]
         return sum(1 for o in others if (s(n, who, o) or 0) >= BAR) >= 2
 
