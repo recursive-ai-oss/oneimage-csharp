@@ -11,6 +11,7 @@ internal sealed partial class SceneBuilder
     /// <summary>How the glyphs of one span are painted: resolved fill and stroke with the stroke's shape.</summary>
     private sealed class SpanPaint
     {
+        public bool OptimizeSpeed;
         public bool HasFill;
         public Rgba32 FillColor;
         public RPaint? FillServer;
@@ -35,7 +36,7 @@ internal sealed partial class SceneBuilder
         }
 
         SvgStyle st = sp.St;
-        var result = new SpanPaint();
+        var result = new SpanPaint { OptimizeSpeed = sp.Ts.OptimizeSpeed };
         if (st.Visible)
         {
             ResolvedPaint fill = ResolvePaint(st.Fill, f, st, ctm, null, ref bbox);
@@ -93,6 +94,32 @@ internal sealed partial class SceneBuilder
         return x1 >= x0 && y1 >= y0 && double.IsFinite(x0 + y0 + x1 + y1) ? new Box(x0, y0, x1 - x0, y1 - y0) : null;
     }
 
+    // The box paint servers measure text against: each glyph's advance wide and the font's ascent plus descent tall, not the ink, so a gradient
+    // spans the line rather than the letters.
+    private static Box? LineBox(List<Placed> placed)
+    {
+        double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+        foreach (Placed p in placed)
+        {
+            if (p.Skip || !p.Span.St.Visible)
+            {
+                continue;
+            }
+
+            FontMetrics fm = p.Font.Metrics;
+            double scale = p.Font.Size / (double)fm.UnitsPerEm;
+            double asc = Math.Abs(fm.Ascender) * scale;
+            double desc = Math.Abs(fm.Descender) * scale;
+            (double ax, double ay, double bx, double by) = p.Matrix.TransformRect(0, -asc, p.Cluster.Advance, desc);
+            x0 = Math.Min(x0, ax);
+            y0 = Math.Min(y0, ay);
+            x1 = Math.Max(x1, bx);
+            y1 = Math.Max(y1, by);
+        }
+
+        return x1 >= x0 && y1 >= y0 && double.IsFinite(x0 + y0 + x1 + y1) ? new Box(x0, y0, x1 - x0, y1 - y0) : null;
+    }
+
     private void EmitText(Stack<Frame> stack, Frame f, SvgElement e)
     {
         if (!Begin(f, e, out SvgStyle st, out Affine ctm) || st.Opacity <= 0)
@@ -113,7 +140,8 @@ internal sealed partial class SceneBuilder
         }
 
         Box? ink = InkBox(placed);
-        BBoxHolder? bbox = ink is { } ib ? new BBoxHolder { Known = true, X = ib.X, Y = ib.Y, Width = ib.W, Height = ib.H } : new BBoxHolder { Known = true };
+        Box? lineBox = LineBox(placed) ?? ink;
+        BBoxHolder? bbox = lineBox is { } ib ? new BBoxHolder { Known = true, X = ib.X, Y = ib.Y, Width = ib.W, Height = ib.H } : new BBoxHolder { Known = true };
         Path? clip = f.Clip;
         if (!Decorate(e, ctm, f.Vp, f.UseDepth, ref clip, out Deco? deco, ink))
         {
@@ -233,7 +261,7 @@ internal sealed partial class SceneBuilder
             MiterLimit = sp.Miter,
             Dash = sp.Dash,
             DashOffset = sp.DashOffset,
-            Antialias = st.Antialias,
+            Antialias = st.Antialias && !sp.OptimizeSpeed,
             StrokeFirst = false,
             Clip = clip,
         };
@@ -359,7 +387,7 @@ internal sealed partial class SceneBuilder
                 MiterLimit = sp.Miter,
                 Dash = sp.Dash,
                 DashOffset = sp.DashOffset,
-                Antialias = st.Antialias,
+                Antialias = st.Antialias && !sp.OptimizeSpeed,
                 StrokeFirst = st.StrokeFirst,
                 Clip = clip,
             };

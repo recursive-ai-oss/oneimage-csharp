@@ -97,8 +97,21 @@ internal sealed class SvgDocument
         "marker-end", "marker-mid", "marker-start", "mask", "mask-type", "opacity", "overflow", "paint-order", "pointer-events",
         "shape-rendering", "stop-color", "stop-opacity", "stroke", "stroke-dasharray", "stroke-dashoffset", "stroke-linecap", "stroke-linejoin",
         "stroke-miterlimit", "stroke-opacity", "stroke-width", "text-anchor", "text-decoration", "text-rendering", "transform-box",
-        "transform-origin", "unicode-bidi", "vector-effect", "visibility", "word-spacing", "writing-mode", "font", "font-kerning", "font-variant-caps", "white-space",
+        "transform-origin", "unicode-bidi", "vector-effect", "visibility", "word-spacing", "writing-mode", "font", "kerning", "font-variant-caps", "white-space",
     };
+
+    private static bool HasCharacterData(XmlElement x)
+    {
+        foreach (XmlNode node in x.Children)
+        {
+            if (node is XmlText t && !string.IsNullOrWhiteSpace(t.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private SvgDocument(SvgElement root, Dictionary<string, SvgElement> ids, int count)
     {
@@ -152,6 +165,11 @@ internal sealed class SvgDocument
 
             if (e.Name is "text" or "tspan" or "textPath" or "tref" or "a")
             {
+                e.TextContent = [];
+            }
+            else if (e.Name is "rect" or "circle" or "ellipse" or "line" or "path" or "polygon" or "polyline" or "g" or "defs" or "symbol" or "title" or "desc" && HasCharacterData(x))
+            {
+                // A tref may point at any SVG element, so a known one that holds text of its own keeps it.
                 e.TextContent = [];
             }
 

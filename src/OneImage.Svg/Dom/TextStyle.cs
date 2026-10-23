@@ -67,7 +67,7 @@ internal sealed class TextStyle
     /// Computes an element's text style from its declared properties and its parent's computed one. An invalid declaration is ignored,
     /// as if it had not been written.
     /// </summary>
-    public static TextStyle Compute(SvgElement e, TextStyle parent, in SvgStyle st)
+    public static TextStyle Compute(SvgElement e, TextStyle parent, in SvgStyle st, double percentBase = 100)
     {
         var t = (TextStyle)parent.MemberwiseClone();
         t.Underline = t.Overline = t.LineThrough = false;
@@ -149,7 +149,25 @@ internal sealed class TextStyle
                     }
 
                     break;
+                case "kerning":
+                    // The SVG 1.1 property: a zero length turns kerning off, `auto` leaves it on.
+                    if (value is "auto" || initial)
+                    {
+                        t.Kerning = true;
+                    }
+                    else if (Length.TryParse(value, out Length kl) && kl.Value == 0)
+                    {
+                        t.Kerning = false;
+                    }
+
+                    break;
                 case "text-rendering":
+                    // Only the text element decides how its glyphs are drawn; a tspan's own value is not used.
+                    if (e.Name != "text")
+                    {
+                        break;
+                    }
+
                     if (value is "optimizeSpeed")
                     {
                         t.OptimizeSpeed = true;
@@ -176,7 +194,7 @@ internal sealed class TextStyle
                     {
                         t.LetterSpacing = 0;
                     }
-                    else if (!inherit && SpacingPx(value, st) is { } ls)
+                    else if (!inherit && SpacingPx(value, st, percentBase) is { } ls)
                     {
                         t.LetterSpacing = ls;
                     }
@@ -187,7 +205,7 @@ internal sealed class TextStyle
                     {
                         t.WordSpacing = 0;
                     }
-                    else if (!inherit && SpacingPx(value, st) is { } ws)
+                    else if (!inherit && SpacingPx(value, st, percentBase) is { } ws)
                     {
                         t.WordSpacing = ws;
                     }
@@ -294,7 +312,7 @@ internal sealed class TextStyle
         return t;
     }
 
-    private static double? SpacingPx(string value, in SvgStyle st)
+    private static double? SpacingPx(string value, in SvgStyle st, double percentBase)
     {
         if (!Length.TryParse(value, out Length l))
         {
@@ -307,7 +325,7 @@ internal sealed class TextStyle
             LengthUnit.Em => l.Value * st.FontSize,
             LengthUnit.Ex => l.Value * st.FontSize / 2,
             LengthUnit.Rem => l.Value * SvgStyle.DefaultFontSize,
-            LengthUnit.Percent => l.Value / 100 * st.FontSize,
+            LengthUnit.Percent => l.Value / 100 * percentBase,
             _ => null,
         };
     }

@@ -49,7 +49,7 @@ internal sealed partial class SceneBuilder
         while (chain.Count > 0)
         {
             SvgElement n = chain.Pop();
-            ts = TextStyle.Compute(n, ts, StyleOf(n));
+            ts = TextStyle.Compute(n, ts, StyleOf(n), _rootVp.Width);
             _textStyles[n] = ts;
         }
 
@@ -259,8 +259,9 @@ internal sealed partial class SceneBuilder
 
             if (preserve)
             {
+                // A preserved space still ends the collapsing run: the next collapsible space after it is dropped.
                 m.Append(c, id);
-                _lastCollapsibleSpace = false;
+                _lastCollapsibleSpace = c == ' ';
                 continue;
             }
 
@@ -363,7 +364,7 @@ internal sealed partial class SceneBuilder
     {
         var m = new TextModel();
         TextStyle parentTs = textEl.Parent is null ? TextStyle.Initial : TextStyleOf(textEl.Parent);
-        TextStyle ts = TextStyle.Compute(textEl, parentTs, st);
+        TextStyle ts = TextStyle.Compute(textEl, parentTs, st, _rootVp.Width);
 
         // A decoration set on an ancestor of the text element applies to the text, drawn with the text element's own paint.
         for (SvgElement? anc = textEl.Parent; anc is not null; anc = anc.Parent)
@@ -418,7 +419,7 @@ internal sealed partial class SceneBuilder
                 continue;
             }
 
-            TextStyle cts = TextStyle.Compute(child, f.Span.Ts, cst);
+            TextStyle cts = TextStyle.Compute(child, f.Span.Ts, cst, _rootVp.Width);
             bool isPath = child.Name == "textPath";
             TSpan span = NewSpan(m, child, cst, cts, f.Span, isPath);
             if (isPath)

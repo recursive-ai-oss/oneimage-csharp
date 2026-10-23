@@ -98,7 +98,7 @@ internal sealed partial class SceneBuilder
             TSpan sp = m.Spans[m.CharSpan[i]];
             int cp = CodePointAt(text, i, c1);
             Font? f = sp.Chain!.Pick(cp);
-            int kern = sp.Ts.Kerning && !sp.Ts.OptimizeSpeed ? 0 : 1;
+            int kern = sp.Ts.Kerning ? 0 : 1;
             if (f is null || !sp.Ts.SmallCaps)
             {
                 return (f, kern);
@@ -121,6 +121,9 @@ internal sealed partial class SceneBuilder
         }
 
         int pos = c0;
+        Font? prevFont = null;
+        int prevOpt = 0;
+        byte prevLevel = 0;
         while (pos < c1)
         {
             int cp = CodePointAt(text, pos, c1);
@@ -145,6 +148,14 @@ internal sealed partial class SceneBuilder
                 end += cpn > 0xFFFF ? 2 : 1;
             }
 
+            if (prevFont is not null && level == 0 && prevLevel == 0 && (optIndex & 1) == 0 && prevOpt == optIndex && all.Count > 0 && all[^1].Index + all[^1].Length == pos)
+            {
+                KernAcrossSizes(all[^1], chars, pos, prevFont, font, optIndex);
+            }
+
+            prevFont = font;
+            prevOpt = optIndex;
+            prevLevel = level;
             IReadOnlyList<ShapedCluster> clusters = TextShaping.ShapeRun(chars.AsSpan(pos, end - pos), font, (level & 1) == 1, ShapeOptions[optIndex]);
             foreach (ShapedCluster c in clusters)
             {
@@ -167,6 +178,25 @@ internal sealed partial class SceneBuilder
 
             pos = end;
         }
+    }
+
+    // Two runs of one family that differ in size or weight still kern as one text: the pair adjustment of the last cluster before the break
+    // and the first character after it is taken in the first run's font and added to that cluster's advance.
+    private static void KernAcrossSizes(Placed last, char[] chars, int pos, Font before, Font after, int optIndex)
+    {
+        if (before.Family.Name != after.Family.Name || last.Length != 1)
+        {
+            return;
+        }
+
+        char[] pair = [chars[last.Index], chars[pos]];
+        IReadOnlyList<ShapedCluster> two = TextShaping.ShapeRun(pair, before, false, ShapeOptions[optIndex]);
+        if (two.Count != 2)
+        {
+            return;
+        }
+
+        last.Advance += two[0].Advance - last.Cluster.Advance;
     }
 
     private static int CodePointAt(string text, int i, int limit) =>

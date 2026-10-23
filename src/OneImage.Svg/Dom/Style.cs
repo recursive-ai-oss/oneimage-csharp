@@ -40,7 +40,8 @@ internal readonly record struct Paint(PaintKind Kind, Rgba32 Color = default, st
 /// </summary>
 internal struct SvgStyle
 {
-    public const double DefaultFontSize = 16;
+    /// <summary>The size of the <c>medium</c> font, which is the initial <c>font-size</c>; the named sizes step by 1.2 around it.</summary>
+    public const double DefaultFontSize = 12;
 
     /// <summary>The <see cref="PaintOrder"/> code for fill, stroke, markers.</summary>
     public const int NormalPaintOrder = 0 | (1 << 2) | (2 << 4);
@@ -659,13 +660,13 @@ internal struct SvgStyle
         string v = value.Trim();
         switch (v)
         {
-            case "xx-small": return 9;
-            case "x-small": return 10;
-            case "small": return 13;
-            case "medium": return 16;
-            case "large": return 18;
-            case "x-large": return 24;
-            case "xx-large": return 32;
+            case "xx-small": return 12 / (1.2 * 1.2 * 1.2);
+            case "x-small": return 12 / (1.2 * 1.2);
+            case "small": return 12 / 1.2;
+            case "medium": return 12;
+            case "large": return 12 * 1.2;
+            case "x-large": return 12 * 1.2 * 1.2;
+            case "xx-large": return 12 * 1.2 * 1.2 * 1.2;
             case "larger": return parentSize * 1.2;
             case "smaller": return parentSize / 1.2;
         }
