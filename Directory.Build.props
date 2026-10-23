@@ -33,7 +33,7 @@
     <Copyright>Copyright (c) Recursive AI, LLC</Copyright>
     <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
     <!-- The one place the package version lives. A release tag must read v<Version>. -->
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/recursive-ai-oss/$(LibName.ToLowerInvariant())-csharp</RepositoryUrl>
     <PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>

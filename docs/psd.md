@@ -14,6 +14,12 @@ file.Document.Render().Save("flattened.png");
 file.Save("edited.psd");                       // PSB when the document is wider or taller than 30,000 px
 ```
 
+## Known limitations
+
+- **Saving after editing a layer style throws.** If a layer's `Style` was changed, replaced, set to `null`, or added to a layer that had none, `PsdFile.Save` throws `ImageOperationException` naming the layer. Writing layer styles from the model is not built yet. A layer whose `Style` is still the object read from the file is written back byte for byte. Styles can be inspected, edited and rendered; they cannot yet be saved. See [Layer effects](#layer-effects).
+- **Saving after replacing a gradient or pattern fill's brush throws.** A fill layer whose brush was replaced (and that has no PSD equivalent, such as an image brush) throws `ImageOperationException` on `Save` instead of being dropped. An unchanged fill is written back from its original block. See [Writing](#writing).
+- Text, smart objects, vector strokes and the layer effects that are not drawn render from their stored pixels. Multichannel documents are refused. Other fidelity gaps are listed under [What is covered](#what-is-covered).
+
 ## What is covered
 
 **Multichannel documents are refused** with a typed error, both as a merged image and through `PsdFile.Load`. Every other color mode (bitmap, gray, duotone, indexed, RGB, CMYK, Lab) loads.
