@@ -19,6 +19,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Fixed
 
+- `RecursiveAI.OneImage.Text`: hinting no longer lets a hostile font throw out of the interpreter: `ABS`, the cut-in compares of `MIAP`/`MIRP`/`MDRP` and the other absolute values no longer overflow on the most negative integer, and `ISECT` divides in 128 bits. The twilight zone is now kept as the control value program leaves it (each glyph starts from a copy), so fonts whose `prep` places twilight points hint as intended. All programs of one top-level glyph share a budget of 2^20 instructions; a composite that exceeds it is drawn unhinted instead of costing up to 2^18 per component.
 - `RecursiveAI.OneImage.Psd`: a pattern channel whose rectangle claims more data than the file holds is refused before its buffer is allocated, and the linear-light interpolation of a gradient glow is written and read back like that of other gradients.
 - `OneImage.Layers`: an edit of a layer's pixels now also recomputes the tiles that an inner effect (inner shadow, inner glow, inside stroke) draws from the edited shape, not only the ones outer effects reach. The pixels were correct after a fresh render; an incremental render could leave a stale tile next to the edit.
 - `RecursiveAI.OneImage.Psd`: an effect contour with a point that is not a number, or two points a hair apart that become one float, is skipped and counted in `EffectsNotDrawn` instead of throwing an argument exception (found by fuzzing).

@@ -33,12 +33,17 @@ internal sealed class TrueTypeGlyphs
     public Outline Load(int glyphId, TrueTypeHinter? hinter = null)
     {
         var pts = new PointBuffer();
-        if (!Append(pts, glyphId, hinter))
+        TrueTypeHinter.HintBudget? budget = hinter is null ? null : new TrueTypeHinter.HintBudget();
+        bool found = Append(pts, glyphId, hinter, budget);
+        if (budget is { Exhausted: true })
         {
-            return Outline.Empty;
+            // The glyph's programs together ran past the shared budget: draw it from its plain outline, whichever components were
+            // already fitted.
+            pts = new PointBuffer();
+            found = Append(pts, glyphId, null, null);
         }
 
-        return pts.ToOutline();
+        return found ? pts.ToOutline() : Outline.Empty;
     }
 
     private bool TryGetData(int glyphId, out ReadOnlySpan<byte> data)
@@ -92,7 +97,7 @@ internal sealed class TrueTypeGlyphs
 
     // Flattens the glyph and every component into one point list. Each composite gets a frame; a finished child is transformed in place
     // (matrix, then offset) so nested composites need no recursion.
-    private bool Append(PointBuffer pts, int rootId, TrueTypeHinter? hinter)
+    private bool Append(PointBuffer pts, int rootId, TrueTypeHinter? hinter, TrueTypeHinter.HintBudget? budget)
     {
         if (!TryGetData(rootId, out ReadOnlySpan<byte> root))
         {
@@ -101,7 +106,7 @@ internal sealed class TrueTypeGlyphs
 
         var stack = new List<Frame>(4);
         int components = 0;
-        if (!BeginGlyph(pts, stack, rootId, root, default, hinter))
+        if (!BeginGlyph(pts, stack, rootId, root, default, hinter, budget))
         {
             return true;
         }
@@ -200,7 +205,7 @@ internal sealed class TrueTypeGlyphs
                 throw new FontFormatException("Composite glyphs are nested too deeply.");
             }
 
-            if (!BeginGlyph(pts, stack, child, childData, comp, hinter))
+            if (!BeginGlyph(pts, stack, child, childData, comp, hinter, budget))
             {
                 // Simple glyph: already appended, place it now. The parent frame is the top of the stack.
                 Place(pts, comp, f.StartPoint);
@@ -211,12 +216,12 @@ internal sealed class TrueTypeGlyphs
     }
 
     // Returns true when the glyph is a composite and a frame was pushed; a simple glyph is appended to the points and false returned.
-    private static bool BeginGlyph(PointBuffer pts, List<Frame> stack, int glyphId, ReadOnlySpan<byte> data, Frame placement, TrueTypeHinter? hinter)
+    private static bool BeginGlyph(PointBuffer pts, List<Frame> stack, int glyphId, ReadOnlySpan<byte> data, Frame placement, TrueTypeHinter? hinter, TrueTypeHinter.HintBudget? budget)
     {
         short contours = Be.I16(data, 0);
         if (contours >= 0)
         {
-            ReadSimple(pts, data, contours, hinter);
+            ReadSimple(pts, data, contours, hinter, budget);
             return false;
         }
 
@@ -282,7 +287,7 @@ internal sealed class TrueTypeGlyphs
         }
     }
 
-    private static void ReadSimple(PointBuffer pts, ReadOnlySpan<byte> d, int contours, TrueTypeHinter? hinter)
+    private static void ReadSimple(PointBuffer pts, ReadOnlySpan<byte> d, int contours, TrueTypeHinter? hinter, TrueTypeHinter.HintBudget? budget)
     {
         int p = 10;
         if (contours == 0)
@@ -383,7 +388,7 @@ internal sealed class TrueTypeGlyphs
         pts.Count = basePoint + count;
 
         // Grid fitting runs on the leaf glyph before it is placed in a composite; a composite's own instructions are not run.
-        if (hinter is not null && insLen > 0 && insStart + insLen <= d.Length)
+        if (hinter is not null && budget is not null && insLen > 0 && insStart + insLen <= d.Length)
         {
             var ends = new int[contours];
             for (int i = 0; i < contours; i++)
@@ -391,7 +396,7 @@ internal sealed class TrueTypeGlyphs
                 ends[i] = Be.U16(d, 10 + (2 * i));
             }
 
-            hinter.TryHint(pts.X, pts.Y, pts.OnCurve, basePoint, count, ends, d.Slice(insStart, insLen));
+            hinter.TryHint(pts.X, pts.Y, pts.OnCurve, basePoint, count, ends, d.Slice(insStart, insLen), budget);
         }
     }
 

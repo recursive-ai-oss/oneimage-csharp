@@ -20,6 +20,13 @@ internal sealed class TrueTypeHinter
 {
     private const int MaxInstructions = 1 << 20;
     private const int MaxGlyphInstructions = 1 << 18;
+
+    /// <summary>
+    /// Instructions the programs of one top-level glyph may run in total, all components together. Each program is also capped at
+    /// 2^18 instructions, so a composite of any size costs at most 2^20 interpreter steps (plus the instruction scan of each program)
+    /// before the whole glyph is drawn unhinted.
+    /// </summary>
+    public const int MaxTotalGlyphInstructions = 1 << 20;
     private const int MaxCallDepth = 32;
     private const int MaxStack = 1 << 14;
     private const int MaxStorage = 1 << 14;
@@ -44,6 +51,7 @@ internal sealed class TrueTypeHinter
     private readonly int _twilightCount;
     private GraphicsState _defaults;
     private bool _usable;
+    private Zone? _prepTwilight;
 
     private struct Function
     {
@@ -78,6 +86,23 @@ internal sealed class TrueTypeHinter
         public int[] Ends = [];
         public int Count;
         public int Contours;
+
+        public Zone Clone()
+        {
+            var z = new Zone(Count)
+            {
+                Ends = Ends,
+                Contours = Contours,
+            };
+            OrgX.CopyTo(z.OrgX, 0);
+            OrgY.CopyTo(z.OrgY, 0);
+            CurX.CopyTo(z.CurX, 0);
+            CurY.CopyTo(z.CurY, 0);
+            OrusX.CopyTo(z.OrusX, 0);
+            OrusY.CopyTo(z.OrusY, 0);
+            Tags.CopyTo(z.Tags, 0);
+            return z;
+        }
 
         public Zone(int n)
         {
@@ -143,6 +168,9 @@ internal sealed class TrueTypeHinter
             // What the control value program leaves in the CVT and storage, and in the graphics state variables that persist, is
             // the starting point of every glyph program.
             h._defaults = ctx.Gs;
+            // The twilight zone is not reset between programs: points the control value program placed are where every glyph
+            // program starts (each glyph works on its own copy).
+            h._prepTwilight = ctx.Twilight;
             h._defaultsStored = true;
             h._usable = (ctx.Gs.InstructControl & 1) == 0;
         }
@@ -161,12 +189,25 @@ internal sealed class TrueTypeHinter
     /// grid-fitted outline in the same units (so the caller's usual scale gives pixels). Returns false, leaving the arrays alone,
     /// when the glyph has no instructions or its program fails.
     /// </summary>
-    public bool TryHint(float[] x, float[] y, bool[] onCurve, int first, int count, ReadOnlySpan<int> contourEnds, ReadOnlySpan<byte> instructions)
+    /// <remarks>
+    /// <paramref name="budget"/> is shared by every program of one top-level glyph (its components included): this call may run at most
+    /// the smaller of 2^18 and what is left of the 2^20 total, and what it ran is taken off. When the total is gone the budget is
+    /// marked exhausted and the caller draws the whole glyph unhinted.
+    /// </remarks>
+    public bool TryHint(float[] x, float[] y, bool[] onCurve, int first, int count, ReadOnlySpan<int> contourEnds, ReadOnlySpan<byte> instructions, HintBudget budget)
     {
         if (instructions.Length == 0 || count <= 0 || count > MaxPoints || !_defaultsStored)
         {
             return false;
         }
+
+        if (budget.Steps <= 0)
+        {
+            budget.Exhausted = true;
+            return false;
+        }
+
+        int allowed = Math.Min(MaxGlyphInstructions, budget.Steps);
 
         var glyph = new Zone(count + 4);
         for (int i = 0; i < count; i++)
@@ -188,6 +229,10 @@ internal sealed class TrueTypeHinter
         {
             ctx.Glyph = glyph;
             ctx.Reset();
+            if (_prepTwilight is not null)
+            {
+                ctx.SetTwilight(_prepTwilight.Clone());
+            }
 
             // A glyph program starts from the default graphics state, except for the variables the control value program may set.
             ctx.Gs.AutoFlip = _defaults.AutoFlip;
@@ -199,12 +244,20 @@ internal sealed class TrueTypeHinter
             ctx.Gs.SwCutIn = _defaults.SwCutIn;
             ctx.Gs.SwValue = _defaults.SwValue;
             ctx.BackwardCompatible = (ctx.Gs.InstructControl & 4) == 0;
-            ctx.RunGlyph(MaxGlyphInstructions, instructions.ToArray());
+            ctx.RunGlyph(allowed, instructions.ToArray());
         }
         catch (HintAbortException)
         {
+            budget.Steps -= Math.Max(1, ctx.Steps);
+            if (budget.Steps <= 0)
+            {
+                budget.Exhausted = true;
+            }
+
             return false;
         }
+
+        budget.Steps -= Math.Max(1, ctx.Steps);
 
         float back = 65536f / _scale;
         for (int i = 0; i < count; i++)
@@ -221,6 +274,16 @@ internal sealed class TrueTypeHinter
         }
 
         return true;
+    }
+
+    /// <summary>Instructions one top-level glyph may still run; shared by the programs of all its components.</summary>
+    public sealed class HintBudget
+    {
+        /// <summary>Instructions left.</summary>
+        public int Steps = MaxTotalGlyphInstructions;
+
+        /// <summary>True once the total ran out: the glyph is then drawn entirely unhinted.</summary>
+        public bool Exhausted;
     }
 
     // ---- fixed point helpers ----
@@ -247,8 +310,8 @@ internal sealed class TrueTypeHinter
         long t = (long)a * b;
         long d = c;
         bool neg = (t < 0) != (d < 0);
-        t = Math.Abs(t);
-        d = Math.Abs(d);
+        t = Abs(t);
+        d = Abs(d);
         long r = (t + (d / 2)) / d;
         r = neg ? -r : r;
         return (int)Math.Clamp(r, int.MinValue, int.MaxValue);
@@ -264,12 +327,17 @@ internal sealed class TrueTypeHinter
         long t = (long)a * b;
         long d = c;
         bool neg = (t < 0) != (d < 0);
-        t = Math.Abs(t);
-        d = Math.Abs(d);
+        t = Abs(t);
+        d = Abs(d);
         long r = t / d;
         r = neg ? -r : r;
         return (int)Math.Clamp(r, int.MinValue, int.MaxValue);
     }
+
+    // Math.Abs throws on the most negative value, and font code can put that value on the stack or into a distance.
+    private static int Abs(int v) => v < 0 ? unchecked(-v) : v;
+
+    private static long Abs(long v) => v < 0 ? unchecked(-v) : v;
 
     private static int FloorDiv(int a, int b) => (int)Math.Floor((double)a / b);
 
@@ -306,6 +374,16 @@ internal sealed class TrueTypeHinter
             public int Count;
             public int Start;
             public int FuncCode;
+        }
+
+        public int Steps => _steps;
+
+        public Zone Twilight => _twilight;
+
+        public void SetTwilight(Zone z)
+        {
+            _twilight = z;
+            SelectZones();
         }
 
         public void Reset()
@@ -410,7 +488,7 @@ internal sealed class TrueTypeHinter
         private int FdotP()
         {
             int d = ((Gs.FvX * Gs.PvX) + (Gs.FvY * Gs.PvY)) >> 14;
-            return Math.Abs(d) < 0x400 ? 0x4000 : d;
+            return Abs(d) < 0x400 ? 0x4000 : d;
         }
 
         private bool YMoves => !(BackwardCompatible && _iupX && _iupY);
@@ -1080,7 +1158,7 @@ internal sealed class TrueTypeHinter
                 }
 
                 case 0x64:
-                    Push(Math.Abs(Pop()));
+                    Push(Abs(Pop()));
                     break;
                 case 0x65:
                     Push(unchecked(-Pop()));
@@ -1573,7 +1651,7 @@ internal sealed class TrueTypeHinter
             int org = Project(_zp0.CurX[p], _zp0.CurY[p]);
             if ((op & 1) != 0)
             {
-                if (Math.Abs(distance - org) > Gs.CvtCutIn)
+                if (Abs(distance - org) > Gs.CvtCutIn)
                 {
                     distance = org;
                 }
@@ -1600,7 +1678,7 @@ internal sealed class TrueTypeHinter
                 orgDist = MulFix(orgDist, _h._scale);
             }
 
-            if (Math.Abs(orgDist - Gs.SwValue) < Gs.SwCutIn)
+            if (Abs(orgDist - Gs.SwValue) < Gs.SwCutIn)
             {
                 orgDist = orgDist >= 0 ? Gs.SwValue : -Gs.SwValue;
             }
@@ -1634,7 +1712,7 @@ internal sealed class TrueTypeHinter
             int p = Pt(_zp1, Pop());
             Pt(_zp0, Gs.Rp0);
             int cvtDist = n == -1 ? 0 : GetCvt(n);
-            if (Math.Abs(cvtDist - Gs.SwValue) < Gs.SwCutIn)
+            if (Abs(cvtDist - Gs.SwValue) < Gs.SwCutIn)
             {
                 cvtDist = cvtDist >= 0 ? Gs.SwValue : -Gs.SwValue;
             }
@@ -1657,7 +1735,7 @@ internal sealed class TrueTypeHinter
             int distance;
             if ((op & 4) != 0)
             {
-                if (Gs.Zp0 == Gs.Zp1 && Math.Abs(cvtDist - orgDist) > Gs.CvtCutIn)
+                if (Gs.Zp0 == Gs.Zp1 && Abs(cvtDist - orgDist) > Gs.CvtCutIn)
                 {
                     cvtDist = orgDist;
                 }
@@ -1889,19 +1967,20 @@ internal sealed class TrueTypeHinter
             Pt(_zp1, a1);
             Pt(_zp0, b0);
             Pt(_zp0, b1);
-            long dbx = _zp0.CurX[b1] - _zp0.CurX[b0];
-            long dby = _zp0.CurY[b1] - _zp0.CurY[b0];
-            long dax = _zp1.CurX[a1] - _zp1.CurX[a0];
-            long day = _zp1.CurY[a1] - _zp1.CurY[a0];
-            long dx = _zp0.CurX[b0] - _zp1.CurX[a0];
-            long dy = _zp0.CurY[b0] - _zp1.CurY[a0];
+            // Int128 throughout: coordinates are font-controlled, so products and the -1 divisor case must not overflow.
+            Int128 dbx = (long)_zp0.CurX[b1] - _zp0.CurX[b0];
+            Int128 dby = (long)_zp0.CurY[b1] - _zp0.CurY[b0];
+            Int128 dax = (long)_zp1.CurX[a1] - _zp1.CurX[a0];
+            Int128 day = (long)_zp1.CurY[a1] - _zp1.CurY[a0];
+            Int128 dx = (long)_zp0.CurX[b0] - _zp1.CurX[a0];
+            Int128 dy = (long)_zp0.CurY[b0] - _zp1.CurY[a0];
             _zp2.Tags[p] |= TouchX | TouchY;
-            long discriminant = (dax * -dby) - (day * -dbx);
+            Int128 discriminant = (dax * -dby) - (day * -dbx);
             if (discriminant != 0)
             {
-                long val = (dx * -dby) - (dy * -dbx);
-                _zp2.CurX[p] = (int)(_zp1.CurX[a0] + (val * dax / discriminant));
-                _zp2.CurY[p] = (int)(_zp1.CurY[a0] + (val * day / discriminant));
+                Int128 val = (dx * -dby) - (dy * -dbx);
+                _zp2.CurX[p] = unchecked((int)(_zp1.CurX[a0] + (val * dax / discriminant)));
+                _zp2.CurY[p] = unchecked((int)(_zp1.CurY[a0] + (val * day / discriminant)));
             }
             else
             {

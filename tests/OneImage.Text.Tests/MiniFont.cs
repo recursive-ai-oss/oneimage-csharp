@@ -40,7 +40,42 @@ internal static class MiniFont
         return Sfnt(0x00010000, ("glyf"u8.ToArray(), glyf), ("loca"u8.ToArray(), loca), localIndexToLoc: 1);
     }
 
-    private static byte[] Sfnt(uint version, (byte[] Tag, byte[] Data) outline1, (byte[] Tag, byte[] Data)? outline2 = null, int localIndexToLoc = 0)
+    /// <summary>
+    /// A TrueType font with hinting programs: glyph ids follow the order of <paramref name="glyphs"/> (raw glyf entries; the cmap
+    /// maps only 'A' to glyph 1). The 'maxp' table is full size so the interpreter's limits come from it.
+    /// </summary>
+    public static byte[] TrueTypeHinted(byte[][] glyphs, byte[] prep, byte[]? fpgm = null)
+    {
+        var glyf = new MemoryStream();
+        byte[] loca = new byte[4 * (glyphs.Length + 1)];
+        for (int i = 0; i < glyphs.Length; i++)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(loca.AsSpan(4 * i), (uint)glyf.Length);
+            glyf.Write(glyphs[i]);
+            if (glyphs[i].Length % 2 != 0)
+            {
+                glyf.WriteByte(0);
+            }
+        }
+
+        BinaryPrimitives.WriteUInt32BigEndian(loca.AsSpan(4 * glyphs.Length), (uint)glyf.Length);
+        byte[] maxp = new byte[32];
+        BinaryPrimitives.WriteUInt32BigEndian(maxp, 0x00010000);
+        BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(4), (ushort)glyphs.Length);
+        BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(16), 16);
+        BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(18), 16);
+        BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(20), 16);
+        BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(24), 64);
+        var extra = new List<(byte[], byte[])> { ("prep"u8.ToArray(), prep), ("cvt "u8.ToArray(), new byte[16]) };
+        if (fpgm is not null)
+        {
+            extra.Add(("fpgm"u8.ToArray(), fpgm));
+        }
+
+        return Sfnt(0x00010000, ("glyf"u8.ToArray(), glyf.ToArray()), ("loca"u8.ToArray(), loca), localIndexToLoc: 1, extra: extra, maxpData: maxp);
+    }
+
+    private static byte[] Sfnt(uint version, (byte[] Tag, byte[] Data) outline1, (byte[] Tag, byte[] Data)? outline2 = null, int localIndexToLoc = 0, IEnumerable<(byte[] Tag, byte[] Data)>? extra = null, byte[]? maxpData = null)
     {
         byte[] head = new byte[54];
         BinaryPrimitives.WriteUInt16BigEndian(head.AsSpan(18), 1000);
@@ -49,8 +84,11 @@ internal static class MiniFont
         BinaryPrimitives.WriteInt16BigEndian(hhea.AsSpan(4), 800);
         BinaryPrimitives.WriteInt16BigEndian(hhea.AsSpan(6), -200);
         BinaryPrimitives.WriteUInt16BigEndian(hhea.AsSpan(34), 2);
-        byte[] maxp = new byte[6];
-        BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(4), 2);
+        byte[] maxp = maxpData ?? new byte[6];
+        if (maxpData is null)
+        {
+            BinaryPrimitives.WriteUInt16BigEndian(maxp.AsSpan(4), 2);
+        }
         byte[] hmtx = new byte[8];
         BinaryPrimitives.WriteUInt16BigEndian(hmtx.AsSpan(0), 500);
         BinaryPrimitives.WriteUInt16BigEndian(hmtx.AsSpan(4), 600);
@@ -72,6 +110,11 @@ internal static class MiniFont
         if (outline2 is { } o2)
         {
             tables.Add(o2);
+        }
+
+        if (extra is not null)
+        {
+            tables.AddRange(extra);
         }
 
         var ms = new MemoryStream();

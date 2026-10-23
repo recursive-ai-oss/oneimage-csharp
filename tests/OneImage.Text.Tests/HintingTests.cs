@@ -26,7 +26,7 @@ public class HintingTests
     {
         float[] x = [100, 600, 600, 100];
         y = [0, 0, 700, 700];
-        return h.TryHint(x, y, [true, true, true, true], 0, 4, [3], program);
+        return h.TryHint(x, y, [true, true, true, true], 0, 4, [3], program, new TrueTypeHinter.HintBudget());
     }
 
     private static void MustFailQuickly(byte[] fpgm, byte[] prep, byte[] glyph, bool setupFails)
