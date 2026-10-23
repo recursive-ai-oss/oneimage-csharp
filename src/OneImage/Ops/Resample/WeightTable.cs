@@ -185,125 +185,33 @@ internal sealed class WeightTable
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int, long, ResamplingFilter), WeightTable> s_cache = new();
 
-    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    // Tables are built in per-thread scratch and only the exact-size result is allocated: a miss for a size that was never seen
+    // (a stream of differently sized crops) used to cost a growing list plus its copy as well.
+    [ThreadStatic]
+    private static WeightBuffers? t_scratch;
+
+    private const long MaxRetainedScratchBytes = 4L << 20;
+
     private static WeightTable BuildCore(int sourceSize, int outputSize, double scale, ResamplingFilter filter)
     {
-        var start = new int[outputSize];
-        var count = new int[outputSize];
-        var offset = new int[outputSize];
-        bool identity = sourceSize == outputSize && Math.Abs(scale - 1) < 1e-12;
-        // Sized for the expected taps per output so the list does not grow by doubling (each doubling leaves a dead array behind).
-        double tapsPerOutput = identity || filter == ResamplingFilter.Nearest ? 1 : filter == ResamplingFilter.Box ? Math.Ceiling(scale) + 1 : (2 * FilterFunctions.Support(filter) * Math.Max(1, scale)) + 2;
-        var weights = new List<float>((int)Math.Min(1 << 24, outputSize * tapsPerOutput));
-        double[] tmp = new double[8];
-        double[] folded = [];
-        for (int o = 0; o < outputSize; o++)
+        WeightBuffers buffers = t_scratch ??= new WeightBuffers();
+        try
         {
-            offset[o] = weights.Count;
-            if (identity)
+            buffers.Fill(sourceSize, outputSize, scale, filter);
+            return new WeightTable(
+                buffers.Start.AsSpan(0, outputSize).ToArray(),
+                buffers.Count.AsSpan(0, outputSize).ToArray(),
+                buffers.Offset.AsSpan(0, outputSize).ToArray(),
+                buffers.Weights.AsSpan(0, buffers.WeightCount).ToArray(),
+                sourceSize);
+        }
+        finally
+        {
+            if (buffers.CapacityBytes > MaxRetainedScratchBytes)
             {
-                start[o] = o;
-                count[o] = 1;
-                weights.Add(1f);
-                continue;
-            }
-
-            if (filter == ResamplingFilter.Nearest)
-            {
-                start[o] = Math.Clamp((int)Math.Floor((o + 0.5) * scale), 0, sourceSize - 1);
-                count[o] = 1;
-                weights.Add(1f);
-                continue;
-            }
-
-            int k0;
-            int k1;
-            if (filter == ResamplingFilter.Box)
-            {
-                k0 = (int)Math.Floor(o * scale);
-                k1 = (int)Math.Ceiling((o + 1) * scale) - 1;
-            }
-            else
-            {
-                double center = ((o + 0.5) * scale) - 0.5;
-                double radius = FilterFunctions.Support(filter) * Math.Max(1, scale);
-                k0 = (int)Math.Floor(center - radius);
-                k1 = (int)Math.Ceiling(center + radius);
-            }
-
-            int n = k1 - k0 + 1;
-            if (tmp.Length < n)
-            {
-                tmp = new double[n];
-            }
-
-            double sum = 0;
-            for (int i = 0; i < n; i++)
-            {
-                int k = k0 + i;
-                double w;
-                if (filter == ResamplingFilter.Box)
-                {
-                    // Overlap of source pixel [k, k+1) with the output window [o*scale, (o+1)*scale).
-                    w = Math.Max(0, Math.Min(k + 1, (o + 1) * scale) - Math.Max(k, o * scale));
-                }
-                else
-                {
-                    double x = (k - (((o + 0.5) * scale) - 0.5)) / Math.Max(1, scale);
-                    w = FilterFunctions.Evaluate(filter, x);
-                }
-
-                tmp[i] = w;
-                sum += w;
-            }
-
-            // Fold taps outside [0, sourceSize) onto the edge pixels.
-            int lo = Math.Clamp(k0, 0, sourceSize - 1);
-            int hi = Math.Clamp(k1, 0, sourceSize - 1);
-            int m = hi - lo + 1;
-            if (folded.Length < m)
-            {
-                folded = new double[m];
-            }
-
-            Array.Clear(folded, 0, m);
-            for (int i = 0; i < n; i++)
-            {
-                folded[Math.Clamp(k0 + i, 0, sourceSize - 1) - lo] += tmp[i];
-            }
-
-            // Trim zero weights at both ends (kernel zero crossings) so no tap is wasted.
-            int a = 0;
-            int b = m - 1;
-            while (a < b && folded[a] == 0)
-            {
-                a++;
-            }
-
-            while (b > a && folded[b] == 0)
-            {
-                b--;
-            }
-
-            if (sum <= 0)
-            {
-                // Only possible for degenerate scales; fall back to the nearest pixel.
-                start[o] = Math.Clamp((int)Math.Floor((o + 0.5) * scale), 0, sourceSize - 1);
-                count[o] = 1;
-                weights.Add(1f);
-                continue;
-            }
-
-            start[o] = lo + a;
-            count[o] = b - a + 1;
-            for (int i = a; i <= b; i++)
-            {
-                weights.Add((float)(folded[i] / sum));
+                buffers.Dispose();
             }
         }
-
-        return new WeightTable(start, count, offset, weights.ToArray(), sourceSize);
     }
 
     /// <summary>The source index range [first, end) read by output indices [<paramref name="outFirst"/>, <paramref name="outEnd"/>).</summary>

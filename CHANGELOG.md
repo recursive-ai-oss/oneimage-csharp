@@ -4,6 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `PixelResizer`: an allocation-free resize from a span to a span (`Resize<TPixel>` for the pixel structs, `ResizeRaw` for any `PixelFormat` with up to four channels, and `PixelResizer.GetSize` for the size `Image.Resize` would scale to). Output is byte for byte what `Image.Resize(w, h, Fit.Stretch, ...)` gives for every filter and mode (checked against 2,500 hashes captured from 1.6.0, on the scalar, AVX2 and AVX-512 paths). The resizer keeps its buffers, so after a warm-up it allocates nothing per call even when every call has a new size; `ScratchBytes`, `maxScratchBytes` and `Trim()` bound and release them. Calls with enough pixels split their output rows over up to `maxDegree` threads without allocating. On 2300x60 gray lines to height 32 (Lanczos3, linear light) it takes 70 us at the default degree (255 us on the calling thread alone) against 255 us for 1.6.0 `Image.Resize`, and allocates nothing per call against 6 KB (same size) or 140 KB (a new width each call). See the guide.
+
+### Changed
+
+- `Image.Resize` allocates less when it meets a size it has not seen: the tap tables are built in per-thread scratch and only their exact size is allocated (140 KB to 77 KB per call for 2300x60 to height 32 with a new width each time). The 8-bit gray conversions are faster (255 to 205 us for the same-size case). Output is unchanged.
+
 ## [1.6.0] - 2026-10-23
 
 ### Added

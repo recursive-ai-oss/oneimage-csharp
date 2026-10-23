@@ -70,4 +70,65 @@ public class ResizeBitIdentityTests
         Assert.True(failures.Count == 0, $"{failures.Count} of {checkedCases} differ from the 1.6.0 reference, first: {string.Join("; ", failures.Take(8))}");
         Assert.True(checkedCases > 1000);
     }
+
+    [Fact]
+    public void SpanResizeMatchesReference()
+    {
+        var failures = new List<string>();
+        int checkedCases = 0;
+        using var resizer = new PixelResizer();
+        foreach (IGrouping<(string, int, int), ResizeMatrix.Case> group in ResizeMatrix.All().GroupBy(c => (c.Format, c.SourceWidth, c.SourceHeight)))
+        {
+            (_, byte[] bytes, PixelFormat format) = ResizeMatrix.Source(group.Key.Item1, group.Key.Item2, group.Key.Item3);
+            foreach (ResizeMatrix.Case c in group)
+            {
+                byte[] output = new byte[c.Width * c.Height * format.BytesPerPixel];
+                resizer.ResizeRaw(bytes, format, c.SourceWidth, c.SourceHeight, 0, output, c.Width, c.Height, 0, c.Filter, c.Linear);
+                checkedCases++;
+                if (!s_reference.Value.TryGetValue(c.Key, out string? expected) || expected != ResizeMatrix.Hash(output))
+                {
+                    failures.Add(c.Key);
+                }
+            }
+        }
+
+        Assert.True(failures.Count == 0, $"{failures.Count} of {checkedCases} differ from the 1.6.0 reference, first: {string.Join("; ", failures.Take(8))}");
+    }
+
+    [Fact]
+    public void TypedAndStridedSpanResizeEqualTightRaw()
+    {
+        using var resizer = new PixelResizer();
+        foreach (string name in new[] { "Gray8", "Gray16", "Rgb24", "Rgba32" })
+        {
+            (_, byte[] bytes, PixelFormat format) = ResizeMatrix.Source(name, 129, 257);
+            int bpp = format.BytesPerPixel;
+            byte[] tight = new byte[65 * 100 * bpp];
+            resizer.ResizeRaw(bytes, format, 129, 257, 0, tight, 65, 100, 0);
+
+            // Same pixels in a padded source and into a padded destination.
+            int srcStride = (129 * bpp) + (3 * bpp);
+            byte[] padded = new byte[srcStride * 257];
+            for (int y = 0; y < 257; y++)
+            {
+                bytes.AsSpan(y * 129 * bpp, 129 * bpp).CopyTo(padded.AsSpan(y * srcStride));
+            }
+
+            int dstStride = (65 * bpp) + (5 * bpp);
+            byte[] outPadded = new byte[dstStride * 100];
+            resizer.ResizeRaw(padded, format, 129, 257, srcStride, outPadded, 65, 100, dstStride);
+            for (int y = 0; y < 100; y++)
+            {
+                Assert.True(tight.AsSpan(y * 65 * bpp, 65 * bpp).SequenceEqual(outPadded.AsSpan(y * dstStride, 65 * bpp)), $"{name} row {y}");
+            }
+        }
+
+        (_, byte[] g, _) = ResizeMatrix.Source("Gray8", 300, 200);
+        var gray = OneImage.Kernels.SpanCast.As<Gray8>(g);
+        var typed = new Gray8[75 * 50];
+        resizer.Resize<Gray8>(gray, 300, 200, typed, 75, 50);
+        byte[] raw = new byte[75 * 50];
+        resizer.ResizeRaw(g, PixelFormat.Gray8, 300, 200, 0, raw, 75, 50, 0);
+        Assert.True(OneImage.Kernels.SpanCast.AsBytes<Gray8>(typed).SequenceEqual(raw));
+    }
 }

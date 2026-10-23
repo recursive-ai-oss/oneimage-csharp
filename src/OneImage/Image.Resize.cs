@@ -41,6 +41,9 @@ public sealed partial class Image
     /// Nothing is computed until pixels are pulled; each output tile reads just the source region its taps reach.
     /// Results are identical for any thread count or tile order. Animated images resize every frame.
     /// </para>
+    /// <para>
+    /// To resize many small images in a loop without allocating, use <see cref="PixelResizer"/>: it gives the same bytes from a span to a span.
+    /// </para>
     /// </summary>
     /// <param name="width">Target width, or <see langword="null"/> to derive it from <paramref name="height"/>.</param>
     /// <param name="height">Target height, or <see langword="null"/> to derive it from <paramref name="width"/>.</param>

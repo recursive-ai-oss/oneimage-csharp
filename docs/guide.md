@@ -141,6 +141,25 @@ img.Resize(width: 100, filter: ResamplingFilter.Mitchell);
 - Resampling runs in linear light on premultiplied alpha and treats untagged RGB as sRGB. Pass `linear: false` to filter the stored values.
 - **Upscale defaults differ on purpose.** `Resize` enlarges by default (`upscale: true`): you asked for that size. `Image.Thumbnail` never enlarges unless you pass `upscale: true`: a thumbnail is not bigger than the original. With `Resize(..., upscale: false)` Contain, Cover and Pad stop at scale 1.
 
+**Many small resizes: `PixelResizer`**
+
+`Image.Resize` builds a graph, which is the right tool for one image. A program that resizes thousands of small ones in a loop (text-line crops for OCR, sprites, tiles) pays for that graph and for the tap tables of every new size on each call. `PixelResizer` does the same resize straight from a span to a span and keeps its working memory between calls:
+
+```csharp
+using var resizer = new PixelResizer();                       // one per thread; reuse it for every call
+var buffer = new Gray8[4000 * 32];
+foreach ((Gray8[] pixels, int width, int height) in crops)
+{
+    (int w, int h) = PixelResizer.GetSize(width, height, height: 32);   // the size Image.Resize(height: 32) gives
+    resizer.Resize<Gray8>(pixels, width, height, buffer.AsSpan(0, w * h), w, h);
+}
+```
+
+- **Same bytes as `Image.Resize`.** The output is identical to `image.Resize(w, h, Fit.Stretch, filter: ..., linear: ...)` for every filter, with the same linear-light and alpha handling, box pre-reduce and rounding, on every hardware path and at any degree. `GetSize` returns the size `Resize` scales to before any crop or padding (for `Fit.Cover` and `Fit.Pad`, crop or pad the result yourself).
+- **No allocation after warm-up.** Buffers grow to the largest size seen and are reused; calls with a different source or target size each time allocate nothing either. `ScratchBytes` reports what is held, `maxScratchBytes` (default 256 MiB) bounds it (an over-large call throws `ImageLimitException` before allocating), and `Trim()`/`Dispose()` give it back to the array pool.
+- **Typed and raw.** `Resize<TPixel>` takes `Gray8`, `Gray16`, `Rgb24`, `Rgba32` and the other pixel structs (straight alpha), with optional strides in pixels. `ResizeRaw` takes bytes and a `PixelFormat`, which also covers premultiplied alpha, CMYK and Lab.
+- **Threads.** An instance is not thread-safe (an overlapping call throws `InvalidOperationException`); use one per thread. Large enough calls split their output rows over up to `maxDegree` threads (default `ImageEngine.DefaultCallDegree`); small ones, and `maxDegree: 1`, stay on the calling thread. The bytes never depend on it.
+
 `Image.Thumbnail(path, width, height?, fit, anchor, upscale, filter, keepMetadata, ...)` is `Resize` plus the right defaults for a web-ready copy, in this order: apply EXIF orientation; resize (shrink-on-load for JPEG, never larger than the original unless `upscale: true`); convert RGB to sRGB and embed the compact sRGB profile; strip EXIF/XMP/IPTC. It also accepts a `Stream`, `ReadOnlyMemory<byte>` or an existing `Image`.
 
 **Geometry**

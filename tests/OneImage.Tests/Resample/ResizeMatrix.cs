@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
 namespace OneImage.Tests.Resample;
@@ -115,7 +114,7 @@ internal static class ResizeMatrix
 
     private static (Image, byte[], PixelFormat) Typed<T>(T[] pixels, int w, int h)
         where T : unmanaged, IPixel<T> =>
-        (Image.FromPixels<T>(pixels, w, h), MemoryMarshal.AsBytes(pixels.AsSpan()).ToArray(), T.Format);
+        (Image.FromPixels<T>(pixels, w, h), OneImage.Kernels.SpanCast.AsBytes<T>(pixels).ToArray(), T.Format);
 
     private static byte Luma(Rgba32 p) => (byte)(((p.R * 3) + (p.G * 5) + (p.B * 8)) >> 4);
 

@@ -21,6 +21,7 @@ internal readonly struct ResampleLayout
         Channels = format.ChannelCount;
         Linear = linear && format.Model is ColorModel.Rgb or ColorModel.Gray;
         Stride = Channels switch { 1 => 1, 2 => 2, _ => 4 };
+        BytesPerPixel = format.BytesPerPixel;
         if (Channels > 4)
         {
             throw new ImageOperationException($"Resampling {format} is not supported.");
@@ -40,6 +41,9 @@ internal readonly struct ResampleLayout
     public bool Linear { get; }
 
     public int Stride { get; }
+
+    /// <summary>Gets the bytes one stored pixel takes.</summary>
+    public int BytesPerPixel { get; }
 }
 
 /// <summary>
@@ -49,8 +53,11 @@ internal readonly struct ResampleLayout
 /// </summary>
 internal static class ResampleKernel
 {
-    /// <summary>Converts one row of stored pixels to working floats (see <see cref="ResampleLayout"/>).</summary>
-    public static void UnpackRow(ReadOnlySpan<byte> src, Span<float> dst, int width, in ResampleLayout l)
+    /// <summary>
+    /// Converts one row of stored pixels to working floats (see <see cref="ResampleLayout"/>). 16-bit and floating-point samples
+    /// pass through a temporary of <c>width * channels</c> floats: give it as <paramref name="scratch"/> to avoid renting one.
+    /// </summary>
+    public static void UnpackRow(ReadOnlySpan<byte> src, Span<float> dst, int width, in ResampleLayout l, Span<float> scratch = default)
     {
         int c = l.Channels;
         int cc = l.Colors;
@@ -62,6 +69,12 @@ internal static class ResampleKernel
 
         if (l.Sample == SampleType.U8)
         {
+            if (c == 1)
+            {
+                ResampleRowsKernel.UnpackGray8(src, dst, width, l.Linear);
+                return;
+            }
+
             float[] lut = l.Linear ? SrgbTables.ToLinear8 : SrgbTables.Identity8;
             if (BitConverter.IsLittleEndian && l.Colors == 3 && !l.PremultipliedStorage)
             {
@@ -129,11 +142,14 @@ internal static class ResampleKernel
             return;
         }
 
-        UnpackWide(src, dst, width, l);
+        UnpackWide(src, dst, width, l, scratch);
     }
 
-    /// <summary>Converts working floats back to stored pixels: un-premultiplies, encodes and rounds half up with clamping (floats are not clamped).</summary>
-    public static void PackRow(ReadOnlySpan<float> src, Span<byte> dst, int width, in ResampleLayout l)
+    /// <summary>
+    /// Converts working floats back to stored pixels: un-premultiplies, encodes and rounds half up with clamping (floats are not clamped).
+    /// 16-bit and floating-point samples pass through a temporary of <c>width * channels</c> floats, which may be given as <paramref name="scratch"/>.
+    /// </summary>
+    public static void PackRow(ReadOnlySpan<float> src, Span<byte> dst, int width, in ResampleLayout l, Span<float> scratch = default)
     {
         int c = l.Channels;
         int cc = l.Colors;
@@ -145,6 +161,12 @@ internal static class ResampleKernel
 
         if (l.Sample == SampleType.U8)
         {
+            if (c == 1)
+            {
+                ResampleRowsKernel.PackGray8(src, dst, width, l.Linear);
+                return;
+            }
+
             byte[] enc = SrgbTables.FromLinear8;
             if (l.Colors == 3 && !l.PremultipliedStorage)
             {
@@ -190,7 +212,7 @@ internal static class ResampleKernel
             return;
         }
 
-        PackWide(src, dst, width, l);
+        PackWide(src, dst, width, l, scratch);
     }
 
     // Fast paths for 8-bit RGB / RGBA (the common case). They compute exactly what the generic loops compute, one pixel per vector.
@@ -271,15 +293,16 @@ internal static class ResampleKernel
     private static int EncodedIndex(float v) => Math.Clamp((int)((v * 65535f) + 0.5f), 0, 65535);
 
     // 16-bit and floating-point samples: through normalized floats, with table or pow based transfer functions.
-    private static void UnpackWide(ReadOnlySpan<byte> src, Span<float> dst, int width, in ResampleLayout l)
+    private static void UnpackWide(ReadOnlySpan<byte> src, Span<float> dst, int width, in ResampleLayout l, Span<float> scratch)
     {
         int c = l.Channels;
         int cc = l.Colors;
         int p = l.Stride;
-        float[] tmp = ArrayPool<float>.Shared.Rent(width * c);
+        float[]? rented = scratch.Length >= width * c ? null : ArrayPool<float>.Shared.Rent(width * c);
+        Span<float> tmp = rented ?? scratch;
         try
         {
-            ConvertKernel.Unpack(src, l.Sample, tmp.AsSpan(0, width * c));
+            ConvertKernel.Unpack(src, l.Sample, tmp.Slice(0, width * c));
             bool floatSamples = l.Sample is SampleType.F16 or SampleType.F32;
             for (int x = 0; x < width; x++)
             {
@@ -315,16 +338,20 @@ internal static class ResampleKernel
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(tmp);
+            if (rented != null)
+            {
+                ArrayPool<float>.Shared.Return(rented);
+            }
         }
     }
 
-    private static void PackWide(ReadOnlySpan<float> src, Span<byte> dst, int width, in ResampleLayout l)
+    private static void PackWide(ReadOnlySpan<float> src, Span<byte> dst, int width, in ResampleLayout l, Span<float> scratch)
     {
         int c = l.Channels;
         int cc = l.Colors;
         int p = l.Stride;
-        float[] tmp = ArrayPool<float>.Shared.Rent(width * c);
+        float[]? rented = scratch.Length >= width * c ? null : ArrayPool<float>.Shared.Rent(width * c);
+        Span<float> tmp = rented ?? scratch;
         try
         {
             bool floatSamples = l.Sample is SampleType.F16 or SampleType.F32;
@@ -356,11 +383,14 @@ internal static class ResampleKernel
                 }
             }
 
-            ConvertKernel.Pack(tmp.AsSpan(0, width * c), l.Sample, dst[..(width * c * (l.Sample == SampleType.F32 ? 4 : 2))]);
+            ConvertKernel.Pack(tmp.Slice(0, width * c), l.Sample, dst[..(width * c * (l.Sample == SampleType.F32 ? 4 : 2))]);
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(tmp);
+            if (rented != null)
+            {
+                ArrayPool<float>.Shared.Return(rented);
+            }
         }
     }
 

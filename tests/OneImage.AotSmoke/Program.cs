@@ -48,6 +48,16 @@ if (small.Length != 60 * 40 || padded.Width != 100 || smart.ToArray<Rgba32>().Le
     return 1;
 }
 
+// Allocation-free span resize: equals the lazy pipeline, several bands on the pool included.
+using var resizer = new PixelResizer();
+var spanOut = new Rgba32[60 * 40];
+resizer.Resize<Rgba32>(snapshot.ToArray<Rgba32>(), 300, 200, spanOut, 60, 40);
+if (!spanOut.AsSpan().SequenceEqual(small))
+{
+    Console.Error.WriteLine("span resize smoke failed");
+    return 1;
+}
+
 // Geometry: exact turns, edge-mode padding, arbitrary rotation, trim.
 Image geo = snapshot.Rotate(90).Flip(FlipAxis.Horizontal).Pad(3, 2, 1, 4, EdgeMode.Mirror);
 Image turned = snapshot.Rotate(17, filter: ResamplingFilter.Lanczos3);
