@@ -143,6 +143,7 @@ internal sealed class TextLayout
     private readonly LayoutMode _mode;
     private readonly bool _vertical;
     private readonly bool _mixed;
+    private readonly bool _hinting;
     private readonly FeatureSet _verticalFeatures;
     private bool _curUpright = true;
     private bool _runUpright;
@@ -191,6 +192,7 @@ internal sealed class TextLayout
         _features = FeatureSet.Create(settings);
         _mode = o.LayoutMode;
         _vertical = _mode is LayoutMode.VerticalLeftRight or LayoutMode.VerticalRightLeft or LayoutMode.VerticalMixedLeftRight or LayoutMode.VerticalMixedRightLeft;
+        _hinting = o.HintingMode == HintingMode.Standard;
         _mixed = _mode is LayoutMode.VerticalMixedLeftRight or LayoutMode.VerticalMixedRightLeft;
 
         // Upright glyphs advance down the column: horizontal kerning is off and the font's vertical forms are on (vrt2 and vert
@@ -1634,7 +1636,9 @@ internal sealed class TextLayout
                     continue;
                 }
 
-                Outline o = st.Face.GetOutline(g.GlyphId);
+                Outline o = _hinting && route is null && !_vertical && st.Sx == st.Sy
+                    ? st.Face.GetHintedOutline(g.GlyphId, st.Sy * st.Face.UnitsPerEm)
+                    : st.Face.GetOutline(g.GlyphId);
                 if (!o.IsEmpty)
                 {
                     if (!ReferenceEquals(st, lastStyle))

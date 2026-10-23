@@ -30,10 +30,10 @@ internal sealed class TrueTypeGlyphs
     }
 
     /// <summary>Loads and converts one glyph. Out-of-range ids and empty glyphs give <see cref="Outline.Empty"/>.</summary>
-    public Outline Load(int glyphId)
+    public Outline Load(int glyphId, TrueTypeHinter? hinter = null)
     {
         var pts = new PointBuffer();
-        if (!Append(pts, glyphId))
+        if (!Append(pts, glyphId, hinter))
         {
             return Outline.Empty;
         }
@@ -92,7 +92,7 @@ internal sealed class TrueTypeGlyphs
 
     // Flattens the glyph and every component into one point list. Each composite gets a frame; a finished child is transformed in place
     // (matrix, then offset) so nested composites need no recursion.
-    private bool Append(PointBuffer pts, int rootId)
+    private bool Append(PointBuffer pts, int rootId, TrueTypeHinter? hinter)
     {
         if (!TryGetData(rootId, out ReadOnlySpan<byte> root))
         {
@@ -101,7 +101,7 @@ internal sealed class TrueTypeGlyphs
 
         var stack = new List<Frame>(4);
         int components = 0;
-        if (!BeginGlyph(pts, stack, rootId, root, default))
+        if (!BeginGlyph(pts, stack, rootId, root, default, hinter))
         {
             return true;
         }
@@ -200,7 +200,7 @@ internal sealed class TrueTypeGlyphs
                 throw new FontFormatException("Composite glyphs are nested too deeply.");
             }
 
-            if (!BeginGlyph(pts, stack, child, childData, comp))
+            if (!BeginGlyph(pts, stack, child, childData, comp, hinter))
             {
                 // Simple glyph: already appended, place it now. The parent frame is the top of the stack.
                 Place(pts, comp, f.StartPoint);
@@ -211,12 +211,12 @@ internal sealed class TrueTypeGlyphs
     }
 
     // Returns true when the glyph is a composite and a frame was pushed; a simple glyph is appended to the points and false returned.
-    private static bool BeginGlyph(PointBuffer pts, List<Frame> stack, int glyphId, ReadOnlySpan<byte> data, Frame placement)
+    private static bool BeginGlyph(PointBuffer pts, List<Frame> stack, int glyphId, ReadOnlySpan<byte> data, Frame placement, TrueTypeHinter? hinter)
     {
         short contours = Be.I16(data, 0);
         if (contours >= 0)
         {
-            ReadSimple(pts, data, contours);
+            ReadSimple(pts, data, contours, hinter);
             return false;
         }
 
@@ -282,7 +282,7 @@ internal sealed class TrueTypeGlyphs
         }
     }
 
-    private static void ReadSimple(PointBuffer pts, ReadOnlySpan<byte> d, int contours)
+    private static void ReadSimple(PointBuffer pts, ReadOnlySpan<byte> d, int contours, TrueTypeHinter? hinter)
     {
         int p = 10;
         if (contours == 0)
@@ -318,6 +318,7 @@ internal sealed class TrueTypeGlyphs
 
         p += 2 * contours;
         int insLen = Be.U16(d, p);
+        int insStart = p + 2;
         p += 2 + insLen;
         pts.Reserve(count);
 
@@ -380,6 +381,18 @@ internal sealed class TrueTypeGlyphs
         }
 
         pts.Count = basePoint + count;
+
+        // Grid fitting runs on the leaf glyph before it is placed in a composite; a composite's own instructions are not run.
+        if (hinter is not null && insLen > 0 && insStart + insLen <= d.Length)
+        {
+            var ends = new int[contours];
+            for (int i = 0; i < contours; i++)
+            {
+                ends[i] = Be.U16(d, 10 + (2 * i));
+            }
+
+            hinter.TryHint(pts.X, pts.Y, pts.OnCurve, basePoint, count, ends, d.Slice(insStart, insLen));
+        }
     }
 
     private sealed class PointBuffer

@@ -157,6 +157,12 @@ public sealed class TextOptions
     /// </summary>
     public LayoutMode LayoutMode { get; set; }
 
+    /// <summary>
+    /// Gets or sets whether TrueType glyphs are grid-fitted by the font's instructions when drawn. The default is
+    /// <see cref="Text.HintingMode.None"/>. Measurement is never hinted, so metrics do not depend on this setting. See <see cref="Text.HintingMode.Standard"/>.
+    /// </summary>
+    public HintingMode HintingMode { get; set; }
+
     /// <summary>Gets or sets whether the font's kerning is applied. The default is <see cref="KerningMode.Normal"/>.</summary>
     public KerningMode Kerning { get; set; }
 
@@ -269,6 +275,7 @@ public sealed class TextOptions
         TextAlignment = TextAlignment,
         TextDirection = TextDirection,
         LayoutMode = LayoutMode,
+        HintingMode = HintingMode,
         Kerning = Kerning,
         WordBreaking = WordBreaking,
         TextJustification = TextJustification,

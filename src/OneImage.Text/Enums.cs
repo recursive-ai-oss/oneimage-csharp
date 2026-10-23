@@ -135,3 +135,18 @@ public enum LayoutMode
     /// <summary>Like <see cref="VerticalMixedLeftRight"/> with the first column at the right.</summary>
     VerticalMixedRightLeft,
 }
+
+/// <summary>Whether TrueType glyph outlines are grid-fitted by the font's own hinting instructions.</summary>
+public enum HintingMode
+{
+    /// <summary>Outlines are drawn as designed, scaled without grid fitting (the default).</summary>
+    None,
+
+    /// <summary>
+    /// TrueType outlines are fitted to the pixel grid by running the font's instructions at the drawing size. Only vertical
+    /// positions change (as in DirectWrite's grayscale rendering): advances, measurement and horizontal positions are the same as
+    /// with <see cref="None"/>. Fonts without instructions, CFF fonts, rotated or path text and sizes outside 4 to 400 pixels per
+    /// em are drawn unhinted, and so is a glyph whose program fails or exceeds its limits.
+    /// </summary>
+    Standard,
+}

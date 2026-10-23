@@ -7,6 +7,7 @@ namespace OneImage.Text.Fonts;
 internal sealed class FontFace
 {
     private const int MaxCachedOutlines = 8192;
+    private const int MaxCachedHinters = 16;
     private const int MaxCachedKerningPairs = 1 << 16;
 
     private readonly Dictionary<uint, ReadOnlyMemory<byte>> _tables;
@@ -18,6 +19,8 @@ internal sealed class FontFace
     private readonly KernTable? _kern;
     private readonly ConcurrentDictionary<int, Outline> _outlines = new();
     private readonly ConcurrentDictionary<uint, int> _kerning = new();
+    private readonly ConcurrentDictionary<int, HinterSlot> _hinters = new();
+    private readonly ConcurrentDictionary<(int Glyph, int Size), Outline> _hinted = new();
 
     private FontFace(Dictionary<uint, ReadOnlyMemory<byte>> tables)
     {
@@ -269,6 +272,49 @@ internal sealed class FontFace
         }
 
         _outlines[glyph] = o;
+        return o;
+    }
+
+    private sealed class HinterSlot(TrueTypeHinter? hinter)
+    {
+        public readonly TrueTypeHinter? Hinter = hinter;
+    }
+
+    /// <summary>
+    /// The outline grid-fitted for a pixel size by the font's TrueType instructions (y positions only). Falls back to the unhinted
+    /// outline for CFF fonts, fonts without programs, sizes outside 4 to 400 and glyphs whose program fails. Cached per size.
+    /// </summary>
+    public Outline GetHintedOutline(int glyph, float pixelSize)
+    {
+        if (_glyf is null || !(pixelSize >= 4 && pixelSize <= 400))
+        {
+            return GetOutline(glyph);
+        }
+
+        int sizeKey = BitConverter.SingleToInt32Bits(pixelSize);
+        if (_hinted.TryGetValue((glyph, sizeKey), out Outline? cached))
+        {
+            return cached;
+        }
+
+        if (!_hinters.TryGetValue(sizeKey, out HinterSlot? slot))
+        {
+            slot = new HinterSlot(TrueTypeHinter.Create(UnitsPerEm, pixelSize, Table("fpgm", required: false), Table("prep", required: false), Table("cvt ", required: false), Table("maxp", required: true)));
+            if (_hinters.Count >= MaxCachedHinters)
+            {
+                _hinters.Clear();
+            }
+
+            _hinters[sizeKey] = slot;
+        }
+
+        Outline o = slot.Hinter is null ? GetOutline(glyph) : _glyf.Load(glyph, slot.Hinter);
+        if (_hinted.Count >= MaxCachedOutlines)
+        {
+            _hinted.Clear();
+        }
+
+        _hinted[(glyph, sizeKey)] = o;
         return o;
     }
 
