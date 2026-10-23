@@ -42,4 +42,4 @@ External references (other files, URLs), `@font-face`, scripts, animation (SMIL)
 
 Documents are untrusted input. `SvgLimits` bounds document size, element count and nesting, attributes and names, style sheet size and matching work, `use` fan-out and reference depth, layers, pattern tiles, embedded images, filter size, text and path segments. A document that exceeds one fails with `ImageLimitException`, before the memory it would need is allocated; the load call's `ImageLimits` (pixels, dimension, expansion ratio) apply on top. Pass your own with `new SvgFormat(new SvgLimits { ... })`.
 
-The [SVG page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.6.0/docs/svg.md) in the repository covers the design, the limits table, how SVG features map to OneImage operations, and the conformance results.
+The [SVG page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/svg.md) in the repository covers the design, the limits table, how SVG features map to OneImage operations, and the conformance results.

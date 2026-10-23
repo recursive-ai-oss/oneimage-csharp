@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-23
+
 ### Added
 
 - `PixelResizer`: an allocation-free resize from a span to a span (`Resize<TPixel>` for the pixel structs, `ResizeRaw` for any `PixelFormat` with up to four channels, and `PixelResizer.GetSize` for the size `Image.Resize` would scale to). Output is byte for byte what `Image.Resize(w, h, Fit.Stretch, ...)` gives for every filter and mode (checked against 2,500 hashes captured from 1.6.0, on the scalar, AVX2 and AVX-512 paths). The resizer keeps its buffers, so after a warm-up it allocates nothing per call even when every call has a new size; `ScratchBytes`, `maxScratchBytes` and `Trim()` bound and release them. Calls with enough pixels split their output rows over up to `maxDegree` threads without allocating. On 2300x60 gray lines to height 32 (Lanczos3, linear light) it takes 70 us at the default degree (255 us on the calling thread alone) against 255 us for 1.6.0 `Image.Resize`, and allocates nothing per call against 6 KB (same size) or 140 KB (a new width each call). See the guide.
@@ -154,7 +156,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.3.0...v1.4.0
