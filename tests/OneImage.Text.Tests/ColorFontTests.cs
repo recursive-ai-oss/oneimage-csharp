@@ -216,12 +216,20 @@ public class ColorFontTests
     }
 
     [Fact]
-    public void Version1FontsPaintTheirVersion0LayersAndFallBackToTheOutline()
+    public void Version1FontsPaintTheirVersion0LayersAndTheirPaintGraphs()
     {
+        const string v0Text = "A\u2600\u2601\u2602\u2603\u2604";
         TextOptions o = Options(V1, 100, ColorFontSupport.MicrosoftColrFormat);
-        Rgba32[] px = Blank(900, 140).DrawText(Sample, o, Red).ToArray<Rgba32>();
-        Rgba32[] v0 = Blank(900, 140).DrawText(Sample, Options(V0, 100, ColorFontSupport.MicrosoftColrFormat), Red).ToArray<Rgba32>();
-        Assert.Equal(v0, px);      // the V1-only glyph (U+E010) is the plain red outline in both
+        Assert.Equal(
+            Blank(900, 140).DrawText(v0Text, Options(V0, 100, ColorFontSupport.MicrosoftColrFormat), Red).ToArray<Rgba32>(),
+            Blank(900, 140).DrawText(v0Text, o, Red).ToArray<Rgba32>());
+
+        // The V1-only glyph (U+2610) paints its graph (the 'dot' in a palette color); with color off it is the plain red outline.
+        Rgba32[] graph = Blank(300, 140).DrawText("\u2610", o, Red).ToArray<Rgba32>();
+        Rgba32[] plain = Blank(300, 140).DrawText("\u2610", Options(V1, 100, ColorFontSupport.None), Red).ToArray<Rgba32>();
+        Assert.NotEqual(plain, graph);
+        Assert.Contains(plain, p => p is { R: 255, G: 0, B: 0 });
+        Assert.Contains(graph, p => !(p.R == 255 && p.G == 255 && p.B == 255) && !(p.R == 255 && p.G == 0 && p.B == 0));
         Assert.False(Load(V1, 20).HasColorGlyph(0x2610));
         Assert.True(Load(V1, 20).HasColorGlyph(0x2600));
     }
