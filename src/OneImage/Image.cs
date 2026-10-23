@@ -60,8 +60,10 @@ public sealed partial class Image
     public static Image FromPixels<T>(ReadOnlySpan<T> pixels, int width, int height)
         where T : unmanaged, IPixel<T>
     {
-        var canvas = new Canvas(width, height, T.Format);
+        using var canvas = new Canvas(width, height, T.Format);
         canvas.CopyFrom(pixels, new ImageRect(0, 0, width, height));
+
+        // Disposing hands the tiles to the snapshot: they return to the pool when the image is collected.
         return canvas.Snapshot();
     }
 

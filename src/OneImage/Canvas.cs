@@ -28,6 +28,7 @@ public sealed partial class Canvas : IDisposable
     private TileGrid _grid;
     private object _token = new();
     private bool _disposed;
+    private List<WeakReference<TileGrid>>? _retired;
 
     /// <summary>Creates an empty (all-zero) canvas.</summary>
     /// <param name="width">Width in pixels, positive.</param>
@@ -227,7 +228,7 @@ public sealed partial class Canvas : IDisposable
         Render.ReadRegion(source, rect, destination, 0, Format, RenderContext.Create(1, CancellationToken.None));
     }
 
-    /// <summary>Releases the pooled tiles this canvas owns exclusively. Tiles shared with a snapshot are left to the snapshot (and the garbage collector), so snapshots stay valid.</summary>
+    /// <summary>Releases the pooled tiles this canvas holds. When a snapshot shares the tile table, its tiles go back to the pool once the snapshots are collected, so snapshots stay valid.</summary>
     public void Dispose()
     {
         if (_disposed)
@@ -238,21 +239,62 @@ public sealed partial class Canvas : IDisposable
         _disposed = true;
         if (_grid.Shared)
         {
-            // A snapshot reads this table and its tiles; leave both to the garbage collector.
+            // A shared table belongs to its snapshots; its finalizer returns the tiles when the last one is gone.
+            _grid.Arm();
+        }
+        else
+        {
+            _grid.ReleaseAll();
+        }
+
+        SweepRetired(force: true);
+    }
+
+    /// <summary>
+    /// Replaces a table that snapshots share by a private copy and remembers the old one. Tables that die within one collection cost
+    /// the collector nothing, so only those that are still alive after surviving a collection get a finalizer (see <see cref="TileGrid.Arm"/>),
+    /// which returns their tiles to the pool once the last snapshot is gone.
+    /// </summary>
+    private void CloneSharedGrid()
+    {
+        TileGrid old = _grid;
+        _grid = old.Clone();
+        (_retired ??= []).Add(new WeakReference<TileGrid>(old));
+        SweepRetired(force: false);
+    }
+
+    private void SweepRetired(bool force)
+    {
+        List<WeakReference<TileGrid>>? list = _retired;
+        if (list == null)
+        {
             return;
         }
 
-        Tile?[] tiles = _grid.Tiles;
-        for (int i = 0; i < tiles.Length; i++)
+        // Bounded: a canvas that snapshots faster than collections run leaves the oldest unarmed tables to the collector.
+        const int MaxTracked = 256;
+        int keep = 0;
+        for (int i = 0; i < list.Count; i++)
         {
-            Tile? t = tiles[i];
-            if (t != null && ReferenceEquals(t.Owner, _token))
+            WeakReference<TileGrid> w = list[i];
+            if (!w.TryGetTarget(out TileGrid? g))
             {
-                t.Release();
+                continue;
             }
 
-            tiles[i] = null;
+            if (force || GC.GetGeneration(g) >= 1)
+            {
+                g.Arm();
+                continue;
+            }
+
+            if (list.Count - i <= MaxTracked)
+            {
+                list[keep++] = w;
+            }
         }
+
+        list.RemoveRange(keep, list.Count - keep);
     }
 
     internal void Commit<T>(ImageRect rect, ReadOnlySpan<T> pixels)
@@ -275,7 +317,7 @@ public sealed partial class Canvas : IDisposable
     {
         if (_grid.Shared)
         {
-            _grid = _grid.Clone();
+            CloneSharedGrid();
         }
 
         int idx = (ty * _grid.TilesX) + tx;
@@ -288,6 +330,7 @@ public sealed partial class Canvas : IDisposable
         Tile fresh;
         if (t != null)
         {
+            // The new table's own reference on the old tile is dropped below; snapshots keep theirs.
             fresh = willOverwriteAll ? Tile.Rent(t.Length, clear: false) : t.CopyForWrite(_token);
         }
         else if (_grid.Backing != null && !willOverwriteAll)
@@ -309,6 +352,7 @@ public sealed partial class Canvas : IDisposable
 
         fresh.Owner = _token;
         _grid.Tiles[idx] = fresh;
+        t?.Release();
         return fresh;
     }
 

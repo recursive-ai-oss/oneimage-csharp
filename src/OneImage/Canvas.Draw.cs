@@ -211,17 +211,19 @@ public sealed partial class Canvas
             {
                 if (done)
                 {
-                    // Only a tile this canvas owned is its to return; any other belongs to a snapshot's table.
-                    if (old != null && ReferenceEquals(old.Owner, _token))
-                    {
-                        old.Release();
-                    }
+                    old?.Release();
                 }
                 else
                 {
                     _grid.Tiles[index]?.Release();
                     _grid.Tiles[index] = old;
                 }
+            }
+
+            if (exclusive)
+            {
+                // The private table's references; the canvas's own were handled above.
+                readGrid.ReleaseAll();
             }
         }
     }

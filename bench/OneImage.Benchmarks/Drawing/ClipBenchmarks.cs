@@ -115,6 +115,13 @@ public class ClipBenchmarks : IDisposable
     [Benchmark(Description = "star-minus-1000 ImageSharp.Drawing")]
     public IPath DifferenceSharp() => _sharpStar.Clip(new ShapeOptions { ClippingOperation = ClippingOperation.Difference, IntersectionRule = SixLabors.ImageSharp.Drawing.IntersectionRule.NonZero }, _sharpBlob);
 
+    [Benchmark(Description = "blur-in-circle OneImage Canvas after Snapshot")]
+    public void BlurCanvasAfterSnapshot()
+    {
+        _ = _canvas.Snapshot();
+        _canvas.Clip(_clipCircle, i => i.GaussianBlur(8, linear: false));
+    }
+
     [Benchmark(Description = "blur-in-circle OneImage Canvas")]
     public void BlurCanvas() => _canvas.Clip(_clipCircle, i => i.GaussianBlur(8, linear: false));
 

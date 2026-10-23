@@ -115,3 +115,37 @@ public class CanvasUndoBenchmarks : IDisposable
         GC.SuppressFinalize(this);
     }
 }
+
+/// <summary>
+/// An undo loop on a 24 MP Rgba32 canvas: ten whole-frame draws, each after a <see cref="Canvas.Snapshot"/> that is dropped at once.
+/// Allocation per loop shows whether the replaced tiles are recycled or left to the garbage collector.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, warmupCount: 2, iterationCount: 8)]
+public class CanvasUndoLoopBenchmarks : IDisposable
+{
+    private Canvas _canvas = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _canvas = new Canvas(6000, 4000, PixelFormat.Rgba8);
+        _canvas.Clear(new Rgba32(255, 255, 255, 255));
+    }
+
+    [Benchmark(Description = "10 whole-frame draws on 24 MP, snapshot before each")]
+    public void TenDraws()
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            _ = _canvas.Snapshot();
+            _canvas.Clear(new Rgba32((byte)i, 30, 30, 255));
+        }
+    }
+
+    public void Dispose()
+    {
+        _canvas?.Dispose();
+        GC.SuppressFinalize(this);
+    }
+}
