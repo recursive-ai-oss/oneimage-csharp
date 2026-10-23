@@ -207,7 +207,7 @@ public sealed partial class PsdFile : IDisposable
             };
             file.Resources.AddRange(s.Resources);
             file.DocumentBlocks.AddRange(s.GlobalBlocks);
-            var loader = new LayerLoader(file, s, kind, gray, sourceProfile, limits, psd, ct);
+            var loader = new LayerLoader(file, s, kind, gray, sourceProfile, limits, psd, options.DrawFills, ct);
             loader.Run();
         }
         catch

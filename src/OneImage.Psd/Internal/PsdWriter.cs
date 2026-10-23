@@ -42,6 +42,10 @@ internal sealed class WriteSpec
     public List<PsdResource> Resources { get; } = [];
     public List<PsdBlock> DocumentBlocks { get; } = [];
     public List<LayerEntry> Layers { get; } = [];
+
+    /// <summary>Canvases created while building layer entries (rendered fills); disposed after the file is written.</summary>
+    public List<IDisposable> Temporary { get; } = [];
+
     public required IBandSource Composite { get; init; }
 }
 

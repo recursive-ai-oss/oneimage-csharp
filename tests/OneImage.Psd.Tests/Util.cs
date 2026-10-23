@@ -207,7 +207,7 @@ public class CorpusReport
         foreach (Layer l in g.Children)
         {
             PsdLayerInfo i = f.GetInfo(l);
-            if (i.Kind is PsdLayerKind.Text or PsdLayerKind.SmartObject or PsdLayerKind.GradientOrPatternFill or PsdLayerKind.UnsupportedAdjustment)
+            if (i.Kind is PsdLayerKind.Text or PsdLayerKind.SmartObject or PsdLayerKind.UnsupportedAdjustment || (i.Kind == PsdLayerKind.GradientOrPatternFill && l is not FillLayer))
             {
                 into.Add(i.Kind.ToString());
             }

@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Buffers.Binary;
 using System.Text;
 using OneImage.Drawing;
@@ -26,11 +27,14 @@ internal sealed class LayerLoader
     private readonly ImageLimits _limits;
     private readonly PsdLimits _psd;
     private readonly CancellationToken _ct;
+    private readonly bool _drawFills;
+    private PatternCache? _patterns;
     private readonly Document _doc;
     private readonly List<GroupLayer> _stack = [];
 
-    public LayerLoader(PsdFile file, PsdStructure s, SampleKind kind, bool gray, ColorProfile? sourceProfile, ImageLimits limits, PsdLimits psd, CancellationToken ct)
+    public LayerLoader(PsdFile file, PsdStructure s, SampleKind kind, bool gray, ColorProfile? sourceProfile, ImageLimits limits, PsdLimits psd, bool drawFills, CancellationToken ct)
     {
+        _drawFills = drawFills;
         _file = file;
         _s = s;
         _kind = kind;
@@ -292,6 +296,16 @@ internal sealed class LayerLoader
             }
         }
 
+        if (_drawFills && (keys.Contains("GdFl") || keys.Contains("PtFl")))
+        {
+            FillLayer? drawn = TryCreateFillLayer(rl, name, info, out consumed);
+            if (drawn != null)
+            {
+                Current.Add(drawn);
+                return drawn;
+            }
+        }
+
         info.Kind = keys.Contains("TySh") || keys.Contains("tySh") ? PsdLayerKind.Text
             : keys.Contains("SoLd") || keys.Contains("PlLd") || keys.Contains("SoLE") ? PsdLayerKind.SmartObject
             : keys.Contains("vmsk") || keys.Contains("vsms") ? PsdLayerKind.Shape
@@ -314,6 +328,84 @@ internal sealed class LayerLoader
 
         Current.Add(pl);
         return pl;
+    }
+
+    // A gradient or pattern fill layer is drawn from its settings when they can be reproduced. The fill's box is the bounds of the layer's
+    // vector path (a shape layer) or the whole document (a fill layer); with "align with layer" off it is the document either way.
+    private FillLayer? TryCreateFillLayer(RawLayer rl, string name, PsdLayerInfo info, out PsdBlock? consumed)
+    {
+        consumed = null;
+        PsdBlock? block = rl.Blocks.FirstOrDefault(static b => b.Key is "GdFl" or "PtFl");
+        if (block == null)
+        {
+            return null;
+        }
+
+        RectangleF layerBox = new(0, 0, _doc.Width, _doc.Height);
+        bool shape = false;
+        PsdBlock? vector = rl.Blocks.FirstOrDefault(static b => b.Key is "vmsk" or "vsms");
+        if (vector != null)
+        {
+            DPath? path = VectorMask.Parse(vector.Data.Span, _doc.Width, _doc.Height, 0, 0, out _, out _);
+            if (path != null && path.Bounds.Width > 0 && path.Bounds.Height > 0)
+            {
+                layerBox = path.Bounds;
+                shape = true;
+            }
+        }
+
+        if (!shape)
+        {
+            // A fill layer is as large as the pixels or the mask Photoshop kept for it, and the whole document when it kept neither.
+            if (rl.Width > 0 && rl.Height > 0 && (long)rl.Width * rl.Height > 1)
+            {
+                layerBox = new RectangleF(rl.Left, rl.Top, rl.Width, rl.Height);
+            }
+            else if (rl.Mask is { } rm && rm.Right > rm.Left && rm.Bottom > rm.Top)
+            {
+                layerBox = new RectangleF(rm.Left, rm.Top, rm.Right - rm.Left, rm.Bottom - rm.Top);
+            }
+        }
+
+        Brush? brush = null;
+        RectangleF gradientBox = FillDescriptors.IsAligned(block.Data.Span, _psd) ? layerBox : new RectangleF(0, 0, _doc.Width, _doc.Height);
+        if (block.Key == "GdFl" && Math.Min(gradientBox.Width, gradientBox.Height) < PsdGradientBrush.MinimumSide)
+        {
+            // Photoshop snaps the gradient's direction and length to whole pixels, which changes a small gradient visibly; the stored pixels are exact.
+            return null;
+        }
+
+        if (block.Key == "GdFl" && FillDescriptors.ParseGradient(block.Data.Span, _psd, new ColorConverter(_doc.ColorProfile, _s.Header.Mode is PsdColorMode.Cmyk or PsdColorMode.Lab ? _s.IccProfile : null)) is { } spec)
+        {
+            brush = new PsdGradientBrush(spec, gradientBox);
+        }
+
+        else if (block.Key == "PtFl")
+        {
+            brush = FillDescriptors.MakePatternBrush(block.Data.Span, _psd, _patterns ??= new PatternCache(_file.DocumentBlocks), layerBox, shape);
+        }
+
+        if (brush == null)
+        {
+            return null;
+        }
+
+        // Where Photoshop stored pixels, they stay (they hold its antialiasing and dither); the settings draw the rest.
+        Canvas? stored = null;
+        var storedRect = new ImageRect(rl.Left, rl.Top, rl.Width, rl.Height);
+        if (rl.Width > 0 && rl.Height > 0 && (long)rl.Width * rl.Height > 1)
+        {
+            PixelLayer holder = _doc.CreatePixelLayer(name, rl.Width, rl.Height, rl.Left, rl.Top);
+            ReadPixels(holder, rl);
+            stored = holder.Pixels;
+        }
+
+        brush = new PsdFillBrush(brush, stored, storedRect);
+        consumed = block;
+        info.Kind = PsdLayerKind.GradientOrPatternFill;
+        info.SourceFillBlock = block;
+        info.SourceFillBrush = brush;
+        return _doc.CreateFillLayer(name, brush);
     }
 
     private Rgba32? ReadSolidColor(ReadOnlySpan<byte> data)

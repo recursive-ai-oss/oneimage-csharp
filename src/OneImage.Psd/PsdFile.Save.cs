@@ -61,8 +61,18 @@ public sealed partial class PsdFile
         };
         spec.Resources.AddRange(Resources);
         spec.DocumentBlocks.AddRange(DocumentBlocks);
-        Flatten(spec, cancellationToken);
-        PsdWriter.Write(spec, stream, options, cancellationToken);
+        try
+        {
+            Flatten(spec, cancellationToken);
+            PsdWriter.Write(spec, stream, options, cancellationToken);
+        }
+        finally
+        {
+            foreach (IDisposable d in spec.Temporary)
+            {
+                d.Dispose();
+            }
+        }
     }
 
     private static IBandSource ImageSource(Image image, PixelFormat fmt, int w, int h, bool alpha)
@@ -238,6 +248,21 @@ public sealed partial class PsdFile
             case FillLayer fl:
                 {
                     e.BlendKey = BlendKey(l, info);
+                    if (info.SourceFillBlock != null && ReferenceEquals(fl.Brush, info.SourceFillBrush))
+                    {
+                        // An unchanged gradient or pattern fill keeps its settings block. The raster Photoshop stores beside it is the fill drawn over the document.
+                        var canvas = new Canvas(Document.Width, Document.Height, Document.Format);
+                        spec.Temporary.Add(canvas);
+                        canvas.Fill(fl.Brush, OneImage.Drawing.Path.Rectangle(0, 0, Document.Width, Document.Height), antialias: false, composition: AlphaComposition.Src);
+                        e.Left = 0;
+                        e.Top = 0;
+                        e.Right = Document.Width;
+                        e.Bottom = Document.Height;
+                        e.Pixels = CanvasSource(canvas, ct);
+                        e.Blocks.Add(info.SourceFillBlock);
+                        break;
+                    }
+
                     if (!fl.Brush.TryGetSolid(out Rgba32 c))
                     {
                         throw new ImageOperationException($"The fill layer '{l.Name}' uses a brush with no PSD equivalent; only solid color fills can be written.");

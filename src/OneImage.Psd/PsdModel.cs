@@ -1,3 +1,4 @@
+using OneImage.Drawing;
 using OneImage.Layers;
 
 namespace OneImage.Psd;
@@ -57,7 +58,7 @@ public enum PsdLayerKind
     /// <summary>A shape layer, drawn from its stored pixels; the vector data is kept as blocks.</summary>
     Shape,
 
-    /// <summary>A gradient or pattern fill layer, drawn from its stored pixels; the fill settings are kept as a block.</summary>
+    /// <summary>A gradient or pattern fill layer. It is a <see cref="FillLayer"/> drawn from its settings when they can be reproduced, and otherwise a pixel layer of the stored raster; the fill settings are kept as a block either way.</summary>
     GradientOrPatternFill,
 }
 
@@ -102,6 +103,10 @@ public sealed class PsdLayerInfo
     internal Adjustment? SourceAdjustment { get; set; }
 
     internal PsdBlock? SourceAdjustmentBlock { get; set; }
+
+    internal PsdBlock? SourceFillBlock { get; set; }
+
+    internal Brush? SourceFillBrush { get; set; }
 
     internal int SourceFlags { get; set; } = 8;
 
