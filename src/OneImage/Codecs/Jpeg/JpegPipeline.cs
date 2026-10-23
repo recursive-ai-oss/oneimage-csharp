@@ -95,6 +95,10 @@ internal sealed class JpegPipeline<T> : IDisposable
         public T[] Tmp = [];
     }
 
+    // Emitting MCU row q reads the transformed rows q-1..q+1, so with a fourth slot the transform of the next row can run
+    // while the previous row is still being emitted.
+    internal const int RingSlots = 4;
+
     private readonly JpegFrame _f;
     private readonly JpegColorPlan _plan;
     private readonly IRowSink _sink;
@@ -169,7 +173,7 @@ internal sealed class JpegPipeline<T> : IDisposable
             int sHi = Math.Min(p.Dw - 1, ((_x0 + _w - 1) / p.HExp) + 1);
             p.BxLo = sLo / ss;
             p.BxHi = Math.Min(c.BlocksPerLine, (sHi / ss) + 1);
-            p.Ring = Rent(3 * p.RowsPerMcu * p.PlaneW);
+            p.Ring = Rent(RingSlots * p.RowsPerMcu * p.PlaneW);
             p.Tmp = Rent((p.PlaneW * p.HExp) + 16);
             _planes[i] = p;
         }
@@ -233,6 +237,13 @@ internal sealed class JpegPipeline<T> : IDisposable
     /// <returns><see langword="false"/> when everything requested has been delivered and decoding can stop.</returns>
     public bool AddMcuRow(int r, JpegCoefficientStore store)
     {
+        TransformRow(r, store);
+        return EmitRow(r);
+    }
+
+    /// <summary>Inverse-transforms MCU row <paramref name="r"/> into the plane ring (or just releases it when the region does not need it).</summary>
+    public void TransformRow(int r, JpegCoefficientStore store)
+    {
         if (r >= _firstEmit - 1 && r <= _lastEmit + 1)
         {
             IdctRow(r, store);
@@ -247,7 +258,15 @@ internal sealed class JpegPipeline<T> : IDisposable
                 }
             }
         }
+    }
 
+    /// <summary>
+    /// Delivers the output rows that became complete once MCU row <paramref name="r"/> was transformed; reads transformed
+    /// rows r-2..r only.
+    /// </summary>
+    /// <returns><see langword="false"/> when everything requested has been delivered.</returns>
+    public bool EmitRow(int r)
+    {
         // Row r-1 can be emitted once r supplied its lower context; the last row has no lower neighbour.
         if (r >= 1 && r - 1 >= _firstEmit && r - 1 <= _lastEmit)
         {
@@ -264,7 +283,7 @@ internal sealed class JpegPipeline<T> : IDisposable
 
     private void IdctRow(int r, JpegCoefficientStore store)
     {
-        int slot = r % 3;
+        int slot = r % RingSlots;
         foreach (Plane p in _planes)
         {
             int[] quant = p.Src.Quant ?? throw new ImageFormatException("JPEG component has no quantization table.");
@@ -303,7 +322,7 @@ internal sealed class JpegPipeline<T> : IDisposable
         g = Math.Clamp(g, 0, p.Dh - 1);
         int mcu = g / p.RowsPerMcu;
         int within = g - (mcu * p.RowsPerMcu);
-        int off = (((mcu % 3) * p.RowsPerMcu) + within) * p.PlaneW;
+        int off = (((mcu % RingSlots) * p.RowsPerMcu) + within) * p.PlaneW;
         return p.Ring.AsSpan(off, p.PlaneW);
     }
 

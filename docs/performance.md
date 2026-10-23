@@ -170,8 +170,9 @@ Gate harness rows, mean ms:
 
 Each cell shows two runs; * marks a run during a load spike that moved
 ImageSharp's row by the same factor. The rows other than thumb-jpeg do
-not change beyond that spread: full-size 4:2:0 decoding is bound by the
-transform thread (about 38 ms for 24 MP), not by Huffman decoding. The
+not change beyond that spread: full-size 4:2:0 decoding was bound by the
+transform thread (about 38 ms for 24 MP), not by Huffman decoding (see
+the next section). The
 thumb-jpeg peak stays the published exception (about 1 MiB over
 ImageSharp). Decoder only on a desktop host (one core for entropy decoding plus
 the transform thread, best of 30, a 6000x4000 4:2:0 file of 5.8 MB): 1/8 scale 38.6 to 28.3 ms, and the
@@ -179,6 +180,51 @@ scan decoder is the whole of that time in both (37.9 and 28.4 ms inside
 the decoder); 24 MP CMYK file of 16.5 MB, full size 111 to 90 ms.
 Progressive full-size decoding stays dominated by refinement scans
 (about 205 ms for a noisy 24 MP file against 218 before).
+
+## JPEG full-size transform split
+
+Full-size decoding of a sequential 4:2:0 file was bound by one thread
+doing inverse DCT, chroma upsampling, color conversion and sink writes
+(about 38 ms of 24 MP) while entropy decoding took 31. The transform is
+now two stages, each on its own thread beside the entropy decoder, with
+four plane-ring slots so a row is transformed while its predecessor is
+emitted. Per-call thread use rises from two to three (one more with
+three or more cores); on two cores the entropy thread does the inverse
+DCT. Output is byte-identical at every stage count, scale, region and
+hardware level (SHA-256 over the test corpus plus generated 4:2:0, 4:2:2,
+4:4:0, 4:4:4 and progressive files at 1, 1/2, 1/4, 1/8, with and without
+hardware intrinsics).
+
+Desktop host, 6000x4000 file, best of 20 into a null sink, AVX2 only:
+
+| File | One thread | Entropy + transform+emit | Three threads |
+|---|--:|--:|--:|
+| 4:2:0 q90, 8.9 MB | 78 ms | 64 ms | 43 ms (was 43) |
+| 4:4:4 q90, 9.4 MB | 94 ms | 82 ms | 55 ms (was 53) |
+| 4:2:0 q90, 2.1 MB (smooth) | 50 ms | 35 ms | 20 ms (was 34) |
+| 4:4:4, 2.1 MB (smooth) | 62 ms | 55 ms | 31 ms (was 39) |
+
+Noisy photographs are entropy-bound (43 ms is the Huffman time), so the
+split helps where the transform was the longer stage: images with fewer
+bits per pixel, which includes most web photographs. Progressive files
+are bound by their coefficient scans (110-280 ms) and move by under 5%.
+
+Worker rows (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.402 SDK with
+runtime 10.0.13, AVX-512 off, shared: load 1.2 to 5), mean ms, two paired
+runs of before / after, ImageSharp alongside:
+
+| Task | Before | After | ImageSharp |
+|---|--:|--:|--:|
+| jpeg-decode | 55.2 / 43.8 | 31.8 / 31.7 | 81.7-97.1 |
+| jpeg-decode-rgba | 55.8 / 44.9 | 31.3 / 33.2 | 86.9-97.8 |
+| thumb-jpeg | 34.8 / 27.7 | 27.6 / 29.3 | 47.8-50.1 |
+| cmyk-jpeg-to-srgb | 419* / 257 / 237 / 274 | 262* / 291 / 252 / 255 | 150-157 (skips ICC) |
+| tiff-multipage-decode | 93.8 / 60.2 | 78 / 118 / 61.5 / 60.1 | 599-735 |
+
+* a run under load above 6 that moved ImageSharp by the same factor.
+The thumb-jpeg, CMYK and TIFF rows do not use the split path or do not
+change beyond their spread; peaks are unchanged (jpeg-decode 1 MiB,
+cmyk 2 MiB, thumb-jpeg 2 MiB).
 
 ## Drawing and clipping exceptions
 

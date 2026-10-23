@@ -5,8 +5,8 @@ using OneImage;
 using OneImage.Codecs.Jpeg;
 
 // Fuzz target for the JPEG decoder: the first input byte picks the scale and whether to decode a sub-region, the rest is the file.
-// Every input is decoded twice, with and without the 12-bit lookahead tables, and the two outcomes (pixels, or the kind of
-// failure) must agree. Only the library's own exception types may come out; anything else is a finding.
+// Every input is decoded with and without the 12-bit lookahead tables and with each helper-thread split of the transform,
+// and the outcomes (pixels, or the kind of failure) must agree. Only the library's own exception types may come out; anything else is a finding.
 internal static class JpegTarget
 {
     private sealed class HashSink : IRowSink
@@ -65,11 +65,30 @@ internal static class JpegTarget
         int scale = 1 << (mode & 3);
         bool region = (mode & 4) != 0;
         byte[] file = data[1..].ToArray();
+        JpegDecoderCore.StageOverride = 0;
         string withLook = Decode(file, scale, region, lookahead: true);
         string without = Decode(file, scale, region, lookahead: false);
         if (withLook != without)
         {
             throw new InvalidOperationException($"lookahead changed the outcome: {withLook} / {without}");
+        }
+
+        // Which of two failing stages reports first can vary, so failures compare by kind only.
+        foreach (int stages in new[] { 1, 2 })
+        {
+            JpegDecoderCore.StageOverride = stages;
+            try
+            {
+                string staged = Decode(file, scale, region, lookahead: true);
+                if (withLook.StartsWith("ok", StringComparison.Ordinal) ? staged != withLook : staged.Split(' ')[0] != withLook.Split(' ')[0])
+                {
+                    throw new InvalidOperationException($"stage split {stages} changed the outcome: {withLook} / {staged}");
+                }
+            }
+            finally
+            {
+                JpegDecoderCore.StageOverride = 0;
+            }
         }
     }
 

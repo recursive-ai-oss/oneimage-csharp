@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- Full-size JPEG decoding is faster, with identical output. The per-row transform is split in two (inverse DCT; then upsampling, color conversion and delivery) and, with three or more cores, each runs on its own thread beside the entropy decoder; the plane ring gained a fourth slot so a row is transformed while the previous one is emitted. With two cores the entropy thread does the inverse DCT itself, and progressive or multi-scan frames overlap the delivery with the transform. A 24 MP 4:2:0 photograph decodes into a reused buffer in 32 ms (was 44-55 on the same loaded worker; ImageSharp 82-97) (noisy 8.9 MB files stay entropy-bound at 43 ms; a smooth 2 MB one goes from 34 to 20 ms on a desktop host). The entropy decoder may now fail on data past the last row a request needs without failing the request, as the single-threaded path never read it.
+
 ## [1.4.0] - 2026-10-23
 
 ### Added
