@@ -4,8 +4,10 @@
 
 ```csharp
 var config = new ImageConfiguration().Add(new PdfFormat(new PdfRenderOptions { Dpi = 150 }));
-Image.Load("report.pdf", new LoadOptions { Configuration = config }).Save("page1.png");   // every page is a frame
-Image.Load("report.pdf", new LoadOptions { Configuration = config }).Resize(width: 400).Save("thumb.webp");
+var pdf = Image.Load("report.pdf", new LoadOptions { Configuration = config });   // every page is a frame
+pdf.Frames[0].ToImage().Save("page1.png");                       // the first page
+pdf.Frames[0].ToImage().Resize(width: 400).Save("thumb.webp");   // drawn at 400 px
+// Saving `pdf` itself writes every page, as an animation or a multi-page file where the format allows.
 ```
 
 `PdfFormat` is not in the default configuration (a separate package cannot be). Reading is sniffed from `%PDF-` in the first kilobyte.

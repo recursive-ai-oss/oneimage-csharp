@@ -22,12 +22,11 @@ file.Document.Render().Save("flattened.png");
 file.Save("edited.psd");
 ```
 
-## What is new in 1.5.0
+## What is new in 1.6.0
 
-- Posterize, curves and brightness/contrast layers use Photoshop's own formulas (brightness/contrast in the current mode is a fitted approximation). Against the stored composites of 19 sample files the median mean error went from 10.5 to 0.005 levels.
-- Gradient and pattern fill layers (and shape layers filled with them) are drawn from their settings as fill layers; `PsdReadOptions.DrawFills = false` keeps the stored pixels. 160 sample files are now fully modelled (median error 0.108 levels).
-- Layer effects (drop and inner shadows, outer and inner glows, solid strokes, color overlays, satin) are read into `Layer.Style` and drawn. The stroke sample files went from 15-40 levels of error to 0.00-0.16.
-- A hue/saturation adjustment with an out-of-range value is kept instead of failing to load.
+- `PsdFile.Save` writes layer styles and gradient and pattern fills that are created or edited in the model (`lfx2`/`lmfx`, `GdFl`, `PtFl`); effects and fills the model does not carry keep their original bytes. The 315 loadable sample files round-trip, and a no-op edit sweep over 189 layers is byte-identical.
+- Gradient and pattern overlays, bevel and emboss, gradient and pattern strokes and gradient glows are read from the file and drawn. Eight more sample files are now modelled (178, median error 0.1345 levels).
+- A pattern channel that claims more data than the file holds is refused before its buffer is allocated.
 
 ## Known limitations
 
@@ -44,10 +43,10 @@ file.Save("edited.psd");
 - **Kept only as stored pixels plus untouched blocks:** text, smart objects, vector strokes, the layer effects that are not drawn, and gradient or pattern fills outside the drawn subset. They render from the pixels Photoshop stored, are not redrawn, and their blocks are written back unchanged.
 - **Known gaps against Photoshop:** posterize, curves and legacy brightness/contrast follow Photoshop (buckets, a natural cubic spline, the legacy formula), while brightness/contrast in Photoshop's current mode is a fitted approximation; hard mix and vivid light differ slightly; vector-mask path operations use the non-zero rule only; levels, curves, hue/saturation, brightness/contrast and exposure layers in CMYK and Lab documents are kept but not applied; dissolve and darker/lighter color render as Normal, Darken and Lighten.
 
-The [PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.5.0/docs/psd.md) has the full mapping, the fidelity figures, the limits and the speed. Layered documents are described in the [layers page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.5.0/docs/layers.md).
+The [PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.6.0/docs/psd.md) has the full mapping, the fidelity figures, the limits and the speed. Layered documents are described in the [layers page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.6.0/docs/layers.md).
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.5.0/LICENSE-MIT) or [Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.5.0/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.6.0/LICENSE-MIT) or [Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.6.0/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.

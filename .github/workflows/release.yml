@@ -103,7 +103,7 @@ jobs:
         run: dotnet test --solution OneImage.slnx -c Release --no-build --results-directory "$ONEIMAGE_ARTIFACTS/TestResults"
 
       - name: Pack
-        # The five shipped packages (the library, the web middleware, the text, SVG and PSD packages), from the binaries the tests ran on.
+        # The shipped packages (the library, the web middleware, the text, SVG, PSD and PDF packages), from the binaries the tests ran on.
         # They share one version. Symbols come out as .snupkg files.
         run: |
           dotnet pack src/OneImage -c Release --no-build -o "$RUNNER_TEMP/packages"

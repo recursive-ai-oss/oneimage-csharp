@@ -109,7 +109,6 @@ errors appear, how sources are held, limits and threading.
   demand with incremental re-rendering, and an optional disk-spill store) is in
   the core package.
 - **Photoshop files:** [OneImage.Psd](docs/psd.md) (`RecursiveAI.OneImage.Psd`)
-- **PDF pages:** [OneImage.Pdf](docs/pdf.md) (`RecursiveAI.OneImage.Pdf`, not released yet)
   reads PSD and PSB as an image format (the merged composite) and loads the
   layer tree into a [layers](docs/layers.md) document, edits and writes it
   back. Photoshop's posterize, curves and brightness/contrast formulas are
@@ -119,6 +118,12 @@ errors appear, how sources are held, limits and threading.
   untouched blocks, and multichannel documents are refused. Edited layer
   styles and fills are written back; the page lists what is modelled and the
   known limitations.
+- **PDF pages:** [OneImage.Pdf](docs/pdf.md) (`RecursiveAI.OneImage.Pdf`)
+  draws PDF pages as an image format, on demand per tile and at the size you
+  ask for; parsing comes from [OnePDF](https://www.nuget.org/packages/RecursiveAI.OnePdf)
+  (`RecursiveAI.OnePdf`), and JPEG, JPEG 2000 and JBIG2 images are decoded by
+  OneImage itself. The page describes how it is checked against the
+  specification and lists the known limitations.
 - **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
   registers SVG and `.svgz` as an image format that is drawn at the size you
   ask for; it depends on the core package and OneImage.Text.
