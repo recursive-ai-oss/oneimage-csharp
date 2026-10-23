@@ -143,6 +143,41 @@ Notes:
   files), which costs extra work. The gap to NetVips shrank from
   2.72× to 1.58× after the last fixes and is a goal, not a gate.
 
+## JPEG entropy decoding
+
+The thumbnail row is bound by Huffman decoding, which cannot be spread
+over cores without restart markers. The decoder resolves most AC symbols
+(code and magnitude bits) with one lookup in a 12-bit table, refills its
+bit buffer once per symbol without branching on the fill level, and skips
+the AC data of any component that only contributes its DC coefficient at
+the requested scale (at 1/8 of a 4:2:0 image that is the luma, two thirds
+of the blocks). Output is byte-identical to the earlier decoder.
+
+Same code, same worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.402,
+AVX-512 off, shared with other jobs: load ranged from 1.4 to 12 over
+the four runs, so read the differences, not the digits).
+Gate harness rows, mean ms:
+
+| Task | Before | After | ImageSharp (same run) | Peak MiB before → after (ImageSharp) |
+|---|--:|--:|--:|--:|
+| thumb-jpeg | 38.5 / 40.0 | 28.2 / 27.3 | 47.4-49.5 | 2.3 → 2.4 (1.3) |
+| jpeg-decode | 56.6* / 44.8 | 58.7* / 42.2 | 80.1-119.5 | 0.5 → 0.7 (3.6) |
+| jpeg-decode-rgba | 44.9 / 47.0 | 98.2* / 44.5 | 86.7-112.4 | 0.5 → 0.6 (0.7) |
+| cmyk-jpeg-to-srgb | 235.8 / 275.8 | 243.9 / 303.0 | 149.7-200.0 (skips ICC) | 2.0 → 2.1 (1.3) |
+| tiff-multipage-decode | 138.8* / 73.6 | 71.5 / 87.3 | 591.6-637.9 | 1.8 → 2.0 (54.8) |
+
+Each cell shows two runs; * marks a run during a load spike that moved
+ImageSharp's row by the same factor. The rows other than thumb-jpeg do
+not change beyond that spread: full-size 4:2:0 decoding is bound by the
+transform thread (about 38 ms for 24 MP), not by Huffman decoding. The
+thumb-jpeg peak stays the published exception (about 1 MiB over
+ImageSharp). Decoder only on a desktop host (one core for entropy decoding plus
+the transform thread, best of 30, a 6000x4000 4:2:0 file of 5.8 MB): 1/8 scale 38.6 to 28.3 ms, and the
+scan decoder is the whole of that time in both (37.9 and 28.4 ms inside
+the decoder); 24 MP CMYK file of 16.5 MB, full size 111 to 90 ms.
+Progressive full-size decoding stays dominated by refinement scans
+(about 205 ms for a noisy 24 MP file against 218 before).
+
 ## Drawing and clipping exceptions
 
 The drawing operations are compared with ImageSharp.Drawing 2.1.7 in
