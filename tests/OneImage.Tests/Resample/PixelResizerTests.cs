@@ -63,14 +63,22 @@ public class PixelResizerTests
         using var resizer = new PixelResizer(maxDegree: 1);
         var src = new Rgba32[640 * 480];
         var dst = new Rgba32[320 * 240];
-        for (int i = 0; i < 5; i++)
+        void Calls()
         {
-            resizer.Resize<Rgba32>(src, 640, 480, dst, 320, 240);
+            resizer.Resize<Rgba32>(src, 640, 480, dst, 320, 240, ResamplingFilter.Lanczos3, linear: false);
+            resizer.Resize<Rgba32>(src, 640, 480, dst, 320, 240, ResamplingFilter.Mitchell, linear: true);
+        }
+
+        // A filter seen for the first time fills a tap-table slot that has never been used, which grows its buffers: that is
+        // warm-up, so every variant measured below runs first.
+        for (int i = 0; i < 10; i++)
+        {
+            Calls();
         }
 
         long before = GC.GetAllocatedBytesForCurrentThread();
-        resizer.Resize<Rgba32>(src, 640, 480, dst, 320, 240, ResamplingFilter.Lanczos3, linear: false);
-        resizer.Resize<Rgba32>(src, 640, 480, dst, 320, 240, ResamplingFilter.Mitchell, linear: true);
+        Calls();
+        Calls();
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
         Assert.InRange(resizer.ScratchBytes, 1, 64L << 20);
     }
