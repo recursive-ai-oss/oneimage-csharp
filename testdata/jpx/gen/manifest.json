@@ -1,0 +1,352 @@
+[
+ {
+  "file": "rgb-default.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "9e77976935095346e97677067578e3cfeced4c154553015bee198f224d2d1237",
+  "bytes": 14019
+ },
+ {
+  "file": "gray-1res.j2k",
+  "width": 64,
+  "height": 48,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "51147ddc3bf51ef758a6494b167adcc8f551cc0ebfd6eec33691b6419d24e2d0",
+  "bytes": 2639
+ },
+ {
+  "file": "gray-3res.j2k",
+  "width": 64,
+  "height": 48,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "d97ca273d12c9c303b47b93c65756fa8764f61847da932af3251a52b279c4e52",
+  "bytes": 2528
+ },
+ {
+  "file": "prog-lrcp.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "7eaca685b4059e02f788ecd3d7990127b5f60cc0a92e492bbaff7c41d0bbcc7a",
+  "bytes": 14619
+ },
+ {
+  "file": "prog-rlcp.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "7eaca685b4059e02f788ecd3d7990127b5f60cc0a92e492bbaff7c41d0bbcc7a",
+  "bytes": 14619
+ },
+ {
+  "file": "prog-rpcl.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "7eaca685b4059e02f788ecd3d7990127b5f60cc0a92e492bbaff7c41d0bbcc7a",
+  "bytes": 14619
+ },
+ {
+  "file": "prog-pcrl.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "7eaca685b4059e02f788ecd3d7990127b5f60cc0a92e492bbaff7c41d0bbcc7a",
+  "bytes": 14619
+ },
+ {
+  "file": "prog-cprl.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "7eaca685b4059e02f788ecd3d7990127b5f60cc0a92e492bbaff7c41d0bbcc7a",
+  "bytes": 14619
+ },
+ {
+  "file": "tiles-pcrl.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "a9d56f685d00f3369f3084aaf9f43c90c97fd6180bf6677b4a3946fa839f0017",
+  "bytes": 15161
+ },
+ {
+  "file": "tiles-rpcl-prec.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "703d7af15234fc4ce02ac36f9cd4e6ca22dd5b9630fcfd82c050db1bcfe9eeaf",
+  "bytes": 16056
+ },
+ {
+  "file": "tiles-cprl.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "a9d56f685d00f3369f3084aaf9f43c90c97fd6180bf6677b4a3946fa839f0017",
+  "bytes": 15292
+ },
+ {
+  "file": "cblk-16x16.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "91596151878934575261bba5ab7d1e9df4161dad0c7db8427a44386b33df80f0",
+  "bytes": 4887
+ },
+ {
+  "file": "cblk-64x8.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "b3b27e7f9c13183855700e98ef392b45477970129e7a2bba05e797245a1d3fd4",
+  "bytes": 4889
+ },
+ {
+  "file": "cblk-4x4.j2k",
+  "width": 40,
+  "height": 36,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "45103f198c583a7d48c123a080bdec44e43cc628a8574fc2ca8dae15eb809009",
+  "bytes": 1699
+ },
+ {
+  "file": "cblk-1024x4.j2k",
+  "width": 130,
+  "height": 20,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "2db0776dff46e5d80f46d544fe5ae2e6a791e453266180356e74406fa74822d8",
+  "bytes": 2557
+ },
+ {
+  "file": "mode-bypass.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "65abaabb94f7e75971cf365bda3705bb486a9261afc64ac6a9e26ce7d1027ef4",
+  "bytes": 14580
+ },
+ {
+  "file": "mode-reset.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "5520183760068f34b0fdba654f9fede251aa98883db7c035aeeafe5fb63022f0",
+  "bytes": 14338
+ },
+ {
+  "file": "mode-termall.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "451a4dafc8c41d5ce2e4c86608d1a5723f31c5f8d45e82443f8737199747218b",
+  "bytes": 15642
+ },
+ {
+  "file": "mode-causal.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "16a152fb3adfd8d8c76a7c577ce3fe4596a8f147be849d526fbbb103373673b6",
+  "bytes": 14284
+ },
+ {
+  "file": "mode-pterm.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "a84451badfe03bb84046647babcb0c20a5f6685c6e1aefca0e02346d4b55726b",
+  "bytes": 14192
+ },
+ {
+  "file": "mode-segsym.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "e7d96a491d6acf79ce0fc936038496800e6df6fae36284f7b19a6cb9e4ffe8c7",
+  "bytes": 14376
+ },
+ {
+  "file": "mode-bypass-termall.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "170e60823e5a9b7de417ad6e392979563988bbad98d5fdb539fb5df8cbc69c39",
+  "bytes": 15297
+ },
+ {
+  "file": "mode-bypass-causal-reset.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "58611a26037bd50644aed18357dc932742f24488e5e3886132adddbc9d5e7fbb",
+  "bytes": 14603
+ },
+ {
+  "file": "mode-all-modes.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "223a1a00c4d272f825948de802c84c2c97ec0ac6a66d0f0f8a79160d9c33c09a",
+  "bytes": 15238
+ },
+ {
+  "file": "sop-eph.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "143c3111b039d91f80cba535eab77317dea90f777c8c913e59c2b4c86b50436a",
+  "bytes": 14416
+ },
+ {
+  "file": "plt-tlm.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "32cf7af52155d1f26095c816c8d83de75559b0173085f4309fe77fc31f3882a6",
+  "bytes": 15245
+ },
+ {
+  "file": "gray16.j2k",
+  "width": 75,
+  "height": 50,
+  "channels": 1,
+  "bits": 16,
+  "lossless": true,
+  "sha256": "c5c24dc860e54ddd984071dc70a4fc74e94d4662e01ff5ac46bdc03a88e8dc27",
+  "bytes": 7037
+ },
+ {
+  "file": "rgb16.j2k",
+  "width": 61,
+  "height": 40,
+  "channels": 3,
+  "bits": 16,
+  "lossless": true,
+  "sha256": "78404f2217a0ae03b5fffeaec7938f9f3762d182fbbaac3d054f6a7c5ea5d160",
+  "bytes": 13757
+ },
+ {
+  "file": "offset.j2k",
+  "width": 70,
+  "height": 50,
+  "channels": 3,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "2b60ba01b1e4e067c2ded008807aa23918de2b7fbe7334afeb76f1ba55154be7",
+  "bytes": 9644
+ },
+ {
+  "file": "odd-1x1.j2k",
+  "width": 1,
+  "height": 1,
+  "channels": 1,
+  "bits": 8,
+  "lossless": true,
+  "sha256": "40f6916b78ce91e89f740a14cdc77ab0e69292daefb8e06abe4b67637ccc30c5",
+  "bytes": 124
+ },
+ {
+  "file": "lossy-ict.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": false,
+  "sha256": "41bc6e11b5ae15e9a050f36118eb8dd4f3147150cce484123fe5b86c66a12c42",
+  "bytes": 1787
+ },
+ {
+  "file": "lossy-gray.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 1,
+  "bits": 8,
+  "lossless": false,
+  "sha256": "da6bd92c43b6b14a068f085b2b54c6522af5e71f751e17ffb23eca88d5fd2df2",
+  "bytes": 1441
+ },
+ {
+  "file": "lossy-layers-tiles.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": false,
+  "sha256": "8e0f3b077799486bf3f622fe63d53e39834d63fd36d220926bf5760df4ecff58",
+  "bytes": 3555
+ },
+ {
+  "file": "lossy-16bit.j2k",
+  "width": 61,
+  "height": 40,
+  "channels": 1,
+  "bits": 16,
+  "lossless": false,
+  "sha256": "9fe90f55293d1c8539e04b726d5d1d647d41aa5463ade0a7ada7c6a85a62c97a",
+  "bytes": 752
+ },
+ {
+  "file": "lossy-modes.j2k",
+  "width": 97,
+  "height": 61,
+  "channels": 3,
+  "bits": 8,
+  "lossless": false,
+  "sha256": "538e1297e9a84df326a30e0c50f608576f48909ab3ce9acf50641dbdc9135cca",
+  "bytes": 1747
+ }
+]
