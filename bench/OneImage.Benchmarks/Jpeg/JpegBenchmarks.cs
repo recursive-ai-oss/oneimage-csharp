@@ -131,6 +131,12 @@ public class JpegDecodeBenchmarks
     [Benchmark(Description = "OneImage Image.Load + Resize(750) (shrink-on-load), 1/8")]
     public int OneImageEighth() => OneImage.Image.Load(_jpeg).Resize(width: 750).ToArray<OneImage.Rgb24>().Length;
 
+    [Benchmark(Description = "OneImage decoder only at 1/2")]
+    public long OneImageCodecHalf() => JpegBenchHelpers.DecodeInto(_jpeg, 2);
+
+    [Benchmark(Description = "OneImage decoder only at 1/4")]
+    public long OneImageCodecQuarter() => JpegBenchHelpers.DecodeInto(_jpeg, 4);
+
     [Benchmark(Description = "OneImage decoder only at 1/8")]
     public long OneImageCodecEighth() => JpegBenchHelpers.DecodeInto(_jpeg, 8);
 
@@ -482,6 +488,46 @@ public class JpegTransformKernelBenchmarks
         for (int b = 0; b < Blocks; b++)
         {
             JpegIdct.Idct8Scalar(_coef.AsSpan(b * 64, 64), _quant, _dst.AsSpan(((b & 7) * 8 * 64) + ((b >> 3 & 7) * 8)), 64);
+        }
+    }
+
+    [Benchmark(Description = "IDCT 4x4 dispatch")]
+    public void Idct4Dispatch()
+    {
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegIdct.Block<byte>(_coef.AsSpan(b * 64, 64), _quant, _dst.AsSpan(((b & 7) * 4 * 64) + ((b >> 3 & 7) * 4)), 64, 4, 8);
+        }
+    }
+
+    [Benchmark(Description = "IDCT 4x4 scalar")]
+    public void Idct4Scalar()
+    {
+        Span<ushort> t = stackalloc ushort[4 * 4];
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegIdct.Idct4(_coef.AsSpan(b * 64, 64), _quant, t, 4, 8);
+            t[0] = (ushort)(t[0] + 1);
+        }
+    }
+
+    [Benchmark(Description = "IDCT 2x2 dispatch")]
+    public void Idct2Dispatch()
+    {
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegIdct.Block<byte>(_coef.AsSpan(b * 64, 64), _quant, _dst.AsSpan(((b & 7) * 2 * 64) + ((b >> 3 & 7) * 2)), 64, 2, 8);
+        }
+    }
+
+    [Benchmark(Description = "IDCT 2x2 scalar")]
+    public void Idct2Scalar()
+    {
+        Span<ushort> t = stackalloc ushort[2 * 2];
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegIdct.Idct2(_coef.AsSpan(b * 64, 64), _quant, t, 2, 8);
+            t[0] = (ushort)(t[0] + 1);
         }
     }
 

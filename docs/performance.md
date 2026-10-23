@@ -429,6 +429,18 @@ x64, AdvSimd on ARM64); all three give identical bits. With AVX2 turned off
 SSE-only gap is the other JPEG stages (entropy coding, color conversion,
 upsampling), not the transforms.
 
+The reduced-size transforms used for DCT scaling (4x4 at 1/2, 2x2 at 1/4) also have a
+128-bit path now, identical in output to the scalar one (hashes of the sample corpus and of
+24 MP files at scales 1, 1/2, 1/4 and 1/8 match across AVX-512, AVX2, SSE-only and scalar
+runs). Measured on the worker (Ryzen 9 7950X3D, 32 threads, .NET 10.0.13,
+`DOTNET_EnableAVX512=0`, load 1.1 to 5 from other work, no other benchmark running), per block:
+4x4 72 ns before and 26 ns after, 2x2 32 ns before and 20 ns after. A 24 MP 4:2:0 decode into
+a reused buffer at 1/2 takes 38.9 ms before and 31.9 ms after, at 1/4 31.7 and 31.1 ms, at 1/8 26.4 and 26.0 ms
+(full size 32.0 and 32.6 ms, unchanged within noise). The smooth test photograph is
+entropy-bound at about 31 ms, so the transform no longer limits 1/2; noisier files with more
+coefficients spend more time in the transform. The thumbnail row (24 MP to 400 px, shrink-on-load at 1/8, which does not
+use these transforms) measured 27.3 ms before and 28.1 ms after, within the run spread.
+
 ## Method
 
 - **Libraries.** OneImage, measured against

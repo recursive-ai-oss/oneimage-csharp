@@ -82,6 +82,18 @@ internal static class JpegIdct
                 return;
             }
 
+            if (UsesVector128 && size == 4)
+            {
+                Idct4Vector128(coef, quant, d, stride, precision);
+                return;
+            }
+
+            if (UsesVector128 && size == 2)
+            {
+                Idct2Vector128(coef, quant, d, stride, precision);
+                return;
+            }
+
             Span<ushort> tmp = stackalloc ushort[16];
             Reduced(coef, quant, tmp, size, precision);
             for (int y = 0; y < size; y++)
@@ -98,6 +110,18 @@ internal static class JpegIdct
             if (size == 8)
             {
                 Idct8Wide(coef, quant, d, stride, precision);
+                return;
+            }
+
+            if (UsesVector128 && size == 4)
+            {
+                Idct4Vector128(coef, quant, d, stride, precision);
+                return;
+            }
+
+            if (UsesVector128 && size == 2)
+            {
+                Idct2Vector128(coef, quant, d, stride, precision);
                 return;
             }
 
@@ -761,5 +785,151 @@ internal static class JpegIdct
         Vector128<ulong> b = Vector128.Narrow(Level(aLo, aHi), Level(bLo, bHi)).AsUInt64();
         Unsafe.WriteUnaligned(ref d, b.GetElement(0));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref d, stride), b.GetElement(1));
+    }
+
+    // ---- Reduced transforms on 128-bit vectors ----
+    // Pass 1 runs on columns (four per vector, as in the 8x8 path); pass 2 runs with one row per lane, so the
+    // intermediate is transposed between the passes. The arithmetic is the scalar Idct4/Idct2 term for term
+    // (32-bit wrapping multiplies, same shifts), so results are identical.
+
+    // One pass of the 4-point reduced transform: odd part from inputs 1, 3, 5, 7, even part from 0, 2, 6; input 4 is unused.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Reduced4(
+        Vector128<int> i0, Vector128<int> i1, Vector128<int> i2, Vector128<int> i3,
+        Vector128<int> i5, Vector128<int> i6, Vector128<int> i7, int shift,
+        out Vector128<int> o0, out Vector128<int> o1, out Vector128<int> o2, out Vector128<int> o3)
+    {
+        Vector128<int> t0 = Vector128.ShiftLeft(i0, ConstBits + 1);
+        Vector128<int> t2 = Mul(i2, F1847) - Mul(i6, F0765);
+        Vector128<int> t10 = t0 + t2;
+        Vector128<int> t12 = t0 - t2;
+        Vector128<int> u0 = Mul(i5, F1451) + Mul(i1, F1061) - Mul(i7, F0211) - Mul(i3, F2172);
+        Vector128<int> u2 = Mul(i3, F0899) + Mul(i1, F2562) - Mul(i7, F0509) - Mul(i5, F0601);
+        o0 = DescaleV(t10 + u2, shift);
+        o3 = DescaleV(t10 - u2, shift);
+        o1 = DescaleV(t12 + u0, shift);
+        o2 = DescaleV(t12 - u0, shift);
+    }
+
+    // One pass of the 2-point reduced transform from inputs 0, 1, 3, 5, 7.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Reduced2(
+        Vector128<int> i0, Vector128<int> i1, Vector128<int> i3, Vector128<int> i5, Vector128<int> i7, int shift,
+        out Vector128<int> o0, out Vector128<int> o1)
+    {
+        Vector128<int> t10 = Vector128.ShiftLeft(i0, ConstBits + 2);
+        Vector128<int> t0 = Mul(i5, F0850) + Mul(i1, F3624) - Mul(i7, F0720) - Mul(i3, F1272);
+        o0 = DescaleV(t10 + t0, shift);
+        o1 = DescaleV(t10 - t0, shift);
+    }
+
+    // Lanes a0, b0, a1, b1: the two output columns of rows 0 and 1 side by side.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Interleave(Vector128<int> a, Vector128<int> b) =>
+        Sse2.IsSupported ? Sse2.UnpackLow(a, b) : AdvSimd.Arm64.ZipLow(a, b);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Clamp(Vector128<int> v, int center, int max) =>
+        Vector128.Min(Vector128.Max(v + Vector128.Create(center), Vector128<int>.Zero), Vector128.Create(max));
+
+    /// <summary>128-bit form of <see cref="Idct4"/> writing samples of type <typeparamref name="T"/> (byte or ushort): identical output.</summary>
+    public static void Idct4Vector128<T>(ReadOnlySpan<short> coef, ReadOnlySpan<int> quant, Span<T> dst, int stride, int precision)
+        where T : unmanaged, IBinaryInteger<T>
+    {
+        CheckArgs(coef, quant, dst.Length, stride, 4);
+        int p1 = Pass1Bits(precision);
+        Load(coef, quant, 0, out Vector128<int> l0, out Vector128<int> h0);
+        Load(coef, quant, 1, out Vector128<int> l1, out Vector128<int> h1);
+        Load(coef, quant, 2, out Vector128<int> l2, out Vector128<int> h2);
+        Load(coef, quant, 3, out Vector128<int> l3, out Vector128<int> h3);
+        Load(coef, quant, 5, out Vector128<int> l5, out Vector128<int> h5);
+        Load(coef, quant, 6, out Vector128<int> l6, out Vector128<int> h6);
+        Load(coef, quant, 7, out Vector128<int> l7, out Vector128<int> h7);
+
+        int sh1 = ConstBits - p1 + 1;
+        Reduced4(l0, l1, l2, l3, l5, l6, l7, sh1, out Vector128<int> a0, out Vector128<int> a1, out Vector128<int> a2, out Vector128<int> a3);
+        Reduced4(h0, h1, h2, h3, h5, h6, h7, sh1, out Vector128<int> b0, out Vector128<int> b1, out Vector128<int> b2, out Vector128<int> b3);
+        Transpose4(ref a0, ref a1, ref a2, ref a3); // columns 0..3, one row per lane
+        Transpose4(ref b0, ref b1, ref b2, ref b3); // columns 4..7 (4 is unused)
+
+        int sh2 = ConstBits + p1 + 3 + 1;
+        Reduced4(a0, a1, a2, a3, b1, b2, b3, sh2, out Vector128<int> o0, out Vector128<int> o1, out Vector128<int> o2, out Vector128<int> o3);
+        Transpose4(ref o0, ref o1, ref o2, ref o3); // back to rows
+
+        int center = 1 << (precision - 1);
+        int max = (1 << precision) - 1;
+        o0 = Clamp(o0, center, max);
+        o1 = Clamp(o1, center, max);
+        o2 = Clamp(o2, center, max);
+        o3 = Clamp(o3, center, max);
+        Vector128<ushort> n01 = Vector128.Narrow(o0.AsUInt32(), o1.AsUInt32());
+        Vector128<ushort> n23 = Vector128.Narrow(o2.AsUInt32(), o3.AsUInt32());
+        ref T d = ref MemoryMarshal.GetReference(dst);
+        if (typeof(T) == typeof(byte))
+        {
+            Vector128<uint> b = Vector128.Narrow(n01, n23).AsUInt32();
+            ref byte db = ref Unsafe.As<T, byte>(ref d);
+            Unsafe.WriteUnaligned(ref db, b.GetElement(0));
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref db, stride), b.GetElement(1));
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref db, 2 * stride), b.GetElement(2));
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref db, 3 * stride), b.GetElement(3));
+        }
+        else
+        {
+            ref ushort dw = ref Unsafe.As<T, ushort>(ref d);
+            Vector128<ulong> p = n01.AsUInt64();
+            Vector128<ulong> q = n23.AsUInt64();
+            Unsafe.WriteUnaligned(ref Unsafe.As<ushort, byte>(ref dw), p.GetElement(0));
+            Unsafe.WriteUnaligned(ref Unsafe.As<ushort, byte>(ref Unsafe.Add(ref dw, stride)), p.GetElement(1));
+            Unsafe.WriteUnaligned(ref Unsafe.As<ushort, byte>(ref Unsafe.Add(ref dw, 2 * stride)), q.GetElement(0));
+            Unsafe.WriteUnaligned(ref Unsafe.As<ushort, byte>(ref Unsafe.Add(ref dw, 3 * stride)), q.GetElement(1));
+        }
+    }
+
+    /// <summary>128-bit form of <see cref="Idct2"/> writing samples of type <typeparamref name="T"/> (byte or ushort): identical output.</summary>
+    public static void Idct2Vector128<T>(ReadOnlySpan<short> coef, ReadOnlySpan<int> quant, Span<T> dst, int stride, int precision)
+        where T : unmanaged, IBinaryInteger<T>
+    {
+        CheckArgs(coef, quant, dst.Length, stride, 2);
+        int p1 = Pass1Bits(precision);
+        Load(coef, quant, 0, out Vector128<int> l0, out Vector128<int> h0);
+        Load(coef, quant, 1, out Vector128<int> l1, out Vector128<int> h1);
+        Load(coef, quant, 3, out Vector128<int> l3, out Vector128<int> h3);
+        Load(coef, quant, 5, out Vector128<int> l5, out Vector128<int> h5);
+        Load(coef, quant, 7, out Vector128<int> l7, out Vector128<int> h7);
+
+        int sh1 = ConstBits - p1 + 2;
+        Reduced2(l0, l1, l3, l5, l7, sh1, out Vector128<int> a0, out Vector128<int> a1);
+        Reduced2(h0, h1, h3, h5, h7, sh1, out Vector128<int> b0, out Vector128<int> b1);
+        Vector128<int> a2 = Vector128<int>.Zero;
+        Vector128<int> a3 = Vector128<int>.Zero;
+        Vector128<int> b2 = Vector128<int>.Zero;
+        Vector128<int> b3 = Vector128<int>.Zero;
+        Transpose4(ref a0, ref a1, ref a2, ref a3); // columns 0..3, one row per lane
+        Transpose4(ref b0, ref b1, ref b2, ref b3); // columns 4..7: only 5 and 7 are used
+
+        int sh2 = ConstBits + p1 + 3 + 2;
+        Reduced2(a0, a1, a3, b1, b3, sh2, out Vector128<int> o0, out Vector128<int> o1);
+        int center = 1 << (precision - 1);
+        int max = (1 << precision) - 1;
+        o0 = Clamp(o0, center, max); // output column 0, one row per lane
+        o1 = Clamp(o1, center, max);
+        ref T d = ref MemoryMarshal.GetReference(dst);
+        if (typeof(T) == typeof(byte))
+        {
+            Vector128<ushort> w = Vector128.Narrow(Interleave(o0, o1).AsUInt32(), Vector128<uint>.Zero);
+            Vector128<byte> bytes = Vector128.Narrow(w, Vector128<ushort>.Zero);
+            ref byte db = ref Unsafe.As<T, byte>(ref d);
+            Unsafe.WriteUnaligned(ref db, bytes.AsUInt16().GetElement(0));
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref db, stride), bytes.AsUInt16().GetElement(1));
+        }
+        else
+        {
+            Vector128<ushort> w = Vector128.Narrow(Interleave(o0, o1).AsUInt32(), Vector128<uint>.Zero);
+            Vector128<uint> pairs = w.AsUInt32();
+            ref byte db = ref Unsafe.As<T, byte>(ref d);
+            Unsafe.WriteUnaligned(ref db, pairs.GetElement(0));
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref db, 2 * stride), pairs.GetElement(1));
+        }
     }
 }

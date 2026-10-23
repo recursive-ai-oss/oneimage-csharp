@@ -93,6 +93,78 @@ public class JpegKernelTests
         }
     }
 
+    /// <summary>The 128-bit 4x4 and 2x2 transforms (byte and ushort output, via the dispatcher too) equal the scalar ones.</summary>
+    [Theory]
+    [InlineData(8)]
+    [InlineData(10)]
+    [InlineData(12)]
+    public void ReducedIdctVectorMatchesScalar(int precision)
+    {
+        var rnd = new Random(77 + precision);
+        short[] coef = new short[64];
+        for (int iter = 0; iter < 30000; iter++)
+        {
+            int kind = iter % 6;
+            int range = kind switch { 0 => 40, 1 => 0, 2 => 600, 3 => 2000, _ => 300 };
+            Array.Clear(coef);
+            int[] q = Quant(rnd, kind == 5);
+            for (int i = 0; i < 64; i++)
+            {
+                if (kind == 4)
+                {
+                    coef[i] = rnd.Next(2) == 0 ? short.MinValue : short.MaxValue;
+                }
+                else if (kind == 2 ? rnd.Next(10) == 0 : i == 0 || kind != 1)
+                {
+                    coef[i] = (short)rnd.Next(-range, range + 1);
+                }
+            }
+
+            int stride = 4 + (iter % 4);
+            foreach (int size in new[] { 4, 2 })
+            {
+                ushort[] expected = new ushort[(size * stride) + 3];
+                Array.Fill(expected, (ushort)9);
+                if (size == 4)
+                {
+                    JpegIdct.Idct4(coef, q, expected, stride, precision);
+                }
+                else
+                {
+                    JpegIdct.Idct2(coef, q, expected, stride, precision);
+                }
+
+                ushort[] wide = new ushort[expected.Length];
+                Array.Fill(wide, (ushort)9);
+                JpegIdct.Block<ushort>(coef, q, wide, stride, size, precision);
+                Assert.True(expected.AsSpan().SequenceEqual(wide), $"ushort size {size} iteration {iter}");
+                if (JpegIdct.UsesVector128)
+                {
+                    ushort[] direct = new ushort[expected.Length];
+                    Array.Fill(direct, (ushort)9);
+                    if (size == 4)
+                    {
+                        JpegIdct.Idct4Vector128<ushort>(coef, q, direct, stride, precision);
+                    }
+                    else
+                    {
+                        JpegIdct.Idct2Vector128<ushort>(coef, q, direct, stride, precision);
+                    }
+
+                    Assert.True(expected.AsSpan().SequenceEqual(direct), $"ushort 128-bit size {size} iteration {iter}");
+                }
+
+                if (precision == 8)
+                {
+                    byte[] b = new byte[expected.Length];
+                    Array.Fill(b, (byte)9);
+                    JpegIdct.Block<byte>(coef, q, b, stride, size, precision);
+                    Assert.True(expected.Select(v => (byte)v).SequenceEqual(b), $"byte size {size} iteration {iter}");
+                }
+            }
+        }
+    }
+
     [Theory]
     [MemberData(nameof(Widths))]
     public void UpsamplersMatchScalarReference(int n)
