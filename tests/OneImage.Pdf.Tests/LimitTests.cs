@@ -2,9 +2,15 @@ using System.Diagnostics;
 
 namespace OneImage.Pdf.Tests;
 
-/// <summary>Hostile files are bounded before the memory they ask for is allocated.</summary>
+/// <summary>
+/// Hostile files are bounded before the memory they ask for is allocated. The tests count process-wide allocation, so this class runs
+/// with no other test class beside it (the counter would include their allocations).
+/// </summary>
+[Collection(LimitTests.CollectionName)]
 public class LimitTests
 {
+    public const string CollectionName = "Allocation measurement";
+
     private static long Allocated() => GC.GetTotalAllocatedBytes(precise: true);
 
     [Fact]
@@ -147,3 +153,6 @@ public class LimitTests
         // OnePDF's own graphics-state depth limit may refuse first; both are typed. Reaching here means it drew within bounds.
     }
 }
+
+[CollectionDefinition(LimitTests.CollectionName, DisableParallelization = true)]
+public sealed class AllocationMeasurementGroup;
