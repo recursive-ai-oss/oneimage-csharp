@@ -272,6 +272,22 @@ The thumb-jpeg, CMYK and TIFF rows do not use the split path or do not
 change beyond their spread; peaks are unchanged (jpeg-decode 1 MiB,
 cmyk 2 MiB, thumb-jpeg 2 MiB).
 
+## JPEG restart intervals
+
+Baseline JPEGs that carry restart markers (many cameras and phones write one interval per MCU row) are entropy-decoded on several threads. Each restart interval starts with fresh DC predictors and a flushed bit buffer, so whole intervals decode independently: the calling thread cuts the compressed scan into work units of whole intervals (about one MCU row each), workers decode them into a deeper coefficient ring, and finished units are handed on as complete MCU rows, in order. The worker count is the per-call degree (default min(4, cores)). Only sequential single-scan Huffman files of 1 MP or more with at least two work units take this path; files without restart markers, progressive and arithmetic files, and files whose intervals are few and huge decode as before, at the same speed.
+
+The output is identical to the single-threaded decoder at every scale, degree and hardware path. A damaged file behaves the same too: a worker runs the same per-MCU loop over the same bytes, and when a unit fails the rows before the failing MCU are delivered first and the earliest failure is the one thrown, so a request that those rows complete still succeeds. Peak working memory grows by the deeper ring (about 3.5 MB for a 6000-pixel-wide 4:2:0 frame; the ring is capped at 16 MiB) plus the compressed bytes of the units in flight.
+
+Measured on the shared worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.402, `DOTNET_EnableAVX512=0`, default degree 4; machine load 1-4 around the runs, no other benchmark running during the runs). A 24 MP 4:2:0 q90 file written by this library with restart interval 375 (one MCU row) and the same picture without restarts, BenchmarkDotNet mean (allocated):
+
+| Row | no restarts, before | no restarts, after | restarts, before | restarts, after | ImageSharp 3.1.12 | NetVips |
+|---|---|---|---|---|---|---|
+| full size, caller's Rgb24 buffer | 31.8 ms (52 KB) | 32.4 ms (52 KB) | 32.3 ms | **25.5 ms** (54 KB) | 79.2 ms | 98.0 ms |
+| 1/8 (`Resize(750)`) | 27.4 ms (1147 KB) | 27.3 ms | 27.0 ms | **9.0 ms** (1150 KB) | 46.6 ms (TargetSize) | 38.9 ms (shrink=8) |
+| thumbnail 400 px | 27.8 ms (360 KB) | 27.6 ms | 27.1 ms | **9.0 ms** (376 KB) | | |
+
+The gate rows are unchanged (their files have no restart markers): jpeg-decode 32.2 vs 32.7 ms, jpeg-decode-rgba 32.4 vs 32.0 ms, thumb-jpeg 27.6 vs 27.5 ms. At full size the decode is now bound by the transform and delivery threads (about 24 ms), not by entropy decoding, so scales 1/2 and 1/4, which are transform-bound, do not change. The "before" runs started at load 3.9 (falling to 1.6) and the "after" runs at load 1.0; the two share the same machine and settings but not the same minute.
+
 ## Drawing and clipping exceptions
 
 The drawing operations are compared with ImageSharp.Drawing 2.1.7 in
