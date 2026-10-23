@@ -830,6 +830,10 @@ foreach (bool lossless in new[] { true, false })
     psdLayer.Opacity = 0.5f;
     psdLayer.BlendMode = OneImage.BlendMode.Multiply;
     psdDoc.Add(psdDoc.CreateFillLayer("tint", new Rgba32(0, 0, 255, 255))).Opacity = 0.1f;
+    // A new style and new gradient and pattern fills are written as effects and fill settings.
+    psdLayer.Style = new OneImage.Layers.LayerStyle([new OneImage.Layers.DropShadowEffect { Distance = 4, Size = 3 }, new OneImage.Layers.StrokeEffect { Size = 2 }]);
+    psdDoc.Add(psdDoc.CreateFillLayer("gradient", OneImage.Drawing.Brush.LinearGradient(new System.Numerics.Vector2(0, 0), new System.Numerics.Vector2(60, 40), [new OneImage.Drawing.ColorStop(0, new Rgba32(255, 0, 0, 255)), new OneImage.Drawing.ColorStop(1, new Rgba32(0, 0, 255, 255))]))).Opacity = 0.2f;
+    psdDoc.Add(psdDoc.CreateFillLayer("hatch", OneImage.Drawing.Brush.Hatch(OneImage.Drawing.HatchStyle.Percent20, new Rgba32(0, 0, 0, 255), new Rgba32(255, 255, 255, 255)))).Opacity = 0.1f;
     using var psdFile = OneImage.Psd.PsdFile.FromDocument(psdDoc);
     using var psdBytes = new MemoryStream();
     psdFile.Save(psdBytes);
@@ -842,7 +846,7 @@ foreach (bool lossless in new[] { true, false })
     Image merged = Image.Load(psdBytes.ToArray(), new LoadOptions { Configuration = new ImageConfiguration().Add(OneImage.Psd.PsdFormat.Instance) });
     Rgba32[] mergedPixels = merged.ToArray<Rgba32>();
     Rgba32[] renderedPixels = psdDoc.Render().ToArray<Rgba32>();
-    if (psdLoaded.Document.Root.Children.Count != 2 || !psdBytes2.ToArray().AsSpan().SequenceEqual(psdBytes3.ToArray()) || !mergedPixels.AsSpan().SequenceEqual(renderedPixels))
+    if (psdLoaded.Document.Root.Children.Count != 4 || psdLoaded.Document.Root.Children[0].Style?.Effects.Count != 2 || psdLoaded.GetInfo(psdLoaded.Document.Root.Children[2]).Kind != OneImage.Psd.PsdLayerKind.GradientOrPatternFill || !psdBytes2.ToArray().AsSpan().SequenceEqual(psdBytes3.ToArray()) || !mergedPixels.AsSpan().SequenceEqual(renderedPixels))
     {
         Console.Error.WriteLine("psd smoke failed");
         return 1;

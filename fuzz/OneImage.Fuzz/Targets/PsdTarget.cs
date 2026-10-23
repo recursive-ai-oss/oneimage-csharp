@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Threading;
 using OneImage;
+using OneImage.Drawing;
+using OneImage.Layers;
 using OneImage.Psd;
 
 /// <summary>
@@ -63,7 +65,41 @@ internal static class PsdTarget
                 using var ms = new MemoryStream();
                 psd.Save(ms);
                 using PsdFile again = PsdFile.Load(ms.ToArray(), options);
+
+                // Edit what was read (a style around the same effects plus a new one, a new brush on every fill) and write it again: the writer works from
+                // the blocks it kept, which are the hostile part.
+                Edit(psd.Document.Root, 0);
+                using var edited = new MemoryStream();
+                psd.Save(edited);
+                using PsdFile back = PsdFile.Load(edited.ToArray(), options);
             }
         });
+    }
+
+    private static void Edit(GroupLayer group, int depth)
+    {
+        if (depth > 16)
+        {
+            return;
+        }
+
+        foreach (Layer l in group.Children)
+        {
+            LayerEffect[] kept = l.Style == null ? [] : [.. l.Style.Effects];
+            if (kept.Length < LayerStyle.MaxEffects - 1)
+            {
+                l.Style = new LayerStyle([.. kept, new StrokeEffect { Size = 2 }]);
+            }
+
+            switch (l)
+            {
+                case FillLayer fill when !fill.Brush.TryGetSolid(out _):
+                    fill.Brush = Brush.LinearGradient(new System.Numerics.Vector2(0, 0), new System.Numerics.Vector2(40, 30), [new ColorStop(0, new Rgba32(255, 0, 0, 255)), new ColorStop(1, new Rgba32(0, 0, 255, 128))]);
+                    break;
+                case GroupLayer sub:
+                    Edit(sub, depth + 1);
+                    break;
+            }
+        }
     }
 }

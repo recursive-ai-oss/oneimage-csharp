@@ -3,13 +3,29 @@ using OneImage.Layers;
 namespace OneImage.Psd;
 
 /// <summary>
+/// What a layer's effects block looked like when it was read: the block, which of its descriptor items became model effects, and which item each effect
+/// came from. A save of an edited style uses it to keep the items the model does not carry and to write unchanged effects back as they were.
+/// </summary>
+internal sealed class FxSource
+{
+    public PsdBlock? Block { get; set; }
+
+    public PsdLimits Limits { get; init; } = PsdLimits.Default;
+
+    /// <summary>The items that became effects: the key in the root descriptor and the index in its list (-1 for a single item).</summary>
+    public HashSet<(string Key, int Index)> Taken { get; } = [];
+
+    public Dictionary<LayerEffect, (string Key, int Index)> Effects { get; } = new(ReferenceEqualityComparer.Instance);
+}
+
+/// <summary>
 /// Reads the layer-effects block (<c>lfx2</c>) into a <see cref="LayerStyle"/>. Effects it can reproduce are modelled; the others (gradient and
 /// pattern overlays or strokes, bevel and emboss, gradient glows, random-noise grain) are counted in <see cref="Result.Skipped"/> so the loader can
 /// say the style is not complete. Disabled effects are not modelled at all: they draw nothing, and the block is written back untouched.
 /// </summary>
 internal static class EffectsCodec
 {
-    internal readonly record struct Result(LayerStyle? Style, int Skipped, int Approximated);
+    internal readonly record struct Result(LayerStyle? Style, int Skipped, int Approximated, FxSource? Source = null);
 
     /// <summary>
     /// Reads the "effects visible" switch from the legacy effects block (<c>lrFX</c>), whose common-state item holds it. Absent or unreadable means visible.
@@ -64,9 +80,11 @@ internal static class EffectsCodec
         }
 
         var effects = new List<LayerEffect>();
+        var source = new FxSource { Limits = limits };
         int skipped = 0;
         int approximated = 0;
         int seen = 0;
+        int seenDisabled = 0;
         foreach ((string key, string kind) in Keys)
         {
             if (d.Get(key) is not { } value)
@@ -76,36 +94,42 @@ internal static class EffectsCodec
 
             if (value is List<object?> list)
             {
-                foreach (object? o in list)
+                for (int i = 0; i < list.Count; i++)
                 {
-                    if (o is Descriptor item)
+                    if (list[i] is Descriptor item)
                     {
-                        Take(item, kind);
+                        Take(item, kind, key, i);
                     }
                 }
             }
             else if (value is Descriptor single)
             {
-                Take(single, kind);
+                Take(single, kind, key, -1);
             }
         }
 
-        return new Result(effects.Count > 0 ? new LayerStyle(effects) { ShapeFromMask = shapeFromMask } : null, skipped, approximated);
+        return new Result(effects.Count > 0 ? new LayerStyle(effects) { ShapeFromMask = shapeFromMask } : null, skipped, approximated, source);
 
-        void Take(Descriptor item, string kind)
+        void Take(Descriptor item, string kind, string key, int index)
         {
-            if (item.Get("enab") is not true)
+            // Disabled effects are modelled too (as disabled ones) so a style survives a round trip as it was; they draw nothing, and one that cannot be
+            // read, or that is past the cap, simply stays in the file.
+            bool enabled = item.Get("enab") is true;
+            if (!enabled)
             {
-                return;
+                if (++seenDisabled > limits.MaxEffectsPerLayer || effects.Count >= LayerStyle.MaxEffects)
+                {
+                    return;
+                }
             }
-
-            if (++seen > limits.MaxEffectsPerLayer)
+            else if (++seen > limits.MaxEffectsPerLayer || effects.Count >= LayerStyle.MaxEffects)
             {
                 // A hostile or absurd count: nothing past the cap is drawn.
                 skipped++;
                 return;
             }
 
+            int approximatedBefore = approximated;
             LayerEffect? e = kind switch
             {
                 "drop-shadow" => DropShadow(item, colors, globalAngle, ref approximated),
@@ -117,13 +141,23 @@ internal static class EffectsCodec
                 "satin" => Satin(item, colors),
                 _ => null,
             };
+            if (!enabled)
+            {
+                approximated = approximatedBefore;
+            }
+
             if (e == null)
             {
-                skipped++;
+                if (enabled)
+                {
+                    skipped++;
+                }
             }
             else
             {
                 effects.Add(e);
+                source.Taken.Add((key, index));
+                source.Effects[e] = (key, index);
             }
         }
     }
@@ -159,7 +193,7 @@ internal static class EffectsCodec
 
         return new DropShadowEffect
         {
-            Blend = blend, Color = color, Opacity = opacity, Angle = angle, Distance = distance, Spread = spread / 100f, Size = size, Contour = contour,
+            Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Angle = angle, Distance = distance, Spread = spread / 100f, Size = size, Contour = contour,
             KnockedOut = d.Get("layerConceals") is not false,
         };
     }
@@ -176,7 +210,7 @@ internal static class EffectsCodec
             return null;
         }
 
-        return new InnerShadowEffect { Blend = blend, Color = color, Opacity = opacity, Angle = angle, Distance = distance, Choke = choke / 100f, Size = size, Contour = contour };
+        return new InnerShadowEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Angle = angle, Distance = distance, Choke = choke / 100f, Size = size, Contour = contour };
     }
 
     private static OuterGlowEffect? OuterGlow(Descriptor d, ColorConverter colors, ref int approximated)
@@ -191,7 +225,7 @@ internal static class EffectsCodec
             return null;
         }
 
-        return Number(d, "Inpr", 0, 100, 50, out float range) ? new OuterGlowEffect { Blend = blend, Color = color, Opacity = opacity, Spread = spread / 100f, Size = size, Range = range / 100f, Contour = contour } : null;
+        return Number(d, "Inpr", 0, 100, 50, out float range) ? new OuterGlowEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Spread = spread / 100f, Size = size, Range = range / 100f, Contour = contour } : null;
     }
 
     private static InnerGlowEffect? InnerGlow(Descriptor d, ColorConverter colors, ref int approximated)
@@ -208,7 +242,7 @@ internal static class EffectsCodec
 
         return new InnerGlowEffect
         {
-            Blend = blend, Color = color, Opacity = opacity, Choke = choke / 100f, Size = size, Range = range / 100f, Contour = contour,
+            Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Choke = choke / 100f, Size = size, Range = range / 100f, Contour = contour,
             Source = d.Get("glwS") is "SrcC" ? GlowSource.Center : GlowSource.Edge,
         };
     }
@@ -244,14 +278,14 @@ internal static class EffectsCodec
                 return null;
         }
 
-        return new StrokeEffect { Blend = blend, Color = color, Opacity = opacity, Size = size, Position = position };
+        return new StrokeEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Size = size, Position = position };
     }
 
     private static ColorOverlayEffect? ColorOverlay(Descriptor d, ColorConverter colors)
     {
         int none = 0;
         return Common(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, ref none)
-            ? new ColorOverlayEffect { Blend = blend, Color = color, Opacity = opacity }
+            ? new ColorOverlayEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity }
             : null;
     }
 
@@ -267,7 +301,7 @@ internal static class EffectsCodec
             return null;
         }
 
-        return new SatinEffect { Blend = blend, Color = color, Opacity = opacity, Angle = angle, Distance = distance, Size = size, Inverted = d.Get("Invr") is not false, Contour = contour };
+        return new SatinEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Angle = angle, Distance = distance, Size = size, Inverted = d.Get("Invr") is not false, Contour = contour };
     }
 
     // Mode, color and opacity, shared by every effect. Grain (random noise) is dropped and counted as an approximation.
@@ -343,17 +377,19 @@ internal static class EffectsCodec
         var list = new List<ContourPoint>(pts.Count);
         foreach (object? o in pts)
         {
-            if (o is not Descriptor p || p.Number("Hrzn") is not { } x || p.Number("Vrtc") is not { } y || x < 0 || x > 255 || y < 0 || y > 255)
+            // Written so that NaN fails, and compared as floats (two close doubles can become one float).
+            if (o is not Descriptor p || p.Number("Hrzn") is not { } x || p.Number("Vrtc") is not { } y || !(x >= 0 && x <= 255 && y >= 0 && y <= 255))
             {
                 return false;
             }
 
-            if (list.Count > 0 && x / 255.0 <= list[^1].X)
+            float fx = (float)(x / 255.0);
+            if (list.Count > 0 && !(fx > list[^1].X))
             {
                 return false;
             }
 
-            list.Add(new ContourPoint((float)(x / 255.0), (float)(y / 255.0)));
+            list.Add(new ContourPoint(fx, (float)(y / 255.0)));
         }
 
         var c = new EffectContour(list);
@@ -381,7 +417,7 @@ internal static class EffectsCodec
         ("linearLight", BlendMode.LinearLight), ("LnrL", BlendMode.LinearLight), ("LnLg", BlendMode.LinearLight),
         ("pinLight", BlendMode.PinLight), ("PnLg", BlendMode.PinLight), ("PinL", BlendMode.PinLight),
         ("hardMix", BlendMode.HardMix), ("HrdM", BlendMode.HardMix), ("HrMx", BlendMode.HardMix),
-        ("Hue ", BlendMode.Hue), ("hue", BlendMode.Hue),
+        ("Hue ", BlendMode.Hue), ("H   ", BlendMode.Hue), ("hue", BlendMode.Hue),
         ("Strt", BlendMode.Saturation), ("saturation", BlendMode.Saturation),
         ("Clr ", BlendMode.Color), ("color", BlendMode.Color),
         ("Lmns", BlendMode.Luminosity), ("luminosity", BlendMode.Luminosity),

@@ -269,12 +269,6 @@ public class GeneratedRoundTripTests
     [Fact]
     public void UnwritableLayersAreReportedByName()
     {
-        var doc = new Document(8, 8);
-        doc.Add(doc.CreateFillLayer("gradient", Drawing.Brush.LinearGradient(new System.Numerics.Vector2(0, 0), new System.Numerics.Vector2(8, 8), [new Drawing.ColorStop(0, new Rgba32(0, 0, 0, 255)), new Drawing.ColorStop(1, new Rgba32(255, 255, 255, 255))])));
-        using var f = PsdFile.FromDocument(doc);
-        var ex = Assert.Throws<ImageOperationException>(() => Util.Save(f));
-        Assert.Contains("gradient", ex.Message);
-
         var doc2 = new Document(8, 8);
         doc2.Add(doc2.CreateAdjustmentLayer("mine", Adjustment.Custom("weird", i => i)));
         using var f2 = PsdFile.FromDocument(doc2);

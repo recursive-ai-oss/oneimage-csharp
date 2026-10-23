@@ -117,10 +117,13 @@ public class EffectsTests
             Assert.Equal(3, info.EffectsNotDrawn);
         }
 
-        // Disabled effects do not count against the limit.
+        // Disabled effects do not count against the limit of drawn ones; they are kept as disabled effects, up to the same number again.
         using (PsdFile f = Load(Fx.Shadows(100, enabled: false)))
         {
-            Assert.Null(Only(f).Layer.Style);
+            (Layer l, PsdLayerInfo info) = Only(f);
+            Assert.Equal(32, l.Style!.Effects.Count);
+            Assert.All(l.Style.Effects, static e => Assert.False(e.Enabled));
+            Assert.Equal(0, info.EffectsNotDrawn);
         }
     }
 
@@ -158,6 +161,51 @@ public class EffectsTests
         // Points that are not increasing are refused too.
         using PsdFile g = Load(Fx.Shadows(1, contourPoints: 300));
         Assert.Null(Only(g).Layer.Style);
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 5.0)]
+    [InlineData(1.0, double.NaN)]
+    [InlineData(100.0, 100.0000000000001)]
+    public void AContourPointThatIsNotACleanIncreasingCurveSkipsTheEffect(double x, double y)
+    {
+        // Two x values a hair apart are different doubles but one float; NaN passes every ordinary range test. Found by fuzzing.
+        byte[] block = Fx.Block(w =>
+        {
+            w.Bool("masterFXSwitch", true);
+            w.Obj("IrSh", "IrSh", 9, () =>
+            {
+                w.Bool("enab", true);
+                w.Enum("Md  ", "BlnM", "Mltp");
+                w.Obj("Clr ", "RGBC", 3, () =>
+                {
+                    w.Num("Rd  ", 0);
+                    w.Num("Grn ", 0);
+                    w.Num("Bl  ", 0);
+                });
+                w.Unit("Opct", "#Prc", 75);
+                w.Unit("lagl", "#Ang", 120);
+                w.Unit("Dstn", "#Pxl", 3);
+                w.Unit("Ckmt", "#Pxl", 0);
+                w.Unit("blur", "#Pxl", 4);
+                w.Obj("TrnS", "ShpC", 1, () =>
+                    w.List("Crv ", 3, () =>
+                    {
+                        foreach ((double hx, double vy) in new[] { (0.0, 0.0), (x, 5.0), (double.IsNaN(y) ? 100.0 : y, y) })
+                        {
+                            w.Obj("", "CrPt", 2, () =>
+                            {
+                                w.Num("Hrzn", hx);
+                                w.Num("Vrtc", vy);
+                            });
+                        }
+                    }));
+            });
+        }, 2);
+        using PsdFile f = Load(block);
+        (Layer l, PsdLayerInfo info) = Only(f);
+        Assert.Null(l.Style);
+        Assert.Equal(1, info.EffectsNotDrawn);
     }
 
     [Fact]
@@ -245,12 +293,13 @@ public class EffectsTests
     }
 
     [Fact]
-    public void ChangingAStyleCannotBeSavedAndSaysSo()
+    public void ChangingAStyleWritesANewBlock()
     {
         using PsdFile f = PsdFile.Load(Fx.File(Fx.Shadows(1)));
         Layer l = Only(f).Layer;
         l.Style = new LayerStyle([new ColorOverlayEffect { Color = new Rgba32(255, 0, 0, 255) }]);
-        Assert.Throws<ImageOperationException>(() => Util.Save(f));
+        using PsdFile back = PsdFile.Load(Util.Save(f));
+        Assert.IsType<ColorOverlayEffect>(Assert.Single(back.Document.Root.Children[0].Style!.Effects));
     }
 }
 

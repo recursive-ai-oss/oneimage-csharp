@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using OneImage.Drawing;
 using OneImage.Layers;
 
 namespace OneImage.Psd;
@@ -9,7 +10,7 @@ public sealed partial class PsdFile
     /// <param name="path">The file to create or replace.</param>
     /// <param name="options">Large-document and compression options; <see langword="null"/> for the defaults.</param>
     /// <param name="cancellationToken">Cancels the write.</param>
-    /// <exception cref="ImageOperationException">A layer has no PSD equivalent (a fill layer with a gradient or image brush, a custom adjustment), or the document is wider or taller than a PSD or PSB allows.</exception>
+    /// <exception cref="ImageOperationException">A layer has no PSD equivalent (a custom adjustment), a layer style holds more than one outer glow, inner glow or satin (PSD stores one of each), or the document is wider or taller than a PSD or PSB allows.</exception>
     /// <exception cref="ImageLimitException">The file would need more than 4 GiB in a section of a PSD (use <see cref="PsdWriteOptions.Large"/>) or has more than 32,767 layer records.</exception>
     public void Save(string path, PsdWriteOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -21,7 +22,8 @@ public sealed partial class PsdFile
     /// <summary>
     /// Saves the document to a stream. Every property the model holds is written: pixel layers at their offsets, nested groups (pass-through or
     /// isolated), blend modes, opacity, fill opacity, visibility, clipping, locks, masks with density and feather, solid color fills and the
-    /// adjustments that have a PSD equivalent, followed by each layer's kept blocks unchanged, the image resources and document blocks, and the
+    /// adjustments that have a PSD equivalent, gradient and pattern fills (as fill settings with the pattern resources, or as pixels when the brush has no
+    /// equivalent) and layer styles (as an effects block; an untouched style keeps the block it was read from), followed by each layer's kept blocks unchanged, the image resources and document blocks, and the
     /// merged composite. Channels are run-length coded unless <see cref="PsdWriteOptions.Compression"/> says otherwise.
     /// </summary>
     /// <param name="stream">A writable stream; a seekable one is written in place, any other through a temporary file.</param>
@@ -231,12 +233,11 @@ public sealed partial class PsdFile
             e.Blocks.Add(Block("lspf", Be32(f)));
         }
 
-        // The effects block of an untouched style is written back with the rest of the layer's blocks. An edited or new style would need its own block,
-        // which is not written yet; saying so is better than writing the old effects beside the new model.
-        if (!ReferenceEquals(l.Style, info.SourceStyle) && (l.Style?.Any == true || info.SourceStyle?.Any == true))
-        {
-            throw new ImageOperationException($"The layer '{l.Name}' has a layer style that differs from the one read from the file; writing edited or new layer styles to PSD is not supported.");
-        }
+        // An untouched style keeps the effects blocks it was read from (they are among the kept blocks below). A style that was replaced or edited gets a
+        // new block that keeps the items of the old one the model does not carry; the old block and its legacy twin (which would still show the old
+        // effects) are left out.
+        bool styleEdited = !ReferenceEquals(l.Style, info.SourceStyle);
+        byte[]? styleData = styleEdited ? EffectsWriter.Write(l.Style, info.SourceFx) : null;
 
         switch (l)
         {
@@ -255,32 +256,38 @@ public sealed partial class PsdFile
             case FillLayer fl:
                 {
                     e.BlendKey = BlendKey(l, info);
-                    if (info.SourceFillBlock != null && ReferenceEquals(fl.Brush, info.SourceFillBrush))
-                    {
-                        // An unchanged gradient or pattern fill keeps its settings block. The raster Photoshop stores beside it is the fill drawn over the document.
-                        var canvas = new Canvas(Document.Width, Document.Height, Document.Format);
-                        spec.Temporary.Add(canvas);
-                        canvas.Fill(fl.Brush, OneImage.Drawing.Path.Rectangle(0, 0, Document.Width, Document.Height), antialias: false, composition: AlphaComposition.Src);
-                        e.Left = 0;
-                        e.Top = 0;
-                        e.Right = Document.Width;
-                        e.Bottom = Document.Height;
-                        e.Pixels = CanvasSource(canvas, ct);
-                        e.Blocks.Add(info.SourceFillBlock);
-                        break;
-                    }
-
-                    if (!fl.Brush.TryGetSolid(out Rgba32 c))
-                    {
-                        throw new ImageOperationException($"The fill layer '{l.Name}' uses a brush with no PSD equivalent; only solid color fills can be written.");
-                    }
-
                     e.Left = 0;
                     e.Top = 0;
                     e.Right = Document.Width;
                     e.Bottom = Document.Height;
-                    e.Pixels = ConstantColor(c, spec);
-                    e.Blocks.Add(new PsdBlock("SoCo", Descriptor.WriteSolidColor(c.R, c.G, c.B)));
+                    if (info.SourceFillBlock != null && ReferenceEquals(fl.Brush, info.SourceFillBrush))
+                    {
+                        // An unchanged gradient or pattern fill keeps its settings block. The raster Photoshop stores beside it is the fill drawn over the document.
+                        e.Pixels = CanvasSource(DrawFill(fl.Brush, spec), ct);
+                        e.Blocks.Add(info.SourceFillBlock);
+                        break;
+                    }
+
+                    if (fl.Brush.TryGetSolid(out Rgba32 c))
+                    {
+                        e.Pixels = ConstantColor(c, spec);
+                        e.Blocks.Add(new PsdBlock("SoCo", Descriptor.WriteSolidColor(c.R, c.G, c.B)));
+                        break;
+                    }
+
+                    // A new or edited gradient or pattern brush becomes the settings Photoshop keeps for such a fill when it maps to one, with the fill drawn
+                    // beside them as for a fill that was read. A brush that does not map is written as the pixels it draws.
+                    FillPlan? plan = spec.Gray || spec.Depth > 16 ? null : FillWriter.Map(fl.Brush, Document.Width, Document.Height, spec.Depth);
+                    e.Pixels = CanvasSource(DrawFill(fl.Brush, spec), ct);
+                    if (plan != null)
+                    {
+                        e.Blocks.Add(new PsdBlock(plan.Key, plan.Data));
+                        if (plan.Pattern != null)
+                        {
+                            AddPattern(spec, plan.Pattern);
+                        }
+                    }
+
                     break;
                 }
 
@@ -303,9 +310,26 @@ public sealed partial class PsdFile
                 }
         }
 
+        bool styleWritten = false;
         foreach (PsdBlock b in info.Blocks)
         {
+            if (styleEdited && b.Key is "lfx2" or "lmfx" or "lrFX")
+            {
+                if (styleData != null && b.Key is "lfx2" or "lmfx")
+                {
+                    e.Blocks.Add(new PsdBlock(b.Key, styleData, b.Large));
+                    styleWritten = true;
+                }
+
+                continue;
+            }
+
             e.Blocks.Add(b);
+        }
+
+        if (styleData != null && !styleWritten)
+        {
+            e.Blocks.Add(new PsdBlock("lfx2", styleData));
         }
 
         if (l.Mask is { } m)
@@ -325,6 +349,36 @@ public sealed partial class PsdFile
         }
 
         return e;
+    }
+
+    private Canvas DrawFill(Brush brush, WriteSpec spec)
+    {
+        var canvas = new Canvas(Document.Width, Document.Height, Document.Format);
+        spec.Temporary.Add(canvas);
+        canvas.Fill(brush, OneImage.Drawing.Path.Rectangle(0, 0, Document.Width, Document.Height), antialias: false, composition: AlphaComposition.Src);
+        return canvas;
+    }
+
+    // Adds a pattern to the pattern resources the file is written with (the model's own blocks are left alone). Patterns are stored per bit depth, and a
+    // pattern the document already holds is not stored twice.
+    private static void AddPattern(WriteSpec spec, PatternResource pattern)
+    {
+        if (PatternLibrary.Find(spec.DocumentBlocks, pattern.Id) != null)
+        {
+            return;
+        }
+
+        string key = spec.Depth == 16 ? "Pat2" : "Patt";
+        int at = spec.DocumentBlocks.FindIndex(b => b.Key == key);
+        if (at < 0)
+        {
+            spec.DocumentBlocks.Add(new PsdBlock(key, pattern.Entry));
+        }
+        else
+        {
+            PsdBlock old = spec.DocumentBlocks[at];
+            spec.DocumentBlocks[at] = new PsdBlock(key, old.Data.Span.ToArray().Concat(pattern.Entry).ToArray(), old.Large);
+        }
     }
 
     private static string BlendKey(Layer l, PsdLayerInfo info) =>

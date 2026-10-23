@@ -117,6 +117,9 @@ public sealed class PsdLayerInfo
     /// </summary>
     internal LayerStyle? SourceStyle { get; set; }
 
+    /// <summary>The effects block the style was read from and how its items map to the style's effects (null when the layer had no readable, switched-on block).</summary>
+    internal FxSource? SourceFx { get; set; }
+
     /// <summary>
     /// How many enabled effects of the layer are not drawn (gradient or pattern overlays and strokes, bevel and emboss, gradient glows, effects past
     /// the per-layer limit). They stay in the file and are written back untouched.

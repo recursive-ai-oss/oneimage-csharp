@@ -238,6 +238,12 @@ internal sealed class LayerLoader
             EffectsCodec.Result r = EffectsCodec.Read(fx.Data.Span, _psd, new ColorConverter(_doc.ColorProfile, _s.Header.Mode is PsdColorMode.Cmyk or PsdColorMode.Lab ? _s.IccProfile : null), shapeFromMask: rl.Blocks.Any(static b => b.Key is "vmsk" or "vsms"), EffectsCodec.GlobalAngle(_s.Resources));
             layer.Style = r.Style;
             info.SourceStyle = r.Style;
+            if (r.Source != null)
+            {
+                r.Source.Block = fx;
+                info.SourceFx = r.Source;
+            }
+
             info.EffectsNotDrawn = r.Skipped;
             info.EffectsApproximated = r.Approximated;
             if (r.Style != null && rl.Blocks.FirstOrDefault(static b => b.Key == "vstk") is { } vstk && FillDescriptors.ParseDescriptor(vstk.Data.Span, _psd)?.Get("strokeEnabled") is true)
@@ -248,7 +254,7 @@ internal sealed class LayerLoader
             if (r.Style != null && (layer is GroupLayer or AdjustmentLayer))
             {
                 // The model keeps the style, but groups and adjustment layers do not draw one.
-                info.EffectsNotDrawn += r.Style.Effects.Count;
+                info.EffectsNotDrawn += r.Style.Effects.Count(static e => e.Enabled);
             }
         }
 

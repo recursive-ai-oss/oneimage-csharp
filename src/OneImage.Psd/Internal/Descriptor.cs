@@ -192,7 +192,7 @@ internal sealed class Descriptor
         return Encoding.Latin1.GetString(r.Bytes(n));
     }
 
-    private static void SkipReference(ref SpanReader r, PsdLimits limits)
+    internal static void SkipReference(ref SpanReader r, PsdLimits limits)
     {
         int n = ReadCount(ref r, limits);
         for (int i = 0; i < n; i++)

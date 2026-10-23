@@ -4,6 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `RecursiveAI.OneImage.Psd`: `PsdFile.Save` writes layer styles and gradient and pattern fills that are created or edited in the model. A style that differs from the one read is written as a new effects block (`lfx2`) from the model, keeping the items of the original block that the model has no field for (gradient and pattern overlays, bevel and emboss, gradient strokes and glows, grain, and so on) and writing unchanged effects back as they were; an untouched style is still written back byte for byte. A new or replaced linear or radial gradient, bitmap pattern or hatch brush on a fill layer is written as `GdFl`/`PtFl` settings (patterns go to the document's pattern resources) beside its raster, and a brush with no such equivalent is written as a pixel layer instead of making `Save` throw. Disabled effects are now read as disabled `LayerEffect`s instead of being left out of the style. See [docs/psd.md](docs/psd.md#writing-fills).
+
+### Fixed
+
+- `RecursiveAI.OneImage.Psd`: an effect contour with a point that is not a number, or two points a hair apart that become one float, is skipped and counted in `EffectsNotDrawn` instead of throwing an argument exception (found by fuzzing).
+
 ## [1.5.0] - 2026-10-23
 
 ### Added

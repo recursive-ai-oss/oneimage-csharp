@@ -419,4 +419,18 @@ public class HostileFileTests
         {
         }
     }
+
+    [Fact]
+    public void AContourPointThatIsNotANumberIsSkippedNotThrown()
+    {
+        // A fuzzer-found file whose effect contour held a point that is not a number used to escape as an argument exception.
+        string path = System.IO.Path.Combine(AppContext.BaseDirectory, "testdata", "psd", "fuzz-contour-point-not-a-number.psd");
+        try
+        {
+            LoadAndRender(File.ReadAllBytes(path));
+        }
+        catch (ImageException)
+        {
+        }
+    }
 }
