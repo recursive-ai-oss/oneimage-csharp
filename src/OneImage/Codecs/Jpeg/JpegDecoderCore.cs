@@ -57,6 +57,18 @@ internal static class JpegDecoderCore
         Func<int, bool>? onRow = staged is not null && streaming ? row => staged.Post(row) : streaming ? row => pipe.AddMcuRow(row, store) : null;
         int rowsPosted = 0;
         bool more = true;
+        int firstUnposted = 0;
+        bool stopPosting = false;
+        if (f.Progressive && JpegScanPipeline.Wanted(f, reader, limits, out int pipelineDegree))
+        {
+            // Scans of one file that touch different coefficients, or follow each other row by row, decode side by side, and rows
+            // go to the transform as the last scan finishes them. Whatever does not follow the progression rules is returned in
+            // `scan` for the loop below.
+            Func<int, bool> postRow = staged is not null ? row => staged.Post(row) : row => pipe.AddMcuRow(row, store);
+            using var pipeline = new JpegScanPipeline(reader, h, f, tables, store, dcOnly, limits, pipelineDegree, ct);
+            more = pipeline.Run(scan, postRow, out firstUnposted, out stopPosting, out scan);
+        }
+
         while (more)
         {
             LatchQuantTables(scan, tables);
@@ -110,7 +122,7 @@ internal static class JpegDecoderCore
         }
         else if (staged is not null)
         {
-            for (int r = 0; r < f.McusY; r++)
+            for (int r = firstUnposted; r < f.McusY && !stopPosting; r++)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!staged.Post(r))
@@ -123,7 +135,7 @@ internal static class JpegDecoderCore
         }
         else
         {
-            for (int r = 0; r < f.McusY; r++)
+            for (int r = firstUnposted; r < f.McusY && !stopPosting; r++)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!pipe.AddMcuRow(r, store))
@@ -139,7 +151,7 @@ internal static class JpegDecoderCore
         }
     }
 
-    private static bool NextScan(JpegReader reader, JpegHeaders h, JpegFrame f, JpegTables tables, ImageLimits limits, out JpegScan scan)
+    internal static bool NextScan(JpegReader reader, JpegHeaders h, JpegFrame f, JpegTables tables, ImageLimits limits, out JpegScan scan)
     {
         while (true)
         {
@@ -165,7 +177,7 @@ internal static class JpegDecoderCore
         }
     }
 
-    private static void LatchQuantTables(JpegScan scan, JpegTables tables)
+    internal static void LatchQuantTables(JpegScan scan, JpegTables tables)
     {
         foreach (JpegComponent c in scan.Components)
         {

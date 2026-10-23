@@ -549,3 +549,84 @@ public class JpegTransformKernelBenchmarks
         }
     }
 }
+
+/// <summary>
+/// Decode a 24 MP 4:2:0 progressive JPEG (the default scan script: successive approximation, no restart markers) written by this
+/// library: full size and at 1/8 (shrink-on-load). <c>Content</c> is the same picture as the baseline rows (smooth, about 7 MB at q90) or with
+/// strong sensor-like noise added (about 16 MB at q95), which makes the refinement scans long.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, warmupCount: 3, iterationCount: 12)]
+public class JpegProgressiveDecodeBenchmarks
+{
+    private byte[] _jpeg = null!;
+    private OneImage.Rgb24[] _decoded = [];
+
+    /// <summary>Picture content: "smooth" or "noisy".</summary>
+    [Params("smooth", "noisy")]
+    public string Content { get; set; } = "smooth";
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        OneImage.Rgb24[] px = JpegData.Pixels();
+        if (Content == "noisy")
+        {
+            var rnd = new Random(3);
+            for (int i = 0; i < px.Length; i++)
+            {
+                int n = rnd.Next(-48, 49);
+                px[i] = new OneImage.Rgb24((byte)Math.Clamp(px[i].R + n, 0, 255), (byte)Math.Clamp(px[i].G + n, 0, 255), (byte)Math.Clamp(px[i].B + n, 0, 255));
+            }
+        }
+
+        OneImage.Image image = OneImage.Image.FromPixels<OneImage.Rgb24>(px, JpegData.Width, JpegData.Height);
+        using var ms = new MemoryStream();
+        image.Save(ms, JpegFormat.Instance, new SaveOptions { EncoderOptions = new JpegEncoderOptions { Quality = Content == "noisy" ? 95 : 90, Progressive = true } });
+        _jpeg = ms.ToArray();
+        _decoded = new OneImage.Rgb24[JpegData.Width * JpegData.Height];
+    }
+
+    [Benchmark(Description = "OneImage Image.Load + CopyPixelsTo reused Rgb24 buffer, 24 MP")]
+    public int OneImageFull()
+    {
+        OneImage.Image img = OneImage.Image.Load(_jpeg);
+        img.CopyPixelsTo<OneImage.Rgb24>(_decoded, new ImageRect(0, 0, img.Width, img.Height));
+        return img.Width;
+    }
+
+    [Benchmark(Description = "OneImage Image.Load + Resize(750) (shrink-on-load), 1/8")]
+    public int OneImageEighth() => OneImage.Image.Load(_jpeg).Resize(width: 750).ToArray<OneImage.Rgb24>().Length;
+
+    [Benchmark(Description = "OneImage decoder only at 1/2")]
+    public long OneImageCodecHalf() => JpegBenchHelpers.DecodeInto(_jpeg, 2);
+
+    [Benchmark(Description = "ImageSharp Image.Load<Rgb24>, 24 MP", Baseline = true)]
+    public int ImageSharpFull()
+    {
+        using SharpRgb img = SharpImage.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(_jpeg);
+        return img.Width;
+    }
+
+    [Benchmark(Description = "ImageSharp load with TargetSize (DCT scaling), 1/8")]
+    public int ImageSharpEighth()
+    {
+        var options = new DecoderOptions { TargetSize = new Size(750, 500) };
+        using SharpRgb img = SharpImage.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(options, _jpeg);
+        return img.Width;
+    }
+
+    [Benchmark(Description = "NetVips new_from_buffer + write_to_memory, 24 MP")]
+    public int NetVipsFull()
+    {
+        using VipsImage img = VipsImage.NewFromBuffer(_jpeg);
+        return img.WriteToMemory<byte>().Length;
+    }
+
+    [Benchmark(Description = "NetVips new_from_buffer shrink=8 + write_to_memory, 1/8")]
+    public int NetVipsEighth()
+    {
+        using VipsImage img = VipsImage.NewFromBuffer(_jpeg, "shrink=8");
+        return img.WriteToMemory<byte>().Length;
+    }
+}

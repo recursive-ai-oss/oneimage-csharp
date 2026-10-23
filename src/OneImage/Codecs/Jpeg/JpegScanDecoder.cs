@@ -17,6 +17,7 @@ internal sealed class JpegCoefficientStore : IDisposable
     private readonly JpegReader _reader;
     private readonly double _maxExpansion;
     private long _allocated;
+    private readonly object _allocGate = new();
 
     /// <param name="frame">The frame whose components are stored.</param>
     /// <param name="ring">Whether to keep only the rows of the current MCU row (sequential single-scan images).</param>
@@ -52,15 +53,30 @@ internal sealed class JpegCoefficientStore : IDisposable
         return a;
     }
 
-    /// <summary>Gets the blocks of one block row of a component.</summary>
+    /// <summary>Gets the blocks of one block row of a component. Safe to call from several threads (scans decoded side by side).</summary>
     public Span<short> Row(JpegComponent c, int blockRow)
     {
         int len = c.BlocksPerLine * 64;
         short[]?[] rows = _rows[c.Index];
         int slot = _ring ? blockRow % (c.V * _sets) : blockRow;
-        short[]? a = rows[slot];
+        short[]? a = Volatile.Read(ref rows[slot]);
         if (a is null)
         {
+            a = AllocateRow(rows, slot, len);
+        }
+
+        return a.AsSpan(0, len);
+    }
+
+    private short[] AllocateRow(short[]?[] rows, int slot, int len)
+    {
+        lock (_allocGate)
+        {
+            if (rows[slot] is { } existing)
+            {
+                return existing;
+            }
+
             // Progressive data expands a lot, but not without bound: refuse rows that the bytes read so far cannot explain.
             _allocated += (long)len * sizeof(short);
             if (_allocated > (_maxExpansion * (_reader.BytesRead + 65536)) && !double.IsPositiveInfinity(_maxExpansion))
@@ -68,11 +84,10 @@ internal sealed class JpegCoefficientStore : IDisposable
                 throw new ImageLimitException("JPEG coefficient data would expand beyond the allowed ratio of the compressed size.");
             }
 
-            a = Rent(len);
-            rows[slot] = a;
+            short[] a = Rent(len);
+            Volatile.Write(ref rows[slot], a);
+            return a;
         }
-
-        return a.AsSpan(0, len);
     }
 
     /// <summary>Gives a finished block row back (not for ring storage).</summary>
@@ -83,12 +98,15 @@ internal sealed class JpegCoefficientStore : IDisposable
             return;
         }
 
-        short[]? a = _rows[c.Index][blockRow];
-        if (a is not null)
+        lock (_allocGate)
         {
-            ArrayPool<short>.Shared.Return(a);
-            _rows[c.Index][blockRow] = null;
-            _allocated -= (long)c.BlocksPerLine * 64 * sizeof(short);
+            short[]? a = _rows[c.Index][blockRow];
+            if (a is not null)
+            {
+                ArrayPool<short>.Shared.Return(a);
+                _rows[c.Index][blockRow] = null;
+                _allocated -= (long)c.BlocksPerLine * 64 * sizeof(short);
+            }
         }
     }
 
@@ -111,7 +129,7 @@ internal sealed class JpegCoefficientStore : IDisposable
 /// <summary>Decodes the entropy-coded data of one scan into coefficient blocks (T.81 F.2 and G.1.2).</summary>
 internal sealed partial class JpegScanDecoder
 {
-    private enum Mode
+    internal enum Mode
     {
         Baseline,
         DcFirst,
@@ -148,16 +166,53 @@ internal sealed partial class JpegScanDecoder
     /// </summary>
     public bool[]? DcOnlyComponents { get; set; }
 
+    /// <summary>A scan with its tables resolved, so it can be decoded later, while the shared component selections and tables describe other scans.</summary>
+    internal sealed class ScanPlan
+    {
+        public required Mode Mode;
+        public required JpegScan Scan;
+        public required JpegComponent[] Comps;
+        public required JpegHuffmanTable?[] DcTables;
+        public required JpegHuffmanTable?[] AcTables;
+        public required int RestartInterval;
+    }
+
     /// <summary>
     /// Decodes a whole scan. <paramref name="mcuRowDone"/> is called after every MCU row (a row of blocks for
     /// non-interleaved scans); returning false stops decoding.
     /// </summary>
     /// <returns><see langword="false"/> if stopped early by the callback.</returns>
-    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
-    public bool Decode(JpegScan scan, Func<int, bool>? mcuRowDone, CancellationToken ct)
+    public bool Decode(JpegScan scan, Func<int, bool>? mcuRowDone, CancellationToken ct) => Run(Prepare(scan), mcuRowDone, null, ct);
+
+    /// <summary>Resolves the tables and restart interval a scan is decoded with, as they are right now (T.81 B.2.3: a scan header selects tables by index, and tables may be redefined between scans).</summary>
+    public ScanPlan Prepare(JpegScan scan)
     {
         Mode mode = PrepareTables(scan, out JpegComponent[] comps, out JpegHuffmanTable?[] dcT, out JpegHuffmanTable?[] acT);
+        return new ScanPlan { Mode = mode, Scan = scan, Comps = comps, DcTables = dcT, AcTables = acT, RestartInterval = _t.RestartInterval };
+    }
+
+    // Only these modes carry a DC predictor from block to block; progressive AC and refinement scans never touch it, which lets scans of one
+    // component be decoded side by side without sharing it.
+    private static bool UsesDcPredictor(Mode mode) => mode is Mode.Baseline or Mode.DcFirst || mode >= Mode.ArithBaseline;
+
+    /// <summary>
+    /// Decodes a prepared scan.
+    /// </summary>
+    /// <param name="plan">From <see cref="Prepare"/>.</param>
+    /// <param name="mcuRowDone">Called after every MCU row (a row of blocks for non-interleaved scans); returning false stops decoding.</param>
+    /// <param name="rowGate">Called before every row with its index; returning false stops decoding. Lets a scan wait for the scans it refines.</param>
+    /// <param name="ct">Cancellation.</param>
+    /// <returns><see langword="false"/> if stopped early by a callback.</returns>
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    public bool Run(ScanPlan plan, Func<int, bool>? mcuRowDone, Func<int, bool>? rowGate, CancellationToken ct)
+    {
+        Mode mode = plan.Mode;
+        JpegScan scan = plan.Scan;
+        JpegComponent[] comps = plan.Comps;
+        JpegHuffmanTable?[] dcT = plan.DcTables;
+        JpegHuffmanTable?[] acT = plan.AcTables;
+        bool usesPred = UsesDcPredictor(mode);
 
         JpegArithmeticDecoder? arith = null;
         if (mode >= Mode.ArithBaseline)
@@ -172,11 +227,16 @@ internal sealed partial class JpegScanDecoder
         bool interleaved = comps.Length > 1;
         int perRow = interleaved ? _f.McusX : comps[0].WidthInBlocks;
         int rows = interleaved ? _f.McusY : comps[0].HeightInBlocks;
-        int ri = _t.RestartInterval;
+        int ri = plan.RestartInterval;
         int untilRestart = ri;
         for (int my = 0; my < rows; my++)
         {
             ct.ThrowIfCancellationRequested();
+            if (rowGate is not null && !rowGate(my))
+            {
+                return false;
+            }
+
             for (int mx = 0; mx < perRow; mx++)
             {
                 if (ri > 0)
@@ -184,9 +244,12 @@ internal sealed partial class JpegScanDecoder
                     if (untilRestart == 0)
                     {
                         _r.ProcessRestart();
-                        for (int i = 0; i < comps.Length; i++)
+                        if (usesPred)
                         {
-                            comps[i].DcPred = 0;
+                            for (int i = 0; i < comps.Length; i++)
+                            {
+                                comps[i].DcPred = 0;
+                            }
                         }
 
                         _eobRun = 0;
@@ -242,7 +305,11 @@ internal sealed partial class JpegScanDecoder
         acT = new JpegHuffmanTable?[comps.Length];
         for (int i = 0; i < comps.Length; i++)
         {
-            comps[i].DcPred = 0;
+            if (UsesDcPredictor(mode))
+            {
+                comps[i].DcPred = 0;
+            }
+
             if (mode < Mode.ArithBaseline)
             {
                 bool needDc = mode is Mode.Baseline or Mode.DcFirst;

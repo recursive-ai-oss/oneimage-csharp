@@ -1607,11 +1607,26 @@ internal sealed class JpegEncodeSession : IDisposable
         }
     }
 
+    /// <summary>Test and tooling switch: write progressive files with spectral selection only, to exercise decoders on files without refinement scans.</summary>
+    internal static bool SpectralOnlyScript;
+
     /// <summary>The scan sequence of the reference encoder's default progression (low-frequency detail first, then refinement).</summary>
     private List<ScanSpec> ProgressiveScript()
     {
         int n = _comps.Length;
         int[] all = Enumerable.Range(0, n).ToArray();
+        if (SpectralOnlyScript)
+        {
+            // No successive approximation: DC for all components, then each component's whole AC band in one scan.
+            var plain = new List<ScanSpec> { new() { Comps = all, Ss = 0, Se = 0, Ah = 0, Al = 0 } };
+            for (int i = 0; i < n; i++)
+            {
+                plain.Add(new ScanSpec { Comps = [i], Ss = 1, Se = 63, Ah = 0, Al = 0 });
+            }
+
+            return plain;
+        }
+
         var list = new List<ScanSpec>
         {
             new() { Comps = all, Ss = 0, Se = 0, Ah = 0, Al = 1 },

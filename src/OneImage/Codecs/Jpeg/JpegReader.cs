@@ -330,6 +330,82 @@ internal sealed partial class JpegReader : IDisposable
         return done;
     }
 
+    /// <summary>
+    /// Copies the raw entropy-coded data of the rest of a scan, byte stuffing and restart markers untouched, up to and including
+    /// the first marker that is not a restart marker (the one <see cref="SkipEntropyData"/> stops in front of), and leaves that marker
+    /// pending, so <see cref="NextMarker"/> returns it next. A decoder attached to the copy sees what the sequential decoder would.
+    /// </summary>
+    /// <param name="dst">The destination; replaced by a larger pooled array when it is too small.</param>
+    /// <param name="len">The number of bytes in <paramref name="dst"/>; advanced.</param>
+    public void CopyScanData(ref byte[] dst, ref int len)
+    {
+        ResetBits();
+        if (_marker != 0)
+        {
+            return;
+        }
+
+        while (true)
+        {
+            if (_pos >= _end && !Refill())
+            {
+                _marker = -1;
+                return;
+            }
+
+            ReadOnlySpan<byte> avail = _buf.AsSpan(_pos, _end - _pos);
+            int i = 0;
+            int cut;
+            while (true)
+            {
+                int j = avail[i..].IndexOf((byte)0xFF);
+                if (j < 0)
+                {
+                    cut = avail.Length;
+                    break;
+                }
+
+                i += j;
+                if (i + 1 >= avail.Length)
+                {
+                    // The byte that says what this 0xFF is has not been loaded yet.
+                    cut = i;
+                    break;
+                }
+
+                byte next = avail[i + 1];
+                if (next == 0 || next is >= 0xD0 and <= 0xD7)
+                {
+                    // A stuffed data byte, or a restart marker (data, to the scan).
+                    i += 2;
+                }
+                else if (next == 0xFF)
+                {
+                    // Fill bytes: the one that counts is the last.
+                    i++;
+                }
+                else
+                {
+                    Append(ref dst, ref len, avail[..(i + 2)]);
+                    _pos += i + 2;
+                    _marker = next;
+                    return;
+                }
+            }
+
+            Append(ref dst, ref len, avail[..cut]);
+            _pos += cut;
+            if (cut < avail.Length && _end - _pos < 2 && !Refill())
+            {
+                // The data ends on a lone 0xFF.
+                Append(ref dst, ref len, _buf.AsSpan(_pos, _end - _pos));
+                _pos = _end;
+                _marker = -1;
+                return;
+            }
+        }
+    }
+
     private static void Append(ref byte[] dst, ref int len, ReadOnlySpan<byte> src)
     {
         if (src.Length > dst.Length - len)

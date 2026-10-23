@@ -70,6 +70,8 @@ internal static class JpegTarget
         byte[] file = data[1..].ToArray();
         JpegDecoderCore.StageOverride = 0;
         JpegScanDecoder.ParallelOverride = 0;
+        JpegScanPipeline.Override = 0;
+        JpegReader.UseMaskRefine = true;
         string withLook = Decode(file, scale, region, lookahead: true);
         string without = Decode(file, scale, region, lookahead: false);
         if (withLook != without)
@@ -95,6 +97,43 @@ internal static class JpegTarget
             JpegScanDecoder.ParallelChunkOverride = 0;
         }
 
+        // Progressive refinement read coefficient by coefficient is the reference for the masked reader, rows delivered included.
+        JpegReader.UseMaskRefine = false;
+        try
+        {
+            string plain = Decode(file, scale, region, lookahead: true);
+            if (plain != withLook)
+            {
+                throw new InvalidOperationException($"masked refinement changed the outcome: {withLook} / {plain}");
+            }
+        }
+        finally
+        {
+            JpegReader.UseMaskRefine = true;
+        }
+
+        // Progressive scans decoded side by side give the same pixels, or the same exception; they may hand over rows of a file that
+        // fails later, so a failure compares by kind and message.
+        foreach (int stages in new[] { 0, 1, 0, 1 })
+        {
+            JpegDecoderCore.StageOverride = stages;
+            JpegScanPipeline.Override = 2 + (mode >> 6);
+            try
+            {
+                string side = Decode(file, scale, region, lookahead: true);
+                bool same = withLook.StartsWith("ok", StringComparison.Ordinal) ? side == withLook : Reason(side) == Reason(withLook);
+                if (!same)
+                {
+                    throw new InvalidOperationException($"scans decoded side by side changed the outcome: {withLook} / {side}");
+                }
+            }
+            finally
+            {
+                JpegDecoderCore.StageOverride = 0;
+                JpegScanPipeline.Override = 0;
+            }
+        }
+
         // Which of two failing stages reports first can vary, so failures compare by kind only.
         foreach (int stages in new[] { 1, 2 })
         {
@@ -116,6 +155,13 @@ internal static class JpegTarget
                 JpegScanDecoder.ParallelChunkOverride = 0;
             }
         }
+    }
+
+    // The kind and message of a failure outcome, without the rows it delivered.
+    private static string Reason(string outcome)
+    {
+        int i = outcome.LastIndexOf(" rows=", StringComparison.Ordinal);
+        return i < 0 ? outcome : outcome[..i];
     }
 
     // After a failure: how many rows reached the sink and what they held.
