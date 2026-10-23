@@ -80,8 +80,11 @@ internal sealed class SvgFontSelector
     private readonly Dictionary<(FontFamily, FontStyle), Font> _systemProto = [];
     private readonly Dictionary<(string, int, bool, long), FontChain> _chains = [];
 
+    public double MediumFontSize { get; }
+
     public SvgFontSelector(SvgFontOptions? options)
     {
+        MediumFontSize = options?.DefaultFontSize ?? Dom.SvgStyle.DefaultFontSize;
         if (options is null)
         {
             _entries = [];

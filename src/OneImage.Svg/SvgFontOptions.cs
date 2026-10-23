@@ -18,6 +18,7 @@ public sealed class SvgFontOptions
     private readonly List<SvgFontEntry> _entries = [];
     private readonly Dictionary<string, string[]> _generic = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _fallback = [];
+    private double _defaultFontSize = 16;
 
     /// <summary>Initializes empty options: no fonts added, installed fonts used, the default generic families.</summary>
     public SvgFontOptions()
@@ -34,6 +35,7 @@ public sealed class SvgFontOptions
 
         _fallback.AddRange(other._fallback);
         UseSystemFonts = other.UseSystemFonts;
+        _defaultFontSize = other._defaultFontSize;
     }
 
     /// <summary>
@@ -41,6 +43,27 @@ public sealed class SvgFontOptions
     /// <see langword="true"/>. Switch it off for output that must not depend on the machine.
     /// </summary>
     public bool UseSystemFonts { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the size in pixels of the CSS <c>medium</c> font, which is the <c>font-size</c> text has when nothing in the document sets one.
+    /// The default is 16, as in browsers. The named sizes step by 1.2 around it (<c>large</c> is 1.2 times, <c>small</c> one 1.2th of it), and
+    /// <c>em</c>, <c>%</c> and <c>rem</c> sizes that reach the top of the document are relative to it. Another renderer's test suite may be
+    /// made with 12.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is not a finite number above zero.</exception>
+    public double DefaultFontSize
+    {
+        get => _defaultFontSize;
+        set
+        {
+            if (!(value > 0) || !double.IsFinite(value))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The default font size must be a finite number above zero.");
+            }
+
+            _defaultFontSize = value;
+        }
+    }
 
     /// <summary>
     /// Gets the family names tried, in order, for characters the document's own <c>font-family</c> list cannot show, before the generic

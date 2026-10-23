@@ -115,12 +115,13 @@ internal sealed partial class SceneBuilder
     private readonly Dictionary<SvgElement, Picture?> _pictures = [];
     private HashSet<SvgElement> _active = [];
     private readonly Dictionary<SvgElement, (Path? Path, Path? Dotted)> _pathCache = [];
-    private double _rootFontSize = SvgStyle.DefaultFontSize;
+    private double _rootFontSize;
     private bool _hasContent;
 
     private SceneBuilder(SvgDocument doc, SvgLimits limits, ImageLimits imageLimits, IReadOnlyList<string> languages, int imageDepth, Budget budget, SvgFontSelector fonts, CancellationToken cancel)
     {
         _fonts = fonts;
+        _rootFontSize = fonts.MediumFontSize;
         _doc = doc;
         _limits = limits;
         _cancel = cancel;
@@ -145,9 +146,9 @@ internal sealed partial class SceneBuilder
     private SvgScene BuildRoot()
     {
         SvgElement root = _doc.Root;
-        SvgStyle st = SvgStyle.Compute(root, SvgStyle.Initial, SvgStyle.DefaultFontSize);
+        SvgStyle st = SvgStyle.Compute(root, SvgStyle.WithMediumFontSize(_fonts.MediumFontSize), _fonts.MediumFontSize);
         _rootFontSize = st.FontSize;
-        st = SvgStyle.Compute(root, SvgStyle.Initial, _rootFontSize);
+        st = SvgStyle.Compute(root, SvgStyle.WithMediumFontSize(_fonts.MediumFontSize), _rootFontSize);
         (double? w, double? h) = SvgSize.Partial(root.Attr("width"), root.Attr("height"), root.Attr("viewBox"));
         bool hasViewBox = SvgValues.TryViewBox(root.Attr("viewBox"), out double vx, out double vy, out double vw, out double vh);
 

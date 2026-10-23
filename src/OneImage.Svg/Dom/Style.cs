@@ -40,8 +40,8 @@ internal readonly record struct Paint(PaintKind Kind, Rgba32 Color = default, st
 /// </summary>
 internal struct SvgStyle
 {
-    /// <summary>The size of the <c>medium</c> font, which is the initial <c>font-size</c>; the named sizes step by 1.2 around it.</summary>
-    public const double DefaultFontSize = 12;
+    /// <summary>The size of the <c>medium</c> font when no option says otherwise, as in browsers.</summary>
+    public const double DefaultFontSize = 16;
 
     /// <summary>The <see cref="PaintOrder"/> code for fill, stroke, markers.</summary>
     public const int NormalPaintOrder = 0 | (1 << 2) | (2 << 4);
@@ -78,6 +78,9 @@ internal struct SvgStyle
     public Length DashOffset;
     public Rgba32 Color;
     public double FontSize;
+
+    /// <summary>The size of the <c>medium</c> font, which is the initial <c>font-size</c>; the named sizes step by 1.2 around it. Inherited as a copy.</summary>
+    public double MediumFontSize;
     public bool Visible;
     public bool Antialias;
     public bool Pixelated;
@@ -104,8 +107,12 @@ internal struct SvgStyle
     /// <summary>Gets whether the element's content has to be painted into a group of its own and composited as one.</summary>
     public readonly bool NeedsLayer => Opacity < 1 || Blend != BlendMode.Normal || Plus || Isolate;
 
-    public static SvgStyle Initial => new()
+    public static SvgStyle Initial => WithMediumFontSize(DefaultFontSize);
+
+    /// <summary>Gets the initial style with the given size for <c>medium</c>.</summary>
+    public static SvgStyle WithMediumFontSize(double medium) => new()
     {
+        MediumFontSize = medium,
         Fill = Paint.Black,
         Stroke = Paint.None,
         FillOpacity = 1,
@@ -116,7 +123,7 @@ internal struct SvgStyle
         MiterLimit = 4,
         DashOffset = Length.Zero,
         Color = new Rgba32(0, 0, 0, 255),
-        FontSize = DefaultFontSize,
+        FontSize = medium,
         Visible = true,
         Antialias = true,
         PaintOrder = NormalPaintOrder,
@@ -148,7 +155,7 @@ internal struct SvgStyle
         // font-size and color first: other values (em lengths, currentColor) are evaluated against the element's own.
         if (e.Props.TryGetValue("font-size", out string? fs))
         {
-            s.FontSize = fs == "initial" ? DefaultFontSize : ParseFontSize(fs, parent.FontSize, rootFontSize) ?? parent.FontSize;
+            s.FontSize = fs == "initial" ? parent.MediumFontSize : ParseFontSize(fs, parent.FontSize, rootFontSize, parent.MediumFontSize) ?? parent.FontSize;
         }
 
         if (e.Props.TryGetValue("color", out string? col))
@@ -655,18 +662,18 @@ internal struct SvgStyle
         return list.Count == 0 ? current : [.. list];
     }
 
-    private static double? ParseFontSize(string value, double parentSize, double rootSize)
+    private static double? ParseFontSize(string value, double parentSize, double rootSize, double medium)
     {
         string v = value.Trim();
         switch (v)
         {
-            case "xx-small": return 12 / (1.2 * 1.2 * 1.2);
-            case "x-small": return 12 / (1.2 * 1.2);
-            case "small": return 12 / 1.2;
-            case "medium": return 12;
-            case "large": return 12 * 1.2;
-            case "x-large": return 12 * 1.2 * 1.2;
-            case "xx-large": return 12 * 1.2 * 1.2 * 1.2;
+            case "xx-small": return medium / (1.2 * 1.2 * 1.2);
+            case "x-small": return medium / (1.2 * 1.2);
+            case "small": return medium / 1.2;
+            case "medium": return medium;
+            case "large": return medium * 1.2;
+            case "x-large": return medium * 1.2 * 1.2;
+            case "xx-large": return medium * 1.2 * 1.2 * 1.2;
             case "larger": return parentSize * 1.2;
             case "smaller": return parentSize / 1.2;
         }

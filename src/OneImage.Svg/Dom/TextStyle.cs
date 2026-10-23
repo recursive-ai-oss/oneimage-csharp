@@ -324,7 +324,7 @@ internal sealed class TextStyle
             LengthUnit.Px => l.Value,
             LengthUnit.Em => l.Value * st.FontSize,
             LengthUnit.Ex => l.Value * st.FontSize / 2,
-            LengthUnit.Rem => l.Value * SvgStyle.DefaultFontSize,
+            LengthUnit.Rem => l.Value * st.MediumFontSize,
             LengthUnit.Percent => l.Value / 100 * percentBase,
             _ => null,
         };

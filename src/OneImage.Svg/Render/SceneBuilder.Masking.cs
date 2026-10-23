@@ -60,7 +60,7 @@ internal sealed partial class SceneBuilder
 
         var chain = new Stack<SvgElement>();
         SvgElement? p = e;
-        SvgStyle parent = SvgStyle.Initial;
+        SvgStyle parent = SvgStyle.WithMediumFontSize(_fonts.MediumFontSize);
         while (p is not null)
         {
             if (_definedStyles.TryGetValue(p, out SvgStyle c))

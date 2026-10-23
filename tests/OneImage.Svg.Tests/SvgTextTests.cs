@@ -120,14 +120,29 @@ public class SvgTextTests
     }
 
     [Fact]
-    public void TheDefaultFontSizeIsTwelveAndNamedSizesStepByOnePointTwo()
+    public void TheDefaultFontSizeIsSixteenAndNamedSizesStepByOnePointTwo()
     {
         var def = Ink(Render("<text x='5' y='30'>H</text>"));
-        var twelve = Ink(Render("<text x='5' y='30' font-size='12'>H</text>"));
+        var sixteen = Ink(Render("<text x='5' y='30' font-size='16'>H</text>"));
         var large = Ink(Render("<text x='5' y='30' font-size='large'>H</text>"));
-        var explicitLarge = Ink(Render("<text x='5' y='30' font-size='14.4'>H</text>"));
-        Assert.Equal(twelve, def);
+        var explicitLarge = Ink(Render("<text x='5' y='30' font-size='19.2'>H</text>"));
+        Assert.Equal(sixteen, def);
         Assert.Equal(explicitLarge, large);
+    }
+
+    [Fact]
+    public void TheDefaultFontSizeIsAnOptionThatMovesMediumAndTheNamedSizes()
+    {
+        var fonts = new SvgFontOptions { UseSystemFonts = false, DefaultFontSize = 12 };
+        fonts.AddFont(FontPath("NotoSans-Subset-Regular.ttf"));
+        var config = new ImageConfiguration().Add(new SvgFormat(fonts: fonts));
+        Rgba32[] Draw(string body) => Image.Load(Encoding.UTF8.GetBytes($"<svg {Ns} viewBox='0 0 100 50' width='100' height='50' font-family='Noto Sans'>{body}</svg>"), new LoadOptions { Configuration = config }).ToArray<Rgba32>();
+        var def = Ink(Draw("<text x='5' y='30'>H</text>"));
+        Assert.Equal(Ink(Draw("<text x='5' y='30' font-size='12'>H</text>")), def);
+        Assert.Equal(Ink(Draw("<text x='5' y='30' font-size='14.4'>H</text>")), Ink(Draw("<text x='5' y='30' font-size='large'>H</text>")));
+        Assert.Equal(Ink(Draw("<text x='5' y='30' font-size='24'>H</text>")), Ink(Draw("<text x='5' y='30' font-size='200%'>H</text>")));
+        Assert.Throws<ArgumentOutOfRangeException>(() => fonts.DefaultFontSize = 0);
+        Assert.Throws<ArgumentOutOfRangeException>(() => fonts.DefaultFontSize = double.NaN);
     }
 
     [Fact]

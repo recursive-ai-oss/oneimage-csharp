@@ -45,7 +45,8 @@ public sealed partial class ResvgConformance
             SvgFormat format = SvgFormat.Instance;
             if (Directory.Exists(fonts))
             {
-                var options = new SvgFontOptions { UseSystemFonts = false };
+                // The reference images were made with a 12 px medium font; browsers use 16, which is our default.
+                var options = new SvgFontOptions { UseSystemFonts = false, DefaultFontSize = 12 };
                 foreach (string file in Directory.GetFiles(fonts, "*.*").Where(f => f.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".otf", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.Ordinal))
                 {
                     try

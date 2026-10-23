@@ -67,7 +67,7 @@ internal sealed partial class SceneBuilder
             chain.Push(p);
         }
 
-        SvgStyle st = SvgStyle.Initial;
+        SvgStyle st = SvgStyle.WithMediumFontSize(_fonts.MediumFontSize);
         if (chain.Count > 0 && chain.Peek().Parent is { } above)
         {
             st = _styleCache[above];
