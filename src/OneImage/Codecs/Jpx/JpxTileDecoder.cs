@@ -112,15 +112,6 @@ internal static class JpxTileDecoder
         long visits = 0;
         foreach (JpxTileComp tc in comps)
         {
-            if (tc.Cod.Reversible)
-            {
-                tc.IntCoeffs = new int[tc.BufferWidth * tc.BufferHeight];
-            }
-            else
-            {
-                tc.FloatCoeffs = new float[tc.BufferWidth * tc.BufferHeight];
-            }
-
             for (int r = 0; r < tc.KeptResolutions; r++)
             {
                 JpxBand[] bands = tc.Res[r].Bands;
@@ -143,6 +134,19 @@ internal static class JpxTileDecoder
         if (tier1Budget < 0)
         {
             throw new ImageLimitException("JPEG 2000 coding-pass work exceeds the limit for the size of the data.");
+        }
+
+        // The budget is settled; only now allocate the coefficient buffers.
+        foreach (JpxTileComp tc in comps)
+        {
+            if (tc.Cod.Reversible)
+            {
+                tc.IntCoeffs = new int[tc.BufferWidth * tc.BufferHeight];
+            }
+            else
+            {
+                tc.FloatCoeffs = new float[tc.BufferWidth * tc.BufferHeight];
+            }
         }
 
         JpxChunk[] chunks = reader.Chunks;

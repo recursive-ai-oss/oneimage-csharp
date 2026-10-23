@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd jbig2 pdf svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd jbig2 jpx pdf svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -47,6 +47,7 @@ case "$target" in
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
   psd)     seeds=psd;         prefix='';     patterns='*.psd *.psb'; maxlen=262144 ;;
   jbig2)   seeds=jbig2;       prefix="\x01"; patterns="*.jb2"; maxlen=65536 ;;
+  jpx)     seeds='';          prefix='';     patterns='';      maxlen=65536 ;;
   pdf)     seeds='';          prefix='';     patterns='';      maxlen=262144 ;;
   svg)     seeds=svgpath;     prefix='';     patterns='*.txt'; maxlen=4096 ;;
   tiff)    seeds=tiff;        prefix='\x00'; patterns='*.tif'; maxlen=262144 ;;
@@ -146,6 +147,24 @@ if [[ "$target" == jbig2 ]]; then
       { printf '\x00'; cat "$f"; } >"$out"
     fi
   done
+fi
+if [[ "$target" == jpx ]]; then
+  # The generated corpus (committed) with mode byte 0, plus mode variants of a few files.
+  for f in "$root"/testdata/jpx/gen/*.j2k; do
+    [[ -f "$f" ]] || continue
+    out="$corpus/seed-$(basename "$f")"
+    [[ -e "$out" ]] || { printf '\x00' >"$out"; cat "$f" >>"$out"; }
+    out="$corpus/seed-r4-$(basename "$f")"
+    [[ -e "$out" ]] || { printf '\x06' >"$out"; cat "$f" >>"$out"; }
+  done
+  # Conformance streams (fetched by tools/fetch-jpx-tests.sh) that fit, when ONEIMAGE_JPX_CORPUS names them.
+  if [[ -n "${ONEIMAGE_JPX_CORPUS:-}" ]]; then
+    for f in "$ONEIMAGE_JPX_CORPUS"/input/conformance/*.j2k "$ONEIMAGE_JPX_CORPUS"/input/conformance/*.jp2 "$ONEIMAGE_JPX_CORPUS"/input/conformance/*.j2c; do
+      [[ -f "$f" && $(stat -c %s "$f") -lt 60000 ]] || continue
+      out="$corpus/seed-c-$(basename "$f")"
+      [[ -e "$out" ]] || { printf '\x00' >"$out"; cat "$f" >>"$out"; }
+    done
+  fi
 fi
 if [[ "$target" == pdf ]]; then
   # The committed form files, plus any small PDFs in the folders named by ONEIMAGE_PDF_SEEDS (colon separated).
