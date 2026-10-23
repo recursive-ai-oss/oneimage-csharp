@@ -1,15 +1,24 @@
 namespace OneImage.Codecs.WebP;
 
-/// <summary>The VP8 boolean entropy encoder (RFC 6386 section 7.3).</summary>
+/// <summary>
+/// The VP8 boolean entropy encoder (RFC 6386 section 7.3). The output grows in 64 KiB chunks instead of one array that doubles,
+/// so a large partition never leaves a trail of discarded half-size copies behind; <see cref="CopyTo"/> joins the chunks once.
+/// </summary>
 internal sealed class VP8BoolWriter
 {
-    private byte[] _buf;
-    private int _len;
+    private const int ChunkSize = 1 << 16;
+    private readonly List<byte[]> _full = [];
+    private byte[] _cur;
+    private int _pos;
+    private int _fullBytes;
     private uint _range = 255;
     private uint _bottom;
     private int _bitCount = 24;
 
-    public VP8BoolWriter(int capacity = 1024) => _buf = new byte[Math.Max(64, capacity)];
+    public VP8BoolWriter(int capacity = 1024) => _cur = new byte[Math.Clamp(capacity, 64, ChunkSize)];
+
+    /// <summary>Gets the number of bytes written so far.</summary>
+    public int Length => _fullBytes + _pos;
 
     public void PutBit(int bit, int prob)
     {
@@ -56,7 +65,8 @@ internal sealed class VP8BoolWriter
         PutBit(value < 0 ? 1 : 0, 128);
     }
 
-    public byte[] Finish()
+    /// <summary>Flushes the coder state and returns the total length of the partition.</summary>
+    public int Finish()
     {
         int c = _bitCount;
         uint v = _bottom;
@@ -78,31 +88,63 @@ internal sealed class VP8BoolWriter
             v <<= 8;
         }
 
-        return _buf.AsSpan(0, _len).ToArray();
+        return Length;
     }
 
-    private void AddOne()
+    /// <summary>Copies the bytes written (after <see cref="Finish"/>) to <paramref name="destination"/>, which must hold <see cref="Length"/> bytes.</summary>
+    public void CopyTo(Span<byte> destination)
     {
-        int q = _len;
-        while (--q >= 0 && _buf[q] == 255)
+        foreach (byte[] chunk in _full)
         {
-            _buf[q] = 0;
+            chunk.CopyTo(destination);
+            destination = destination[chunk.Length..];
         }
 
-        if (q >= 0)
+        _cur.AsSpan(0, _pos).CopyTo(destination);
+    }
+
+    // Carries a one into the bytes already written: 255s become 0 and the first byte below 255 grows, possibly in an earlier chunk.
+    private void AddOne()
+    {
+        byte[] buf = _cur;
+        int q = _pos;
+        int chunk = _full.Count;
+        while (true)
         {
-            _buf[q]++;
+            if (q == 0)
+            {
+                if (chunk == 0)
+                {
+                    return;
+                }
+
+                chunk--;
+                buf = _full[chunk];
+                q = buf.Length;
+            }
+
+            q--;
+            if (buf[q] != 255)
+            {
+                buf[q]++;
+                return;
+            }
+
+            buf[q] = 0;
         }
     }
 
     private void Append(byte b)
     {
-        if (_len == _buf.Length)
+        if (_pos == _cur.Length)
         {
-            Array.Resize(ref _buf, _buf.Length * 2);
+            _full.Add(_cur);
+            _fullBytes += _cur.Length;
+            _cur = new byte[ChunkSize];
+            _pos = 0;
         }
 
-        _buf[_len++] = b;
+        _cur[_pos++] = b;
     }
 }
 

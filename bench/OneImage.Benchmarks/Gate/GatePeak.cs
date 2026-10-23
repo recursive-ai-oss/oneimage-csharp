@@ -176,6 +176,24 @@ internal static class GatePeak
                 return new() { ["oneimage"] = () => b.OneImageLib(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => g.MagickEncode() };
             }
 
+            case "webp-encode-24mp":
+            {
+                var b = new WebPEncodeBenchmarks { Case = "lossy-6000x4000" };
+                b.Setup();
+                var g = new WebPEncodeGateBenchmarks { Case = "lossy-6000x4000" };
+                g.Setup();
+                return new() { ["oneimage"] = () => b.OneImageLib(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => g.MagickEncode() };
+            }
+
+            case "webp-encode-lossless-24mp":
+            {
+                var b = new WebPEncodeBenchmarks { Case = "lossless-6000x4000" };
+                b.Setup();
+                var g = new WebPEncodeGateBenchmarks { Case = "lossless-6000x4000" };
+                g.Setup();
+                return new() { ["oneimage"] = () => b.OneImageLib(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => g.MagickEncode() };
+            }
+
             case "gif-decode":
             {
                 var b = new GifDecodeBenchmarks();

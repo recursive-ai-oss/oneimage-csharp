@@ -31,9 +31,12 @@ internal sealed class VP8Encoder
     private readonly byte[] _srcY;
     private readonly byte[] _srcU;
     private readonly byte[] _srcV;
-    private readonly byte[] _recY;
-    private readonly byte[] _recU;
-    private readonly byte[] _recV;
+    // Reconstruction is kept only as far as prediction needs it: the last pixel line of every finished macroblock row (the
+    // row below predicts from it) and, in each worker, the row being coded (the left neighbors). Whole reconstructed planes
+    // are never held.
+    private readonly byte[][] _topY;
+    private readonly byte[][] _topU;
+    private readonly byte[][] _topV;
 
     private readonly Segment[] _seg = new Segment[NumSegments];
     private readonly byte[] _mbSegment;
@@ -41,7 +44,8 @@ internal sealed class VP8Encoder
     private int _dqUvAc;
 
     // Per macroblock results.
-    private readonly short[] _levels;
+    // Quantized levels of the coded macroblocks, kept compactly per macroblock row (see AppendLevels) until the tokens are written.
+    private readonly byte[]?[] _rowLevels;
     private readonly byte[] _isI4;
     private readonly byte[] _yMode;
     private readonly byte[] _uvMode;
@@ -71,7 +75,7 @@ internal sealed class VP8Encoder
         public int MaxEdge;
     }
 
-    private VP8Encoder(byte[] rgba, int w, int h, int quality, int effort, int degree, CancellationToken token)
+    private VP8Encoder(int w, int h, int quality, int effort, int degree, CancellationToken token)
     {
         _degree = degree;
         _w = w;
@@ -87,12 +91,12 @@ internal sealed class VP8Encoder
         _srcY = new byte[ySize];
         _srcU = new byte[ySize / 4];
         _srcV = new byte[ySize / 4];
-        _recY = new byte[ySize];
-        _recU = new byte[ySize / 4];
-        _recV = new byte[ySize / 4];
+        _topY = new byte[_mbh][];
+        _topU = new byte[_mbh][];
+        _topV = new byte[_mbh][];
         int n = _mbw * _mbh;
         _mbSegment = new byte[n];
-        _levels = new short[checked(n * LevelsPerMb)];
+        _rowLevels = new byte[_mbh][];
         _isI4 = new byte[n];
         _yMode = new byte[n];
         _uvMode = new byte[n];
@@ -100,7 +104,6 @@ internal sealed class VP8Encoder
         _skip = new byte[n];
         _intraTop = new byte[_mbw * 4];
         _nzTop = new byte[_mbw * 9];
-        ConvertToYuv(rgba);
     }
 
     /// <summary>Encodes straight RGBA (8 bits per channel) into a VP8 chunk payload.</summary>
@@ -113,9 +116,26 @@ internal sealed class VP8Encoder
     /// <param name="degree">Most threads to use; the output does not depend on it.</param>
     public static byte[] Encode(byte[] rgba, int width, int height, int quality, int effort, CancellationToken token, int degree = 1)
     {
-        var e = new VP8Encoder(rgba, width, height, quality, effort, degree, token);
-        return e.Run();
+        VP8Encoder e = Create(width, height, quality, effort, token, degree);
+        e.AddRows(rgba, 4, 0, height);
+        return e.Finish();
     }
+
+    /// <summary>
+    /// Starts an encode whose pixels arrive in horizontal strips through <see cref="AddRows"/>, so the caller never needs a
+    /// whole-frame RGB(A) copy; the planes it fills are 1.5 bytes per pixel.
+    /// </summary>
+    /// <param name="width">Image width, 1 to 16383.</param>
+    /// <param name="height">Image height, 1 to 16383.</param>
+    /// <param name="quality">0 to 100.</param>
+    /// <param name="effort">0 to 6.</param>
+    /// <param name="token">Cancellation.</param>
+    /// <param name="degree">Most threads to use; the output does not depend on it.</param>
+    public static VP8Encoder Create(int width, int height, int quality, int effort, CancellationToken token, int degree = 1) =>
+        new(width, height, quality, effort, degree, token);
+
+    /// <summary>Encodes the rows added so far (every row must have been added) into a VP8 chunk payload.</summary>
+    public byte[] Finish() => Run();
 
     // ---- color conversion (same integer math as libwebp's default conversion) ----
 
@@ -134,38 +154,44 @@ internal sealed class VP8Encoder
 
     private static int RgbToV(int r, int g, int b, int rounding) => ClipUv((28800 * r) - (24116 * g) - (4684 * b), rounding);
 
+    /// <summary>
+    /// Converts a strip of rows to the YUV planes. The strip starts at row <paramref name="firstRow"/> (even) and holds
+    /// <paramref name="rows"/> tightly packed rows of 3 (RGB) or 4 (RGBA) bytes per pixel; the strips must cover the image in order.
+    /// Rows below the image (the macroblock padding) repeat the last row, which is why the last strip also fills them.
+    /// </summary>
     // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
-    private void ConvertToYuv(byte[] rgba)
+    public void AddRows(ReadOnlySpan<byte> pixels, int bpp, int firstRow, int rows)
     {
         int w = _w;
         int h = _h;
-        for (int y = 0; y < _mbh * 16; y++)
+        int endRow = firstRow + rows;
+        int fillEnd = endRow >= h ? _mbh * 16 : endRow;
+        for (int y = firstRow; y < fillEnd; y++)
         {
-            int sy = Math.Min(y, h - 1);
+            int rowBase = (Math.Min(y, h - 1) - firstRow) * w;
             for (int x = 0; x < _ys; x++)
             {
-                int sx = Math.Min(x, w - 1);
-                int o = ((sy * w) + sx) * 4;
-                _srcY[(y * _ys) + x] = (byte)RgbToY(rgba[o], rgba[o + 1], rgba[o + 2]);
+                int o = (rowBase + Math.Min(x, w - 1)) * bpp;
+                _srcY[(y * _ys) + x] = (byte)RgbToY(pixels[o], pixels[o + 1], pixels[o + 2]);
             }
         }
 
-        for (int cy = 0; cy < _mbh * 8; cy++)
+        for (int cy = firstRow / 2; cy < fillEnd / 2; cy++)
         {
-            int y0 = Math.Min(2 * cy, h - 1);
-            int y1 = Math.Min((2 * cy) + 1, h - 1);
+            int r0 = (Math.Min(2 * cy, h - 1) - firstRow) * w;
+            int r1 = (Math.Min((2 * cy) + 1, h - 1) - firstRow) * w;
             for (int cx = 0; cx < _uvs; cx++)
             {
                 int x0 = Math.Min(2 * cx, w - 1);
                 int x1 = Math.Min((2 * cx) + 1, w - 1);
-                int o00 = ((y0 * w) + x0) * 4;
-                int o01 = ((y0 * w) + x1) * 4;
-                int o10 = ((y1 * w) + x0) * 4;
-                int o11 = ((y1 * w) + x1) * 4;
-                int r = rgba[o00] + rgba[o01] + rgba[o10] + rgba[o11];
-                int g = rgba[o00 + 1] + rgba[o01 + 1] + rgba[o10 + 1] + rgba[o11 + 1];
-                int b = rgba[o00 + 2] + rgba[o01 + 2] + rgba[o10 + 2] + rgba[o11 + 2];
+                int o00 = (r0 + x0) * bpp;
+                int o01 = (r0 + x1) * bpp;
+                int o10 = (r1 + x0) * bpp;
+                int o11 = (r1 + x1) * bpp;
+                int r = pixels[o00] + pixels[o01] + pixels[o10] + pixels[o11];
+                int g = pixels[o00 + 1] + pixels[o01 + 1] + pixels[o10 + 1] + pixels[o11 + 1];
+                int b = pixels[o00 + 2] + pixels[o01 + 2] + pixels[o10 + 2] + pixels[o11 + 2];
                 _srcU[(cy * _uvs) + cx] = (byte)RgbToU(r, g, b, YuvHalf << 2);
                 _srcV[(cy * _uvs) + cx] = (byte)RgbToV(r, g, b, YuvHalf << 2);
             }
@@ -196,7 +222,7 @@ internal sealed class VP8Encoder
         int n = _mbw * _mbh;
         int[] mbAlpha = new int[n];
         var scratch = new Scratch?[Workers(_mbh)];
-        RunRows(scratch, (s, mby) => AnalyzeRow(s, mby, mbAlpha));
+        RunRows(scratch, false, (s, mby) => AnalyzeRow(s, mby, mbAlpha));
         int[] alphas = new int[256];
         long uvAlphaSum = 0;
         foreach (Scratch? s in scratch)
@@ -272,6 +298,23 @@ internal sealed class VP8Encoder
     // Per-thread scratch state: everything a macroblock coder mutates besides the shared planes and neighbor contexts.
     private sealed class Scratch
     {
+        public Scratch(int ys, int uvs, bool coding)
+        {
+            if (coding)
+            {
+                RecY = new byte[16 * ys];
+                RecU = new byte[8 * uvs];
+                RecV = new byte[8 * uvs];
+            }
+        }
+
+        // The reconstruction of the macroblock row this worker is coding: 16 luma rows and 8 rows of each chroma plane.
+        public readonly byte[] RecY = [];
+        public readonly byte[] RecU = [];
+        public readonly byte[] RecV = [];
+        public readonly short[] Merged = new short[LevelsPerMb];
+        public byte[] RowLevels = new byte[4096];
+        public int RowLevelsLength;
         public readonly byte[] Work = new byte[Bps * 27];
         public readonly byte[] Scr = new byte[Bps * 27];
         public readonly byte[] SrcMb = new byte[(16 * 16) + (2 * 64)];
@@ -299,12 +342,12 @@ internal sealed class VP8Encoder
 
     // Runs fn once per macroblock row. With a wavefront, row y starts a macroblock only once row y-1 has finished the one
     // up and to the right of it (the top-right pixels feed prediction), so any thread count produces the same bytes.
-    private void RunRows(Scratch?[] scratch, Action<Scratch, int> fn)
+    private void RunRows(Scratch?[] scratch, bool coding, Action<Scratch, int> fn)
     {
         int workers = scratch.Length;
         if (workers == 1)
         {
-            var s = scratch[0] = new Scratch();
+            var s = scratch[0] = new Scratch(_ys, _uvs, coding);
             for (int y = 0; y < _mbh; y++)
             {
                 _token.ThrowIfCancellationRequested();
@@ -317,7 +360,7 @@ internal sealed class VP8Encoder
         int next = -1;
         Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = _token }, wi =>
         {
-            var s = scratch[wi] = new Scratch();
+            var s = scratch[wi] = new Scratch(_ys, _uvs, coding);
             while (true)
             {
                 _token.ThrowIfCancellationRequested();
@@ -574,22 +617,45 @@ internal sealed class VP8Encoder
 
     private static int BitsOf(int prob, int bit) => VP8Fwd.BitCost(bit, prob);
 
+    // The prediction borders of a macroblock: the row above comes from the saved last lines, the left column from this worker's row.
+    private void PrepareRec(Scratch s, byte[] w, int mbx, int mby)
+    {
+        if (mby > 0)
+        {
+            VP8Borders.PrepareFiltered(w, s.RecY, s.RecU, s.RecV, _topY[mby - 1], _topU[mby - 1], _topV[mby - 1], _ys, _uvs, mbx, mby, 0, _mbw);
+        }
+        else
+        {
+            VP8Borders.PrepareFiltered(w, s.RecY, s.RecU, s.RecV, [], [], [], _ys, _uvs, mbx, mby, 0, _mbw);
+        }
+    }
+
     private void EncodeMacroblocks()
     {
         Array.Clear(_intraTop);
         Array.Clear(_nzTop);
         _rowProgress = new int[_mbh];
+        for (int y = 0; y < _mbh - 1; y++)
+        {
+            _topY[y] = new byte[_ys];
+            _topU[y] = new byte[_uvs];
+            _topV[y] = new byte[_uvs];
+        }
+
         var scratch = new Scratch?[Workers(_mbh)];
-        RunRows(scratch, (s, mby) =>
+        RunRows(scratch, true, (s, mby) =>
         {
             Array.Clear(s.IntraLeft);
             Array.Clear(s.NzLeft);
+            s.RowLevelsLength = 0;
             for (int mbx = 0; mbx < _mbw; mbx++)
             {
                 WaitForRowAbove(mby, mbx);
                 EncodeMacroblock(s, mbx, mby);
                 Volatile.Write(ref _rowProgress[mby], mbx + 1);
             }
+
+            _rowLevels[mby] = s.RowLevels.AsSpan(0, s.RowLevelsLength).ToArray();
         });
         _scratches = scratch;
         foreach (Scratch? s in scratch)
@@ -618,7 +684,7 @@ internal sealed class VP8Encoder
     {
         int mb = (mby * _mbw) + mbx;
         Segment sp = _seg[_mbSegment[mb]];
-        VP8Borders.Prepare(s.Work, _recY, _recU, _recV, _ys, _uvs, mbx, mby, _mbw);
+        PrepareRec(s, s.Work, mbx, mby);
         LoadSource(s, mbx, mby);
 
         // Chroma and 16x16 luma are evaluated first; 4x4 only if it can beat the 16x16 result.
@@ -662,7 +728,7 @@ internal sealed class VP8Encoder
         }
 
         // Merge levels: luma from the chosen candidate, chroma from the chroma candidate.
-        Span<short> dst = _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb);
+        Span<short> dst = s.Merged;
         y.Levels.AsSpan(0, 16 + 256).CopyTo(dst);
         s.Uv.Levels.AsSpan(16 + 256, 128).CopyTo(dst[(16 + 256)..]);
         if (useI4)
@@ -681,29 +747,109 @@ internal sealed class VP8Encoder
         }
 
         _skip[mb] = (byte)(allZero ? 1 : 0);
+        if (!allZero)
+        {
+            AppendLevels(s, dst);
+        }
 
         // Update neighbor contexts exactly like the decoder will.
-        UpdateContexts(s, mbx, mb, useI4);
+        UpdateContexts(s, mbx, mb, useI4, dst);
 
         // Store the reconstruction.
         for (int j = 0; j < 16; j++)
         {
-            y.Recon.AsSpan(YOff + (j * Bps), 16).CopyTo(_recY.AsSpan((((mby * 16) + j) * _ys) + (mbx * 16), 16));
+            y.Recon.AsSpan(YOff + (j * Bps), 16).CopyTo(s.RecY.AsSpan((j * _ys) + (mbx * 16), 16));
         }
 
         for (int j = 0; j < 8; j++)
         {
-            int o = (((mby * 8) + j) * _uvs) + (mbx * 8);
-            s.Uv.Recon.AsSpan(UOff + (j * Bps), 8).CopyTo(_recU.AsSpan(o, 8));
-            s.Uv.Recon.AsSpan(VOff + (j * Bps), 8).CopyTo(_recV.AsSpan(o, 8));
+            int o = (j * _uvs) + (mbx * 8);
+            s.Uv.Recon.AsSpan(UOff + (j * Bps), 8).CopyTo(s.RecU.AsSpan(o, 8));
+            s.Uv.Recon.AsSpan(VOff + (j * Bps), 8).CopyTo(s.RecV.AsSpan(o, 8));
         }
+
+        // The last line of the row feeds the row below; the last macroblock row has none below it.
+        if (mby < _mbh - 1)
+        {
+            s.RecY.AsSpan((15 * _ys) + (mbx * 16), 16).CopyTo(_topY[mby].AsSpan(mbx * 16, 16));
+            s.RecU.AsSpan((7 * _uvs) + (mbx * 8), 8).CopyTo(_topU[mby].AsSpan(mbx * 8, 8));
+            s.RecV.AsSpan((7 * _uvs) + (mbx * 8), 8).CopyTo(_topV[mby].AsSpan(mbx * 8, 8));
+        }
+    }
+
+    // Appends a coded macroblock's levels to the worker's row buffer. Each of the 25 blocks (Y2, 16 luma, 8 chroma; block b
+    // starts at level 16 * b) is stored as a count n of leading levels up to its last non-zero one, followed by those n levels
+    // as zigzag variable-length integers: one byte for -64..63, otherwise two (a level is at most 2047 in magnitude). Most
+    // blocks end early and most levels are small, so a row takes a small fraction of the 800 bytes a macroblock would need
+    // uncompressed.
+    private static void AppendLevels(Scratch s, ReadOnlySpan<short> lv)
+    {
+        int need = s.RowLevelsLength + 25 + (LevelsPerMb * 2);
+        if (need > s.RowLevels.Length)
+        {
+            byte[] bigger = GC.AllocateUninitializedArray<byte>(Math.Max(need, s.RowLevels.Length * 2));
+            s.RowLevels.AsSpan(0, s.RowLevelsLength).CopyTo(bigger);
+            s.RowLevels = bigger;
+        }
+
+        Span<byte> buf = s.RowLevels;
+        int pos = s.RowLevelsLength;
+        for (int b = 0; b < 25; b++)
+        {
+            ReadOnlySpan<short> block = lv.Slice(b * 16, 16);
+            int n = 16;
+            while (n > 0 && block[n - 1] == 0)
+            {
+                n--;
+            }
+
+            buf[pos++] = (byte)n;
+            for (int i = 0; i < n; i++)
+            {
+                int v = block[i];
+                int z = (v << 1) ^ (v >> 31);
+                if (z < 128)
+                {
+                    buf[pos++] = (byte)z;
+                }
+                else
+                {
+                    buf[pos++] = (byte)(0x80 | (z & 0x7f));
+                    buf[pos++] = (byte)(z >> 7);
+                }
+            }
+        }
+
+        s.RowLevelsLength = pos;
+    }
+
+    // The inverse of AppendLevels for one macroblock: fills lv (400 levels) and returns the position after it.
+    private static int ReadLevels(ReadOnlySpan<byte> buf, int pos, Span<short> lv)
+    {
+        lv.Clear();
+        for (int b = 0; b < 25; b++)
+        {
+            int n = buf[pos++];
+            Span<short> block = lv.Slice(b * 16, n);
+            for (int i = 0; i < n; i++)
+            {
+                int z = buf[pos++];
+                if (z >= 128)
+                {
+                    z = (z & 0x7f) | (buf[pos++] << 7);
+                }
+
+                block[i] = (short)((z >> 1) ^ -(z & 1));
+            }
+        }
+
+        return pos;
     }
 
     // nz layout per macroblock column: Y 0..3, U 4..5, V 6..7, DC 8.
     // Counts the macroblock's tokens for the probability statistics and moves the non-zero contexts on past it.
-    private void UpdateContexts(Scratch s, int mbx, int mb, bool i4)
+    private void UpdateContexts(Scratch s, int mbx, int mb, bool i4, ReadOnlySpan<short> lv)
     {
-        ReadOnlySpan<short> lv = _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb);
         var stats = new DualStatsSink(s.StatsOnes, s.StatsTotal, s.StatsOnesCoded, s.StatsTotalCoded, _skip[mb] == 0);
         ScanMacroblock(ref stats, lv, i4, _nzTop.AsSpan(mbx * 9, 9), s.NzLeft);
         for (int x = 0; x < 4; x++)
@@ -863,7 +1009,7 @@ internal sealed class VP8Encoder
     private bool TryI4(Scratch s, int mbx, int mby, Segment sp, Cand cand, long i16Score)
     {
         byte[] w = s.Work;
-        VP8Borders.Prepare(w, _recY, _recU, _recV, _ys, _uvs, mbx, mby, _mbw);
+        PrepareRec(s, w, mbx, mby);
 
         // The top-right pixels of the macroblock serve the right-most sub-block of every row.
         for (int r = 3; r < 16; r += 4)
@@ -1359,8 +1505,8 @@ internal sealed class VP8Encoder
             }
         }
 
-        byte[] part0 = bw.Finish();
-        if (part0.Length >= 1 << 19)
+        int part0Length = bw.Finish();
+        if (part0Length >= 1 << 19)
         {
             throw new ImageOperationException("The image is too large for a single VP8 mode partition.");
         }
@@ -1368,10 +1514,10 @@ internal sealed class VP8Encoder
         var tw = new VP8BoolWriter(n * 16);
         var sink = new WriterSink(probs, tw);
         ScanTokens(ref sink, useSkip);
-        byte[] part1 = tw.Finish();
+        int part1Length = tw.Finish();
 
-        byte[] frame = new byte[10 + part0.Length + part1.Length];
-        uint tag = (uint)((0 /* key frame */ | (0 << 1) | (1 << 4)) | (part0.Length << 5));
+        byte[] frame = new byte[10 + part0Length + part1Length];
+        uint tag = (uint)((0 /* key frame */ | (0 << 1) | (1 << 4)) | (part0Length << 5));
         frame[0] = (byte)tag;
         frame[1] = (byte)(tag >> 8);
         frame[2] = (byte)(tag >> 16);
@@ -1380,8 +1526,8 @@ internal sealed class VP8Encoder
         frame[5] = 0x2a;
         BinaryPrimitives.WriteUInt16LittleEndian(frame.AsSpan(6), (ushort)_w);
         BinaryPrimitives.WriteUInt16LittleEndian(frame.AsSpan(8), (ushort)_h);
-        part0.CopyTo(frame, 10);
-        part1.CopyTo(frame, 10 + part0.Length);
+        bw.CopyTo(frame.AsSpan(10, part0Length));
+        tw.CopyTo(frame.AsSpan(10 + part0Length, part1Length));
         return frame;
     }
 
@@ -1440,9 +1586,12 @@ internal sealed class VP8Encoder
         where TSink : struct, ITokenSink
     {
         Array.Clear(_nzTop);
+        short[] levels = new short[LevelsPerMb];
         for (int mby = 0; mby < _mbh; mby++)
         {
             Array.Clear(_nzLeft);
+            byte[] rowLevels = _rowLevels[mby] ?? [];
+            int pos = 0;
             for (int mbx = 0; mbx < _mbw; mbx++)
             {
                 int mb = (mby * _mbw) + mbx;
@@ -1462,8 +1611,20 @@ internal sealed class VP8Encoder
                     continue;
                 }
 
-                ScanMacroblock(ref sink, _levels.AsSpan(mb * LevelsPerMb, LevelsPerMb), i4, top, left);
+                if (_skip[mb] != 0)
+                {
+                    levels.AsSpan().Clear();
+                }
+                else
+                {
+                    pos = ReadLevels(rowLevels, pos, levels);
+                }
+
+                ScanMacroblock(ref sink, levels, i4, top, left);
             }
+
+            // Nothing reads this row again; let the collector have it while later rows are still being written.
+            _rowLevels[mby] = null;
         }
     }
 

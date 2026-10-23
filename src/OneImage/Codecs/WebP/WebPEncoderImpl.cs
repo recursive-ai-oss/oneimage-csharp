@@ -38,7 +38,7 @@ internal sealed class WebPEncoderImpl : IImageEncoder
 
         if (!animated)
         {
-            EncodedFrame f = EncodeFrame(first, 0, 0, first.Width, first.Height, null, options, cancellationToken);
+            EncodedFrame f = EncodeFrame(first, options, cancellationToken);
             anyAlpha = f.HasAlpha;
             if (f.Alpha != null)
             {
@@ -135,27 +135,45 @@ internal sealed class WebPEncoderImpl : IImageEncoder
             }
         }
 
-        foreach ((uint fourCc, byte[] data) in chunks)
-        {
-            AppendChunk(output, fourCc, data);
-        }
-
+        // The image chunks can be large, so they go to the destination as they are, not through a second copy of the whole file.
+        var tail = new List<byte>(16);
         if (needExtended)
         {
             if (exifBlob.Length > 0)
             {
-                AppendChunk(output, Exif, exifBlob);
+                AppendChunk(tail, Exif, exifBlob);
             }
 
             if (meta.Xmp.Length > 0)
             {
-                AppendChunk(output, Xmp, meta.Xmp.ToArray());
+                AppendChunk(tail, Xmp, meta.Xmp.ToArray());
             }
         }
 
-        byte[] file = output.ToArray();
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), (uint)(file.Length - 8));
-        destination.Write(file);
+        long total = output.Count + tail.Count;
+        foreach ((_, byte[] data) in chunks)
+        {
+            total += 8 + data.Length + (data.Length & 1);
+        }
+
+        byte[] head = output.ToArray();
+        BinaryPrimitives.WriteUInt32LittleEndian(head.AsSpan(4), checked((uint)(total - 8)));
+        destination.Write(head);
+        Span<byte> padding = stackalloc byte[1];
+        Span<byte> header = stackalloc byte[8];
+        foreach ((uint fourCc, byte[] data) in chunks)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(header, fourCc);
+            BinaryPrimitives.WriteUInt32LittleEndian(header[4..], (uint)data.Length);
+            destination.Write(header);
+            destination.Write(data);
+            if ((data.Length & 1) != 0)
+            {
+                destination.Write(padding);
+            }
+        }
+
+        destination.Write(tail.ToArray());
     }
 
     private const uint Vp8 = 0x20385056;
@@ -238,13 +256,98 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         return rgba;
     }
 
-    private static EncodedFrame EncodeFrame(ImageFrameReader fr, int x, int y, int w, int h, byte[]? unused, WebPEncoderOptions options, CancellationToken token)
+    // A still image is read band by band into the coder's own input form; see the two methods below.
+    private static EncodedFrame EncodeFrame(ImageFrameReader fr, WebPEncoderOptions options, CancellationToken token) =>
+        options.Lossless ? EncodeLosslessStreaming(fr, options, token) : EncodeLossyStreaming(fr, options, token);
+
+    // A lossless still image is packed to 0xAARRGGBB words band by band, without the 4-bytes-per-pixel copy of the whole frame.
+    private static EncodedFrame EncodeLosslessStreaming(ImageFrameReader fr, WebPEncoderOptions options, CancellationToken token)
     {
-        _ = x;
-        _ = y;
-        _ = unused;
-        byte[] rgba = ReadRgba(fr);
-        return EncodeSub(rgba, w, h, options, fr.Degree, token);
+        int w = fr.Width;
+        int h = fr.Height;
+        int bpp = fr.Format.BytesPerPixel;
+        int degree = fr.Degree;
+        uint[] argb = new uint[checked(w * h)];
+        int bandRows = Math.Max(16, Math.Min(h, (1 << 20) / w / 16 * 16));
+        byte[] band = new byte[checked(w * bpp * bandRows)];
+        bool translucent = false;
+        for (int y = 0; y < h; y += bandRows)
+        {
+            token.ThrowIfCancellationRequested();
+            int n = Math.Min(bandRows, h - y);
+            fr.ReadRows(y, n, band);
+            translucent |= PackArgb(band, bpp, argb, y * w, n * w, options.Exact, degree);
+        }
+
+        var lo = new VP8LEncodeOptions { Effort = options.Effort, Degree = degree };
+        byte[] data = VP8LEncoder.EncodeArray(argb, w, h, translucent, lo, token);
+        return new EncodedFrame { Data = data, Lossless = true, HasAlpha = translucent };
+    }
+
+    // A lossy still image goes from the frame's rows straight into the encoder's YUV planes, so the 4-bytes-per-pixel copy of the
+    // whole frame that the animation and lossless paths need is never made. Only when a pixel turns out to be translucent is the
+    // alpha channel gathered, one byte per pixel, for the alpha coder. The bytes written equal those of the whole-frame path.
+    // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static EncodedFrame EncodeLossyStreaming(ImageFrameReader fr, WebPEncoderOptions options, CancellationToken token)
+    {
+        int w = fr.Width;
+        int h = fr.Height;
+        int bpp = fr.Format.BytesPerPixel;
+        int degree = fr.Degree;
+        VP8Encoder enc = VP8Encoder.Create(w, h, options.Quality, options.Effort, token, degree);
+        byte[] strip = new byte[checked(w * bpp * 16)];
+        byte[]? alphaPlane = null;
+        for (int y = 0; y < h; y += 16)
+        {
+            token.ThrowIfCancellationRequested();
+            int n = Math.Min(16, h - y);
+            fr.ReadRows(y, n, strip);
+            enc.AddRows(strip, bpp, y, n);
+            if (bpp != 4)
+            {
+                continue;
+            }
+
+            ReadOnlySpan<byte> px = strip.AsSpan(0, w * n * 4);
+            if (alphaPlane == null)
+            {
+                bool opaque = true;
+                for (int i = 3; i < px.Length; i += 4)
+                {
+                    if (px[i] != 255)
+                    {
+                        opaque = false;
+                        break;
+                    }
+                }
+
+                if (opaque)
+                {
+                    continue;
+                }
+
+                alphaPlane = new byte[checked(w * h)];
+                alphaPlane.AsSpan(0, y * w).Fill(255);
+            }
+
+            Span<byte> dst = alphaPlane.AsSpan(y * w, w * n);
+            for (int i = 0; i < dst.Length; i++)
+            {
+                dst[i] = px[(i * 4) + 3];
+            }
+        }
+
+        bool hasAlpha = alphaPlane != null;
+        Task<byte[]>? alphaTask = hasAlpha && degree > 1 ? Task.Run(() => EncodeAlpha(alphaPlane!, w, h, options.Effort, degree, token), token) : null;
+        byte[] data = enc.Finish();
+        byte[]? alpha = null;
+        if (hasAlpha)
+        {
+            alpha = alphaTask != null ? alphaTask.GetAwaiter().GetResult() : EncodeAlpha(alphaPlane!, w, h, options.Effort, degree, token);
+        }
+
+        return new EncodedFrame { Data = data, Alpha = alpha, Lossless = false, HasAlpha = hasAlpha };
     }
 
     // Loops that run for the whole call: compiled fully optimized on the first call, so no unoptimized-then-recompiled copies (and their resident memory) in the first calls.
@@ -255,7 +358,7 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         {
             // Packing the pixels also finds out whether any is translucent.
             uint[] argb = new uint[w * h];
-            bool translucent = PackArgb(rgba, argb, options.Exact, degree);
+            bool translucent = PackArgb(rgba, 4, argb, 0, argb.Length, options.Exact, degree);
             var lo = new VP8LEncodeOptions { Effort = options.Effort, Degree = degree };
             byte[] data = VP8LEncoder.EncodeArray(argb, w, h, translucent, lo, token);
             return new EncodedFrame { Data = data, Lossless = true, HasAlpha = translucent };
@@ -275,28 +378,29 @@ internal sealed class WebPEncoderImpl : IImageEncoder
     }
 
     // Converts RGBA bytes to 0xAARRGGBB words (clearing the color of fully transparent pixels unless exact) and reports whether any alpha is below 255.
-    private static bool PackArgb(byte[] rgba, uint[] argb, bool exact, int degree)
+    // The pixels are bpp bytes each (3 = opaque RGB) in src, from its start; count of them land in argb from offset.
+    private static bool PackArgb(byte[] src, int bpp, uint[] argb, int offset, int count, bool exact, int degree)
     {
         const int Chunk = 1 << 16;
-        int chunks = (argb.Length + Chunk - 1) / Chunk;
+        int chunks = (count + Chunk - 1) / Chunk;
         int translucent = 0;
         void Run(int c)
         {
-            int end = Math.Min(argb.Length, (c + 1) * Chunk);
+            int end = Math.Min(count, (c + 1) * Chunk);
             bool any = false;
             for (int i = c * Chunk; i < end; i++)
             {
-                uint r = rgba[i * 4];
-                uint g = rgba[(i * 4) + 1];
-                uint b = rgba[(i * 4) + 2];
-                uint a = rgba[(i * 4) + 3];
+                uint r = src[i * bpp];
+                uint g = src[(i * bpp) + 1];
+                uint b = src[(i * bpp) + 2];
+                uint a = bpp == 4 ? src[(i * 4) + 3] : 255u;
                 any |= a != 255;
                 if (a == 0 && !exact)
                 {
                     r = g = b = 0;
                 }
 
-                argb[i] = (a << 24) | (r << 16) | (g << 8) | b;
+                argb[offset + i] = (a << 24) | (r << 16) | (g << 8) | b;
             }
 
             if (any)
@@ -323,26 +427,31 @@ internal sealed class WebPEncoderImpl : IImageEncoder
     private static EncodedFrame LossyEncode(byte[] rgba, int w, int h, bool hasAlpha, WebPEncoderOptions options, int degree, CancellationToken token)
     {
         // The alpha plane is coded on the side while the color planes are.
-        Task<byte[]>? alphaTask = hasAlpha && degree > 1 ? Task.Run(() => EncodeAlpha(rgba, w, h, options.Effort, degree, token), token) : null;
+        Task<byte[]>? alphaTask = hasAlpha && degree > 1 ? Task.Run(() => EncodeAlpha(GatherAlpha(rgba), w, h, options.Effort, degree, token), token) : null;
         byte[] data = VP8Encoder.Encode(rgba, w, h, options.Quality, options.Effort, token, degree);
         byte[]? alpha = null;
         if (hasAlpha)
         {
-            alpha = alphaTask != null ? alphaTask.GetAwaiter().GetResult() : EncodeAlpha(rgba, w, h, options.Effort, degree, token);
+            alpha = alphaTask != null ? alphaTask.GetAwaiter().GetResult() : EncodeAlpha(GatherAlpha(rgba), w, h, options.Effort, degree, token);
         }
 
         return new EncodedFrame { Data = data, Alpha = alpha, Lossless = false, HasAlpha = hasAlpha };
     }
 
-    // Alpha of a lossy image: a prediction-filtered plane coded with the lossless coder, or stored raw when that is smaller.
-    private static byte[] EncodeAlpha(byte[] rgba, int w, int h, int effort, int degree, CancellationToken token)
+    private static byte[] GatherAlpha(byte[] rgba)
     {
-        byte[] plane = new byte[w * h];
+        byte[] plane = new byte[rgba.Length / 4];
         for (int i = 0; i < plane.Length; i++)
         {
             plane[i] = rgba[(i * 4) + 3];
         }
 
+        return plane;
+    }
+
+    // Alpha of a lossy image: a prediction-filtered plane coded with the lossless coder, or stored raw when that is smaller.
+    private static byte[] EncodeAlpha(byte[] plane, int w, int h, int effort, int degree, CancellationToken token)
+    {
         var lo = new VP8LEncodeOptions { Effort = Math.Min(effort, 4) };
         int[] filters = effort < 2 ? [0, 3] : [0, 1, 2, 3];
         byte[][] encoded = new byte[filters.Length][];

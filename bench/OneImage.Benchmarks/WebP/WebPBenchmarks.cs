@@ -171,10 +171,19 @@ public class WebPEncodeBenchmarks : IDisposable
 {
     private WebPInputs _big = null!;
     private WebPInputs _small = null!;
+    private WebPInputs? _huge;
 
     [GlobalSetup]
     public void Setup()
     {
+        // The 24 MP input exists only for the peak-memory runs (gate-peak webp-encode-24mp), which set Case to it.
+        if (Case.EndsWith("6000x4000", StringComparison.Ordinal))
+        {
+            _huge = new WebPInputs(6000, 4000);
+            _big = _small = _huge;
+            return;
+        }
+
         _big = new WebPInputs(2000, 1500);
         _small = new WebPInputs(400, 300);
     }
@@ -183,14 +192,18 @@ public class WebPEncodeBenchmarks : IDisposable
     public void Dispose()
     {
         _big.Dispose();
-        _small.Dispose();
+        if (!ReferenceEquals(_small, _big))
+        {
+            _small.Dispose();
+        }
+
         GC.SuppressFinalize(this);
     }
 
     [Params("lossy-400x300", "lossy-2000x1500", "lossless-2000x1500")]
     public string Case { get; set; } = "";
 
-    private WebPInputs Src => Case.EndsWith("400x300", StringComparison.Ordinal) ? _small : _big;
+    private WebPInputs Src => _huge ?? (Case.EndsWith("400x300", StringComparison.Ordinal) ? _small : _big);
 
     private bool Lossless => Case.StartsWith("lossless", StringComparison.Ordinal);
 
@@ -219,4 +232,38 @@ public class WebPEncodeBenchmarks : IDisposable
     [BenchmarkCategory("Gate", "webp-encode")]
     [Benchmark]
     public int NetVips() => Src.Vips.WebpsaveBuffer(q: 75, lossless: Lossless).Length;
+}
+
+/// <summary>Encoding a 24 MP image at quality 75 and effort 4, lossy and lossless (time and allocation; peak memory is measured by the gate-peak runner).</summary>
+[MemoryDiagnoser]
+[ShortRunJob]
+public class WebPEncodeLargeBenchmarks : IDisposable
+{
+    private WebPInputs _in = null!;
+
+    [GlobalSetup]
+    public void Setup() => _in = new WebPInputs(6000, 4000);
+
+    [GlobalCleanup]
+    public void Dispose()
+    {
+        _in.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    [Benchmark(Baseline = true)]
+    public int Lossy24Mp()
+    {
+        using var ms = new MemoryStream();
+        _in.Ours.Save(ms, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = false } });
+        return (int)ms.Length;
+    }
+
+    [Benchmark]
+    public int Lossless24Mp()
+    {
+        using var ms = new MemoryStream();
+        _in.Ours.Save(ms, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = true } });
+        return (int)ms.Length;
+    }
 }

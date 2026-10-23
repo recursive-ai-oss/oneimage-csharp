@@ -303,6 +303,66 @@ Measured on the shared worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.402, 
 
 The gate rows are unchanged (their files have no restart markers): jpeg-decode 32.2 vs 32.7 ms, jpeg-decode-rgba 32.4 vs 32.0 ms, thumb-jpeg 27.6 vs 27.5 ms. At full size the decode is now bound by the transform and delivery threads (about 24 ms), not by entropy decoding, so scales 1/2 and 1/4, which are transform-bound, do not change. The "before" runs started at load 3.9 (falling to 1.6) and the "after" runs at load 1.0; the two share the same machine and settings but not the same minute.
 
+## WebP encode memory
+
+The lossy encoder held a 4-bytes-per-pixel copy of the frame, whole source
+and reconstructed YUV planes, and every macroblock's 400 quantized levels
+(800 bytes) until the file was written, and joined its output through
+several doubling buffers. It now keeps:
+
+- the source YUV planes (1.5 bytes per pixel), filled strip by strip from
+  the frame, so no RGBA copy exists (alpha, one byte per pixel, is gathered
+  only if some pixel is translucent);
+- for reconstruction, the last pixel line of each finished macroblock row
+  plus each worker's current row, not whole planes;
+- the levels in a compact per-row form (a count per block, then zigzag
+  variable-length values), about a quarter of their size on a noisy photograph,
+  released row by row while the tokens are written;
+- partitions written in 64 KiB chunks and joined once into the frame, and the
+  file written to the destination chunk by chunk.
+
+The lossless encoder packs its 32-bit pixels band by band instead of via an
+RGBA copy of the frame. Output bytes are unchanged: 498 SHA-256 hashes of
+lossy (q50/75/90, effort 0/4/6, RGB, RGBA opaque and translucent, degrees
+1/4/16, four odd sizes), lossless (exact on and off) and animated encodes
+match the previous build on default hardware, `DOTNET_EnableAVX512=0`,
+`DOTNET_EnableAVX2=0` and `DOTNET_EnableHWIntrinsic=0`, and a 2000x1500
+set matches too.
+
+Peak working memory (the method below: peak resident minus resident before,
+warmed up, median of three processes, spread in parentheses, competitors
+two to three processes; the runs were on the development host, because the
+worker was held by other benchmarks, and resident memory does not depend on
+load). The `webp-encode-24mp` and `webp-encode-lossless-24mp` tasks of
+`gate-peak` use a 6000x4000 plasma-and-noise image (the `webp-encode` input
+at 24 MP); all rows are quality 75, effort 4:
+
+| Task | Before | After | SkiaSharp | Magick.NET | NetVips | ImageSharp |
+|---|--:|--:|--:|--:|--:|--:|
+| webp-encode-24mp (lossy) | 303.5 MB (±1.0) | 101.6 MB (±6.5) | 86.3 (±0.5) | 173.6 (±1.0) | 241.0 (±14.5) | 1450 (±1) |
+| webp-encode-lossless-24mp | 1055.8 MB (±2.4) | 850.3 MB (±2.3) | | | | |
+| webp-encode (lossy-2000x1500) | 22.2 MB (±2.9) | 4.6 MB (±0.2) | 0.7 | 1.3 | 107.9 | 98.1 |
+| png-to-webp (photo) | 43.4 MB (±1.5) | 22.6 MB (±4.9) | 38.3 | 26.0 | 203.7 | 87.6 |
+| thumb-webp | 4.7 MB (±0.6) | 4.6 MB (±0.3) | 0.7 | 1.9 | 83.2 | 9.9 |
+
+The lossless encoder's remaining 850 MB is the coder's own state (histograms,
+match tables, the transformed copies of the pixels), not input copies; it is
+untouched by this change. SkiaSharp and Magick.NET encode straight from the
+caller's pixel buffer; we convert to YUV first, which is the 36 MB of planes
+at 24 MP.
+
+Time and allocation, BenchmarkDotNet ShortRun, AVX-512 off, on the worker
+(Ryzen 9 7950X3D, 32 logical CPUs, .NET SDK 10.0.402, load 2 to 3.2 before,
+during and after), base and new alternating, two rounds, mean per call:
+
+| Case | Before | After | Allocated before | Allocated after |
+|---|--:|--:|--:|--:|
+| lossy 400x300 | 5.40 / 5.23 ms | 5.35 / 5.32 ms | 1.65 MB | 0.92 MB |
+| lossy 2000x1500 | 103.8 / 103.7 ms | 104.1 / 103.9 ms | 32.05 MB | 9.27 MB |
+| lossy 6000x4000 | 777 / 781 ms | 784 / 788 ms | 252.4 MB | 66.5 MB |
+| lossless 2000x1500 | 141.5 / 141.6 ms | 138.5 / 138.5 ms | 117.8 MB | 100.1 MB |
+| lossless 6000x4000 | 1097 / 1107 ms | 1073 / 1071 ms | 1034 MB | 817 MB |
+
 ## Drawing and clipping exceptions
 
 The drawing operations are compared with ImageSharp.Drawing 2.1.7 in

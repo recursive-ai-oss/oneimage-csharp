@@ -311,10 +311,12 @@ public class WebPEncodeGateBenchmarks : IDisposable
     [GlobalSetup]
     public void Setup()
     {
-        _bigIn = new WebPInputs(2000, 1500);
-        _smallIn = new WebPInputs(400, 300);
+        // The 24 MP case is used by the peak-memory runs only (gate-peak webp-encode-24mp).
+        bool huge = Case.EndsWith("6000x4000", StringComparison.Ordinal);
+        _bigIn = huge ? new WebPInputs(6000, 4000) : new WebPInputs(2000, 1500);
+        _smallIn = huge ? _bigIn : new WebPInputs(400, 300);
         _big = From(_bigIn);
-        _small = From(_smallIn);
+        _small = huge ? _big : From(_smallIn);
     }
 
     private static MagickImage From(WebPInputs i) => new(i.Rgba, new PixelReadSettings((uint)i.Width, (uint)i.Height, StorageType.Char, "RGBA"));
