@@ -72,18 +72,20 @@ internal sealed class JpxBlockDecoder
     // Sign context (Table D.3) in bits 0..3 and the XOR bit in bit 7, indexed by the N,S,W,E significance bits and their signs.
     private static readonly byte[] SignCtx = BuildSignContexts();
 
-    private readonly byte[] _cx = new byte[19];
+    private static readonly ushort[] QeByState = BuildQe();
+    private static readonly byte[] NextMps = BuildNext(false);
+    private static readonly byte[] NextLps = BuildNext(true);
+
+    private readonly byte[] _cx = new byte[32];
     private ushort[] _flags = [];
     private int[] _mag = [];
     private int[] _result = [];
 
-    // MQ decoder registers.
+    // MQ decoder state and the segment it reads.
     private byte[] _buf = [];
-    private int _bp;
     private int _end;
-    private uint _c;
-    private uint _a;
-    private int _ct;
+    private Mq _mq;
+    private int _bp; // read position of the raw (bypass) reader
 
     // Raw (bypass) bit reader.
     private int _rawByte;
@@ -227,126 +229,120 @@ internal sealed class JpxBlockDecoder
 
     // ---- MQ decoder (T.800 C.3) ----
 
-    private void MqInit(int start, int end)
+    /// <summary>The MQ decoder registers. The coding passes keep them in a local copy so the JIT holds them in machine registers.</summary>
+    private struct Mq
     {
-        _bp = start;
-        _end = end;
-        _c = (uint)(_bp < _end ? _buf[_bp] : 0xFF) << 16;
-        MqByteIn();
-        _c <<= 7;
-        _ct -= 7;
-        _a = 0x8000;
+        public uint C;
+        public uint A;
+        public int Ct;
+        public int Bp;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void MqByteIn()
+    private readonly record struct ByteInResult(uint C, int Ct, int Bp);
+
+    private void MqInit(int start, int end)
     {
-        int b = _bp < _end ? _buf[_bp] : 0xFF;
+        _end = end;
+        uint c = (uint)(start < end ? _buf[start] : 0xFF) << 16;
+        ByteInResult r = ByteIn(_buf, start, end, c);
+        _mq = new Mq { C = r.C << 7, Ct = r.Ct - 7, Bp = r.Bp, A = 0x8000 };
+    }
+
+    // C.3.4 BYTEIN. Kept out of line: it runs once per byte, while the decision decoder runs once per bit.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static ByteInResult ByteIn(byte[] buf, int bp, int end, uint c)
+    {
+        int b = bp < end ? buf[bp] : 0xFF;
         if (b == 0xFF)
         {
-            int b1 = _bp + 1 < _end ? _buf[_bp + 1] : 0xFF;
+            int b1 = bp + 1 < end ? buf[bp + 1] : 0xFF;
             if (b1 > 0x8F)
             {
                 // A marker (or the end of the segment): feed 1 bits.
-                _c += 0xFF00;
-                _ct = 8;
+                return new ByteInResult(c + 0xFF00, 8, bp);
             }
-            else
-            {
-                _bp++;
-                _c += (uint)b1 << 9;
-                _ct = 7;
-            }
+
+            return new ByteInResult(c + ((uint)b1 << 9), 7, bp + 1);
         }
-        else
-        {
-            _bp++;
-            int b1 = _bp < _end ? _buf[_bp] : 0xFF;
-            _c += (uint)b1 << 8;
-            _ct = 8;
-        }
+
+        bp++;
+        int b2 = bp < end ? buf[bp] : 0xFF;
+        return new ByteInResult(c + ((uint)b2 << 8), 8, bp);
     }
 
+    // C.3.2 DECODE with the probability state tables folded together: index = (state << 1) | mps, so one lookup gives the
+    // interval size and one the next state after an MPS or an LPS (including the MPS switch of Table C.2).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private int MqBit(int ctx)
+    private static int Bit(ref Mq m, byte[] cx, int ctx, byte[] buf, int end)
     {
-        int st = _cx[ctx];
-        int idx = st >> 1;
-        int mps = st & 1;
-        uint qe = Qe[idx];
-        _a -= qe;
+        int st = cx[ctx & 31];
+        uint qe = QeByState[st & 127];
+        uint a = m.A - qe;
+        uint c = m.C;
         int d;
-        if ((_c >> 16) < qe)
+        if ((c >> 16) < qe)
         {
             // LPS_EXCHANGE
-            if (_a < qe)
+            if (a < qe)
             {
-                d = mps;
-                _cx[ctx] = (byte)((Nmps[idx] << 1) | mps);
+                d = st & 1;
+                cx[ctx & 31] = NextMps[st & 127];
             }
             else
             {
-                d = 1 - mps;
-                if (Switch[idx])
-                {
-                    mps = 1 - mps;
-                }
-
-                _cx[ctx] = (byte)((Nlps[idx] << 1) | mps);
+                d = (st & 1) ^ 1;
+                cx[ctx & 31] = NextLps[st & 127];
             }
 
-            _a = qe;
-            MqRenorm();
+            a = qe;
         }
         else
         {
-            _c -= qe << 16;
-            if ((_a & 0x8000) == 0)
+            c -= qe << 16;
+            if ((a & 0x8000) != 0)
             {
-                // MPS_EXCHANGE
-                if (_a < qe)
-                {
-                    d = 1 - mps;
-                    if (Switch[idx])
-                    {
-                        mps = 1 - mps;
-                    }
+                m.A = a;
+                m.C = c;
+                return st & 1;
+            }
 
-                    _cx[ctx] = (byte)((Nlps[idx] << 1) | mps);
-                }
-                else
-                {
-                    d = mps;
-                    _cx[ctx] = (byte)((Nmps[idx] << 1) | mps);
-                }
-
-                MqRenorm();
+            // MPS_EXCHANGE
+            if (a < qe)
+            {
+                d = (st & 1) ^ 1;
+                cx[ctx & 31] = NextLps[st & 127];
             }
             else
             {
-                d = mps;
+                d = st & 1;
+                cx[ctx & 31] = NextMps[st & 127];
             }
         }
 
+        // RENORMD
+        int ct = m.Ct;
+        do
+        {
+            if (ct == 0)
+            {
+                ByteInResult r = ByteIn(buf, m.Bp, end, c);
+                c = r.C;
+                ct = r.Ct;
+                m.Bp = r.Bp;
+            }
+
+            a <<= 1;
+            c <<= 1;
+            ct--;
+        }
+        while ((a & 0x8000) == 0);
+        m.A = a;
+        m.C = c;
+        m.Ct = ct;
         return d;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void MqRenorm()
-    {
-        do
-        {
-            if (_ct == 0)
-            {
-                MqByteIn();
-            }
-
-            _a <<= 1;
-            _c <<= 1;
-            _ct--;
-        }
-        while ((_a & 0x8000) == 0);
-    }
+    private int MqBit(int ctx) => Bit(ref _mq, _cx, ctx, _buf, _end);
 
     // ---- Raw bits for the selective arithmetic coding bypass (T.800 D.6) ----
 
@@ -375,10 +371,8 @@ internal sealed class JpxBlockDecoder
     // ---- Coding passes (T.800 D.3) ----
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void SetSignificant(int fi, int neg, int y)
+    private static void SetSignificant(ushort[] f, int s, bool causal, int fi, int neg, int y)
     {
-        ushort[] f = _flags;
-        int s = _stride;
         int ns = neg != 0 ? 1 : 0;
         f[fi] |= (ushort)(Sig | (ns << 15));
         f[fi - 1] |= (ushort)(SigE | (ns * SgnE));
@@ -388,7 +382,7 @@ internal sealed class JpxBlockDecoder
         f[fi + s + 1] |= SigNW;
 
         // Vertically causal: the stripe above must not see samples of the stripe below.
-        if (!_causal || (y & 3) != 0)
+        if (!causal || (y & 3) != 0)
         {
             f[fi - s] |= (ushort)(SigS | (ns * SgnS));
             f[fi - s - 1] |= SigSE;
@@ -397,17 +391,22 @@ internal sealed class JpxBlockDecoder
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private int DecodeSign(int f)
+    private static int DecodeSign(ref Mq m, byte[] cx, int f, byte[] buf, int end)
     {
         int idx = (f & 0xF) | ((f >> 4) & 0xF0);
         int e = SignCtx[idx];
-        return MqBit(e & 0x0F) ^ (e >> 7);
+        return Bit(ref m, cx, e & 0x0F, buf, end) ^ (e >> 7);
     }
 
     private void SigProp(int bp, bool raw, byte[] sigCtx)
     {
         ushort[] flags = _flags;
         int[] mag = _mag;
+        byte[] cx = _cx;
+        byte[] buf = _buf;
+        int end = _end;
+        bool causal = _causal;
+        Mq m = _mq;
         int w = _w;
         int h = _h;
         int s = _stride;
@@ -416,9 +415,15 @@ internal sealed class JpxBlockDecoder
             int yEnd = Math.Min(y0 + 4, h);
             for (int x = 0; x < w; x++)
             {
+                int fi0 = ((y0 + 1) * s) + x + 1;
+                if (y0 + 4 <= h && ((flags[fi0] | flags[fi0 + s] | flags[fi0 + (2 * s)] | flags[fi0 + (3 * s)]) & NeighborMask) == 0)
+                {
+                    continue; // no sample of this stripe column has a significant neighbour: nothing to code
+                }
+
                 for (int y = y0; y < yEnd; y++)
                 {
-                    int fi = (y + 1) * s + x + 1;
+                    int fi = ((y + 1) * s) + x + 1;
                     int f = flags[fi];
                     if ((f & Sig) != 0 || (f & NeighborMask) == 0)
                     {
@@ -426,22 +431,28 @@ internal sealed class JpxBlockDecoder
                     }
 
                     flags[fi] |= Visited;
-                    int bit = raw ? RawBit() : MqBit(sigCtx[f & NeighborMask]);
+                    int bit = raw ? RawBit() : Bit(ref m, cx, sigCtx[f & NeighborMask], buf, end);
                     if (bit != 0)
                     {
-                        int sign = raw ? RawBit() : DecodeSign(f);
-                        SetSignificant(fi, sign, y);
-                        mag[y * w + x] = 3 << bp;
+                        int sign = raw ? RawBit() : DecodeSign(ref m, cx, f, buf, end);
+                        SetSignificant(flags, s, causal, fi, sign, y);
+                        mag[(y * w) + x] = 3 << bp;
                     }
                 }
             }
         }
+
+        _mq = m;
     }
 
     private void MagRef(int bp, bool raw)
     {
         ushort[] flags = _flags;
         int[] mag = _mag;
+        byte[] cx = _cx;
+        byte[] buf = _buf;
+        int end = _end;
+        Mq m = _mq;
         int w = _w;
         int h = _h;
         int s = _stride;
@@ -452,9 +463,15 @@ internal sealed class JpxBlockDecoder
             int yEnd = Math.Min(y0 + 4, h);
             for (int x = 0; x < w; x++)
             {
+                int fi0 = ((y0 + 1) * s) + x + 1;
+                if (y0 + 4 <= h && ((flags[fi0] | flags[fi0 + s] | flags[fi0 + (2 * s)] | flags[fi0 + (3 * s)]) & Sig) == 0)
+                {
+                    continue; // nothing significant in this stripe column
+                }
+
                 for (int y = y0; y < yEnd; y++)
                 {
-                    int fi = (y + 1) * s + x + 1;
+                    int fi = ((y + 1) * s) + x + 1;
                     int f = flags[fi];
                     if ((f & (Sig | Visited)) != Sig)
                     {
@@ -462,20 +479,27 @@ internal sealed class JpxBlockDecoder
                     }
 
                     int ctx = (f & Refined) != 0 ? 16 : (f & NeighborMask) != 0 ? 15 : 14;
-                    int bit = raw ? RawBit() : MqBit(ctx);
-                    int mi = y * w + x;
+                    int bit = raw ? RawBit() : Bit(ref m, cx, ctx, buf, end);
+                    int mi = (y * w) + x;
                     // Replace the previous half-bit (at position bp+1 in half units) by the decoded bit and a new half-bit at bp.
                     mag[mi] = (mag[mi] & ~upper) | (bit << (bp + 1)) | half;
                     flags[fi] |= Refined;
                 }
             }
         }
+
+        _mq = m;
     }
 
     private void Cleanup(int bp, byte[] sigCtx)
     {
         ushort[] flags = _flags;
         int[] mag = _mag;
+        byte[] cx = _cx;
+        byte[] buf = _buf;
+        int end = _end;
+        bool causal = _causal;
+        Mq m = _mq;
         int w = _w;
         int h = _h;
         int s = _stride;
@@ -486,36 +510,36 @@ internal sealed class JpxBlockDecoder
             for (int x = 0; x < w; x++)
             {
                 int y = y0;
-                int fi0 = (y0 + 1) * s + x + 1;
+                int fi0 = ((y0 + 1) * s) + x + 1;
                 if (y0 + 4 <= h
-                    && ((flags[fi0] | flags[fi0 + s] | flags[fi0 + 2 * s] | flags[fi0 + 3 * s]) & (Sig | Visited | NeighborMask)) == 0)
+                    && ((flags[fi0] | flags[fi0 + s] | flags[fi0 + (2 * s)] | flags[fi0 + (3 * s)]) & (Sig | Visited | NeighborMask)) == 0)
                 {
                     // Run-length mode (Table D.5).
-                    if (MqBit(CtxRun) == 0)
+                    if (Bit(ref m, cx, CtxRun, buf, end) == 0)
                     {
                         continue;
                     }
 
-                    int r = (MqBit(CtxUniform) << 1) | MqBit(CtxUniform);
+                    int r = (Bit(ref m, cx, CtxUniform, buf, end) << 1) | Bit(ref m, cx, CtxUniform, buf, end);
                     y = y0 + r;
                     int fi = fi0 + (r * s);
-                    int sign = DecodeSign(flags[fi]);
-                    SetSignificant(fi, sign, y);
-                    mag[y * w + x] = value;
+                    int sign = DecodeSign(ref m, cx, flags[fi], buf, end);
+                    SetSignificant(flags, s, causal, fi, sign, y);
+                    mag[(y * w) + x] = value;
                     y++;
                 }
 
                 for (; y < yEnd; y++)
                 {
-                    int fi = (y + 1) * s + x + 1;
+                    int fi = ((y + 1) * s) + x + 1;
                     int f = flags[fi];
                     if ((f & (Sig | Visited)) == 0)
                     {
-                        if (MqBit(sigCtx[f & NeighborMask]) != 0)
+                        if (Bit(ref m, cx, sigCtx[f & NeighborMask], buf, end) != 0)
                         {
-                            int sign = DecodeSign(f);
-                            SetSignificant(fi, sign, y);
-                            mag[y * w + x] = value;
+                            int sign = DecodeSign(ref m, cx, f, buf, end);
+                            SetSignificant(flags, s, causal, fi, sign, y);
+                            mag[(y * w) + x] = value;
                         }
                     }
                     else
@@ -525,9 +549,36 @@ internal sealed class JpxBlockDecoder
                 }
             }
         }
+
+        _mq = m;
     }
 
     // ---- Context tables ----
+
+    private static ushort[] BuildQe()
+    {
+        var t = new ushort[128];
+        for (int st = 0; st < 94; st++)
+        {
+            t[st] = Qe[st >> 1];
+        }
+
+        return t;
+    }
+
+    // State after an MPS (lps = false) or an LPS (lps = true) renormalization, indexed like QeByState.
+    private static byte[] BuildNext(bool lps)
+    {
+        var t = new byte[128];
+        for (int st = 0; st < 94; st++)
+        {
+            int idx = st >> 1;
+            int mps = st & 1;
+            t[st] = lps ? (byte)((Nlps[idx] << 1) | (Switch[idx] ? mps ^ 1 : mps)) : (byte)((Nmps[idx] << 1) | mps);
+        }
+
+        return t;
+    }
 
     private static byte[] BuildSigContexts(int kind)
     {

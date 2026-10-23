@@ -151,6 +151,7 @@ internal static class JpxCodec
             ? long.MaxValue
             : (1L << 27) + (2048L * file.Codestream.Length);
         bool damaged = cs.Truncated;
+        var wanted = new List<int>();
         for (int t = 0; t < siz.TileCount; t++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -169,7 +170,66 @@ internal static class JpxCodec
                 continue;
             }
 
-            damaged |= JpxTileDecoder.Decode(cs, t, options, d, planes, ref tier1Budget, cancellationToken);
+            wanted.Add(t);
+        }
+
+        // Many tiles: one tile per thread, each decoded serially (no nested fork-join per code-block batch or wavelet level). The
+        // coefficient memory of the tiles in flight is capped at half the working-memory limit; otherwise tiles are decoded one at
+        // a time with the parallelism inside the tile. Output does not depend on the choice: tiles write disjoint samples.
+        int degree = Math.Max(1, options.MaxDegreeOfParallelism);
+        long tileBytes = 4L * siz.XTsiz * siz.YTsiz * siz.Csiz;
+        if (degree > 1 && wanted.Count >= 2 && tileBytes * Math.Min(degree, wanted.Count) <= options.MaxWorkingBytes / 2)
+        {
+            JpxDecodeOptions serial = options.WithDegree(1);
+            var errors = new ImageException?[wanted.Count];
+            int firstFailure = int.MaxValue;
+            int anyDamaged = 0;
+            long[] budget = [tier1Budget];
+            Parallel.For(
+                0,
+                wanted.Count,
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Min(degree, wanted.Count), CancellationToken = cancellationToken },
+                i =>
+                {
+                    // A failed tile makes later tiles pointless, but never earlier ones: the lowest failing index is always the one reported.
+                    if (i > Volatile.Read(ref firstFailure))
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        if (JpxTileDecoder.Decode(cs, wanted[i], serial, d, planes, ref budget[0], cancellationToken))
+                        {
+                            Volatile.Write(ref anyDamaged, 1);
+                        }
+                    }
+                    catch (ImageException e)
+                    {
+                        errors[i] = e;
+                        int seen;
+                        while (i < (seen = Volatile.Read(ref firstFailure)) && Interlocked.CompareExchange(ref firstFailure, i, seen) != seen)
+                        {
+                        }
+                    }
+                });
+            foreach (ImageException? e in errors)
+            {
+                if (e is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e).Throw();
+                }
+            }
+
+            damaged |= anyDamaged != 0;
+        }
+        else
+        {
+            foreach (int t in wanted)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                damaged |= JpxTileDecoder.Decode(cs, t, options, d, planes, ref tier1Budget, cancellationToken);
+            }
         }
 
         return new Core(file, siz, planes, d, (int)rx0, (int)ry0, outW, outH, damaged);

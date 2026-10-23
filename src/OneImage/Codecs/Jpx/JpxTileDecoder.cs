@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace OneImage.Codecs.Jpx;
 
 /// <summary>A component's decoded samples over a rectangle of the component's (possibly reduced) coordinate grid.</summary>
@@ -130,79 +132,108 @@ internal static class JpxTileDecoder
             }
         }
 
-        tier1Budget -= visits;
-        if (tier1Budget < 0)
+        if (Interlocked.Add(ref tier1Budget, -visits) < 0)
         {
             throw new ImageLimitException("JPEG 2000 coding-pass work exceeds the limit for the size of the data.");
         }
 
-        // The budget is settled; only now allocate the coefficient buffers.
-        foreach (JpxTileComp tc in comps)
+        // The budget is settled; only now take the coefficient buffers (pooled, so many small tiles do not churn the heap).
+        try
         {
-            if (tc.Cod.Reversible)
+            foreach (JpxTileComp tc in comps)
             {
-                tc.IntCoeffs = new int[tc.BufferWidth * tc.BufferHeight];
-            }
-            else
-            {
-                tc.FloatCoeffs = new float[tc.BufferWidth * tc.BufferHeight];
-            }
-        }
-
-        JpxChunk[] chunks = reader.Chunks;
-        ReadOnlyMemory<byte> dataMem = data;
-        int degree = Math.Max(1, options.MaxDegreeOfParallelism);
-        if (degree == 1 || work.Count < 8)
-        {
-            var state = new BlockWorker();
-            foreach ((int comp, int res, int band, int block) in work)
-            {
-                ct.ThrowIfCancellationRequested();
-                state.Run(comps[comp], comps[comp].Res[res].Bands[band], block, chunks, dataMem.Span);
-            }
-        }
-        else
-        {
-            Parallel.For(
-                0,
-                work.Count,
-                new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = ct },
-                () => new BlockWorker(),
-                (i, _, state) =>
+                int count = tc.BufferWidth * tc.BufferHeight;
+                if (tc.Cod.Reversible)
                 {
-                    (int comp, int res, int band, int block) = work[i];
-                    state.Run(comps[comp], comps[comp].Res[res].Bands[band], block, chunks, dataMem.Span);
-                    return state;
-                },
-                _ => { });
-        }
+                    tc.IntCoeffs = ArrayPool<int>.Shared.Rent(count);
+                    Array.Clear(tc.IntCoeffs, 0, count);
+                }
+                else
+                {
+                    tc.FloatCoeffs = ArrayPool<float>.Shared.Rent(count);
+                    Array.Clear(tc.FloatCoeffs, 0, count);
+                }
+            }
 
-        // Inverse wavelet transform.
-        foreach (JpxTileComp tc in comps)
-        {
-            if (tc.IntCoeffs is not null)
+            JpxChunk[] chunks = reader.Chunks;
+            ReadOnlyMemory<byte> dataMem = data;
+            int degree = Math.Max(1, options.MaxDegreeOfParallelism);
+            if (degree == 1 || work.Count < 8)
             {
-                JpxDwt.Inverse53(tc.IntCoeffs, tc.BufferWidth, tc.Res, tc.KeptResolutions, degree, ct);
+                BlockWorker state = BlockWorker.Take();
+                try
+                {
+                    foreach ((int comp, int res, int band, int block) in work)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        state.Run(comps[comp], comps[comp].Res[res].Bands[band], block, chunks, dataMem.Span);
+                    }
+                }
+                finally
+                {
+                    BlockWorker.Release(state);
+                }
             }
             else
             {
-                JpxDwt.Inverse97(tc.FloatCoeffs!, tc.BufferWidth, tc.Res, tc.KeptResolutions, degree, ct);
+                Parallel.For(
+                    0,
+                    work.Count,
+                    new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = ct },
+                    () => BlockWorker.Take(),
+                    (i, _, state) =>
+                    {
+                        (int comp, int res, int band, int block) = work[i];
+                        state.Run(comps[comp], comps[comp].Res[res].Bands[band], block, chunks, dataMem.Span);
+                        return state;
+                    },
+                    BlockWorker.Release);
+            }
+
+            // Inverse wavelet transform.
+            foreach (JpxTileComp tc in comps)
+            {
+                if (tc.IntCoeffs is not null)
+                {
+                    JpxDwt.Inverse53(tc.IntCoeffs, tc.BufferWidth, tc.Res, tc.KeptResolutions, degree, ct);
+                }
+                else
+                {
+                    JpxDwt.Inverse97(tc.FloatCoeffs!, tc.BufferWidth, tc.Res, tc.KeptResolutions, degree, ct);
+                }
+            }
+
+            // Component transform (Annex G) over the first three components.
+            if (codSource.Mct != 0)
+            {
+                ApplyMct(comps);
+            }
+
+            // Level shift, clamp and store.
+            foreach (JpxTileComp tc in comps)
+            {
+                Store(tc, siz, planes[tc.Index]);
+            }
+
+            return damaged;
+        }
+        finally
+        {
+            foreach (JpxTileComp tc in comps)
+            {
+                if (tc.IntCoeffs is not null)
+                {
+                    ArrayPool<int>.Shared.Return(tc.IntCoeffs);
+                    tc.IntCoeffs = null;
+                }
+
+                if (tc.FloatCoeffs is not null)
+                {
+                    ArrayPool<float>.Shared.Return(tc.FloatCoeffs);
+                    tc.FloatCoeffs = null;
+                }
             }
         }
-
-        // Component transform (Annex G) over the first three components.
-        if (codSource.Mct != 0)
-        {
-            ApplyMct(comps);
-        }
-
-        // Level shift, clamp and store.
-        foreach (JpxTileComp tc in comps)
-        {
-            Store(tc, siz, planes[tc.Index]);
-        }
-
-        return damaged;
     }
 
     private static ReadOnlyMemory<byte> Join(JpxCodestream cs, JpxTileEntry entry, bool headers)
@@ -374,6 +405,19 @@ internal static class JpxTileDecoder
 
     private sealed class BlockWorker
     {
+        // One worker (flag, magnitude and data buffers) per thread, reused from block to block and tile to tile.
+        [ThreadStatic]
+        private static BlockWorker? s_cached;
+
+        public static BlockWorker Take()
+        {
+            BlockWorker w = s_cached ?? new BlockWorker();
+            s_cached = null;
+            return w;
+        }
+
+        public static void Release(BlockWorker w) => s_cached = w;
+
         private readonly JpxBlockDecoder _decoder = new();
         private JpxSegment[] _segments = new JpxSegment[32];
         private int _segmentCount;

@@ -1,3 +1,6 @@
+using System.Buffers;
+using System.Numerics;
+
 namespace OneImage.Codecs.Jpx;
 
 /// <summary>
@@ -24,6 +27,39 @@ internal static class JpxDwt
     /// <summary>Reconstructs resolutions 1 .. <c>kept - 1</c> of an integer (reversible) tile-component.</summary>
     public static void Inverse53(int[] a, int stride, JpxResolution[] res, int kept, int degree, CancellationToken ct)
     {
+        // Serial runs share one pair of scratch buffers across all levels; parallel runs give every worker its own.
+        int[]? rowScratch = null;
+        int[]? colScratch = null;
+        if (degree <= 1)
+        {
+            int maxW = 1;
+            int maxH = 1;
+            for (int r = 1; r < kept; r++)
+            {
+                maxW = Math.Max(maxW, res[r].Width);
+                maxH = Math.Max(maxH, res[r].Height);
+            }
+
+            rowScratch = ArrayPool<int>.Shared.Rent(maxW);
+            colScratch = ArrayPool<int>.Shared.Rent(maxH * ColumnBlock);
+        }
+
+        try
+        {
+            Inverse53Levels(a, stride, res, kept, degree, rowScratch, colScratch, ct);
+        }
+        finally
+        {
+            if (rowScratch is not null)
+            {
+                ArrayPool<int>.Shared.Return(rowScratch);
+                ArrayPool<int>.Shared.Return(colScratch!);
+            }
+        }
+    }
+
+    private static void Inverse53Levels(int[] a, int stride, JpxResolution[] res, int kept, int degree, int[]? rowScratch, int[]? colScratch, CancellationToken ct)
+    {
         for (int r = 1; r < kept; r++)
         {
             JpxResolution cur = res[r];
@@ -39,15 +75,48 @@ internal static class JpxDwt
             int wLL = prev.Width;
             int hLL = prev.Height;
             int pe = cur.X0 & 1;
-            RunRows(h, w, degree, () => new int[w], (j, tmp) => HorizontalInt(a.AsSpan(j * stride, w), tmp, wLL, pe));
+            RunRows(h, w, degree, rowScratch, () => new int[w], (j, tmp) => HorizontalInt(a.AsSpan(j * stride, w), tmp, wLL, pe));
             int pv = cur.Y0 & 1;
-            RunBlocks(w, h, degree, () => new int[h * ColumnBlock], (c0, bw, tmp) => VerticalInt(a, stride, c0, bw, h, hLL, pv, tmp));
+            RunBlocks(w, h, degree, colScratch, () => new int[h * ColumnBlock], (c0, bw, tmp) => VerticalInt(a, stride, c0, bw, h, hLL, pv, tmp));
         }
     }
 
     /// <summary>Reconstructs resolutions 1 .. <c>kept - 1</c> of a floating-point (irreversible) tile-component.</summary>
     public static void Inverse97(float[] a, int stride, JpxResolution[] res, int kept, int degree, CancellationToken ct)
     {
+        // Serial runs share one pair of scratch buffers across all levels; parallel runs give every worker its own.
+        float[]? rowScratch = null;
+        float[]? colScratch = null;
+        if (degree <= 1)
+        {
+            int maxW = 1;
+            int maxH = 1;
+            for (int r = 1; r < kept; r++)
+            {
+                maxW = Math.Max(maxW, res[r].Width);
+                maxH = Math.Max(maxH, res[r].Height);
+            }
+
+            rowScratch = ArrayPool<float>.Shared.Rent(maxW);
+            colScratch = ArrayPool<float>.Shared.Rent(maxH * ColumnBlock);
+        }
+
+        try
+        {
+            Inverse97Levels(a, stride, res, kept, degree, rowScratch, colScratch, ct);
+        }
+        finally
+        {
+            if (rowScratch is not null)
+            {
+                ArrayPool<float>.Shared.Return(rowScratch);
+                ArrayPool<float>.Shared.Return(colScratch!);
+            }
+        }
+    }
+
+    private static void Inverse97Levels(float[] a, int stride, JpxResolution[] res, int kept, int degree, float[]? rowScratch, float[]? colScratch, CancellationToken ct)
+    {
         for (int r = 1; r < kept; r++)
         {
             JpxResolution cur = res[r];
@@ -63,17 +132,17 @@ internal static class JpxDwt
             int wLL = prev.Width;
             int hLL = prev.Height;
             int pe = cur.X0 & 1;
-            RunRows(h, w, degree, () => new float[w], (j, tmp) => HorizontalFloat(a.AsSpan(j * stride, w), tmp, wLL, pe));
+            RunRows(h, w, degree, rowScratch, () => new float[w], (j, tmp) => HorizontalFloat(a.AsSpan(j * stride, w), tmp, wLL, pe));
             int pv = cur.Y0 & 1;
-            RunBlocks(w, h, degree, () => new float[h * ColumnBlock], (c0, bw, tmp) => VerticalFloat(a, stride, c0, bw, h, hLL, pv, tmp));
+            RunBlocks(w, h, degree, colScratch, () => new float[h * ColumnBlock], (c0, bw, tmp) => VerticalFloat(a, stride, c0, bw, h, hLL, pv, tmp));
         }
     }
 
-    private static void RunRows<T>(int rows, int width, int degree, Func<T[]> scratch, Action<int, T[]> body)
+    private static void RunRows<T>(int rows, int width, int degree, T[]? shared, Func<T[]> scratch, Action<int, T[]> body)
     {
         if (degree <= 1 || (long)rows * width < 1 << 16)
         {
-            T[] tmp = scratch();
+            T[] tmp = shared ?? scratch();
             for (int j = 0; j < rows; j++)
             {
                 body(j, tmp);
@@ -96,12 +165,12 @@ internal static class JpxDwt
         }, _ => { });
     }
 
-    private static void RunBlocks<T>(int width, int height, int degree, Func<T[]> scratch, Action<int, int, T[]> body)
+    private static void RunBlocks<T>(int width, int height, int degree, T[]? shared, Func<T[]> scratch, Action<int, int, T[]> body)
     {
         int blocks = (width + ColumnBlock - 1) / ColumnBlock;
         if (degree <= 1 || (long)width * height < 1 << 16)
         {
-            T[] tmp = scratch();
+            T[] tmp = shared ?? scratch();
             for (int b = 0; b < blocks; b++)
             {
                 body(b * ColumnBlock, Math.Min(ColumnBlock, width - (b * ColumnBlock)), tmp);
@@ -119,6 +188,9 @@ internal static class JpxDwt
 
     // ---- reversible 5-3 ----
 
+    // The row holds the low-pass samples first, then the high-pass ones. Both lifting steps work on those two runs directly
+    // (every neighbour of a low-pass sample is a high-pass sample and the other way round), so the steps are plain loops over
+    // contiguous memory; only the final interleave is a strided copy.
     private static void HorizontalInt(Span<int> row, int[] tmp, int wLL, int pe)
     {
         int n = row.Length;
@@ -132,37 +204,77 @@ internal static class JpxDwt
             return;
         }
 
-        // Interleave: low-pass samples go to the even positions of the absolute grid.
-        for (int m = 0; m < wLL; m++)
-        {
-            tmp[pe + (2 * m)] = row[m];
-        }
+        Span<int> low = row[..wLL];
+        Span<int> high = row[wLL..];
+        Step53(low, high, pe, true);
+        Step53(high, low, 1 - pe, false);
 
+        // Interleave: low-pass samples go to the positions of even absolute index.
+        row.CopyTo(tmp);
         int po = 1 - pe;
-        for (int m = 0, nh = n - wLL; m < nh; m++)
+        for (int m = 0; m < low.Length; m++)
         {
-            tmp[po + (2 * m)] = row[wLL + m];
+            row[pe + (2 * m)] = tmp[m];
         }
 
-        Lift53(tmp, n, pe);
-        tmp.AsSpan(0, n).CopyTo(row);
+        for (int m = 0; m < high.Length; m++)
+        {
+            row[po + (2 * m)] = tmp[wLL + m];
+        }
     }
 
-    // F.3.8.1 on an interleaved signal whose first even-position sample is at index pe.
-    private static void Lift53(int[] x, int n, int pe)
+    // F.3.8.1: target[j] -= (left + right + 2) >> 2 (first step) or += (left + right) >> 1 (second), where left = src[j + off - 1] and
+    // right = src[j + off], reflected at either end of src.
+    private static void Step53(Span<int> target, ReadOnlySpan<int> src, int off, bool first)
     {
-        for (int i = pe; i < n; i += 2)
+        int len = src.Length;
+        int jlo = Math.Max(0, 1 - off);
+        int jhi = Math.Min(target.Length - 1, len - 1 - off);
+        for (int j = 0; j < Math.Min(jlo, target.Length); j++)
         {
-            int l = i > 0 ? x[i - 1] : x[i + 1];
-            int r = i + 1 < n ? x[i + 1] : x[i - 1];
-            x[i] -= (l + r + 2) >> 2;
+            Apply53(target, src, j, off, first);
         }
 
-        for (int i = 1 - pe; i < n; i += 2)
+        int c = jlo;
+        if (Vector.IsHardwareAccelerated)
         {
-            int l = i > 0 ? x[i - 1] : x[i + 1];
-            int r = i + 1 < n ? x[i + 1] : x[i - 1];
-            x[i] += (l + r) >> 1;
+            for (; c + Vector<int>.Count - 1 <= jhi; c += Vector<int>.Count)
+            {
+                var sum = new Vector<int>(src[(c + off - 1)..]) + new Vector<int>(src[(c + off)..]);
+                var x = new Vector<int>(target[c..]);
+                x = first ? x - Vector.ShiftRightArithmetic(sum + new Vector<int>(2), 2) : x + Vector.ShiftRightArithmetic(sum, 1);
+                x.CopyTo(target[c..]);
+            }
+        }
+
+        for (; c < target.Length; c++)
+        {
+            Apply53(target, src, c, off, first);
+        }
+    }
+
+    private static void Apply53(Span<int> target, ReadOnlySpan<int> src, int j, int off, bool first)
+    {
+        int left = j + off - 1;
+        int right = j + off;
+        if (left < 0)
+        {
+            left = right;
+        }
+
+        if (right >= src.Length)
+        {
+            right = left;
+        }
+
+        int sum = src[left] + src[right];
+        if (first)
+        {
+            target[j] -= (sum + 2) >> 2;
+        }
+        else
+        {
+            target[j] += sum >> 1;
         }
     }
 
@@ -192,26 +304,14 @@ internal static class JpxDwt
         {
             int li = i > 0 ? i - 1 : i + 1;
             int ri = i + 1 < h ? i + 1 : i - 1;
-            Span<int> row = tmp.AsSpan(i * bw, bw);
-            ReadOnlySpan<int> lo = tmp.AsSpan(li * bw, bw);
-            ReadOnlySpan<int> hi = tmp.AsSpan(ri * bw, bw);
-            for (int c = 0; c < row.Length; c++)
-            {
-                row[c] -= (lo[c] + hi[c] + 2) >> 2;
-            }
+            Update53(tmp.AsSpan(i * bw, bw), tmp.AsSpan(li * bw, bw), tmp.AsSpan(ri * bw, bw), true);
         }
 
         for (int i = 1 - pv; i < h; i += 2)
         {
             int li = i > 0 ? i - 1 : i + 1;
             int ri = i + 1 < h ? i + 1 : i - 1;
-            Span<int> row = tmp.AsSpan(i * bw, bw);
-            ReadOnlySpan<int> lo = tmp.AsSpan(li * bw, bw);
-            ReadOnlySpan<int> hi = tmp.AsSpan(ri * bw, bw);
-            for (int c = 0; c < row.Length; c++)
-            {
-                row[c] += (lo[c] + hi[c]) >> 1;
-            }
+            Update53(tmp.AsSpan(i * bw, bw), tmp.AsSpan(li * bw, bw), tmp.AsSpan(ri * bw, bw), false);
         }
 
         for (int i = 0; i < h; i++)
@@ -235,49 +335,73 @@ internal static class JpxDwt
             return;
         }
 
-        for (int m = 0; m < wLL; m++)
-        {
-            tmp[pe + (2 * m)] = row[m];
-        }
+        Span<float> low = row[..wLL];
+        Span<float> high = row[wLL..];
 
+        // F.3.8.2: scaling, then four lifting steps, each reading the neighbours of the other parity.
+        ScaleRow(low, K);
+        ScaleRow(high, InvK);
+        Step97(low, high, pe, Delta);
+        Step97(high, low, 1 - pe, Gamma);
+        Step97(low, high, pe, Beta);
+        Step97(high, low, 1 - pe, Alpha);
+
+        row.CopyTo(tmp);
         int po = 1 - pe;
-        for (int m = 0, nh = n - wLL; m < nh; m++)
+        for (int m = 0; m < low.Length; m++)
         {
-            tmp[po + (2 * m)] = row[wLL + m];
+            row[pe + (2 * m)] = tmp[m];
         }
 
-        Lift97(tmp, n, pe);
-        tmp.AsSpan(0, n).CopyTo(row);
+        for (int m = 0; m < high.Length; m++)
+        {
+            row[po + (2 * m)] = tmp[wLL + m];
+        }
     }
 
-    // F.3.8.2: scaling then four lifting steps, each step reading the neighbours of the other parity.
-    private static void Lift97(float[] x, int n, int pe)
+    // target[j] -= coef * (left + right), where left = src[j + off - 1] and right = src[j + off], reflected at either end of src.
+    private static void Step97(Span<float> target, ReadOnlySpan<float> src, int off, float coef)
     {
-        int po = 1 - pe;
-        for (int i = pe; i < n; i += 2)
+        int len = src.Length;
+        int jlo = Math.Max(0, 1 - off);
+        int jhi = Math.Min(target.Length - 1, len - 1 - off);
+        for (int j = 0; j < Math.Min(jlo, target.Length); j++)
         {
-            x[i] *= K;
+            Apply97(target, src, j, off, coef);
         }
 
-        for (int i = po; i < n; i += 2)
+        int c = jlo;
+        if (Vector.IsHardwareAccelerated)
         {
-            x[i] *= InvK;
+            var vc = new Vector<float>(coef);
+            for (; c + Vector<float>.Count - 1 <= jhi; c += Vector<float>.Count)
+            {
+                var sum = new Vector<float>(src[(c + off - 1)..]) + new Vector<float>(src[(c + off)..]);
+                (new Vector<float>(target[c..]) - (vc * sum)).CopyTo(target[c..]);
+            }
         }
 
-        LiftStep(x, n, pe, Delta);
-        LiftStep(x, n, po, Gamma);
-        LiftStep(x, n, pe, Beta);
-        LiftStep(x, n, po, Alpha);
+        for (; c < target.Length; c++)
+        {
+            Apply97(target, src, c, off, coef);
+        }
     }
 
-    private static void LiftStep(float[] x, int n, int start, float coef)
+    private static void Apply97(Span<float> target, ReadOnlySpan<float> src, int j, int off, float coef)
     {
-        for (int i = start; i < n; i += 2)
+        int left = j + off - 1;
+        int right = j + off;
+        if (left < 0)
         {
-            float l = i > 0 ? x[i - 1] : x[i + 1];
-            float r = i + 1 < n ? x[i + 1] : x[i - 1];
-            x[i] -= coef * (l + r);
+            left = right;
         }
+
+        if (right >= src.Length)
+        {
+            right = left;
+        }
+
+        target[j] -= coef * (src[left] + src[right]);
     }
 
     private static void VerticalFloat(float[] a, int stride, int c0, int bw, int h, int hLL, int pv, float[] tmp)
@@ -323,11 +447,73 @@ internal static class JpxDwt
         }
     }
 
+    // The vertical passes work on whole rows of a column block, so they are plain element-wise loops. The vector paths do exactly the
+    // scalar operations (one multiply or add at a time, no fused multiply-add), so the output does not depend on the vector width.
     private static void ScaleRow(Span<float> row, float k)
     {
-        for (int c = 0; c < row.Length; c++)
+        int c = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var vk = new Vector<float>(k);
+            for (; c <= row.Length - Vector<float>.Count; c += Vector<float>.Count)
+            {
+                (new Vector<float>(row[c..]) * vk).CopyTo(row[c..]);
+            }
+        }
+
+        for (; c < row.Length; c++)
         {
             row[c] *= k;
+        }
+    }
+
+    // First 5-3 lifting step (predict: x -= (lo + hi + 2) >> 2) or the second (update: x += (lo + hi) >> 1).
+    private static void Update53(Span<int> row, ReadOnlySpan<int> lo, ReadOnlySpan<int> hi, bool first)
+    {
+        int c = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            for (; c <= row.Length - Vector<int>.Count; c += Vector<int>.Count)
+            {
+                var sum = new Vector<int>(lo[c..]) + new Vector<int>(hi[c..]);
+                var x = new Vector<int>(row[c..]);
+                x = first ? x - Vector.ShiftRightArithmetic(sum + new Vector<int>(2), 2) : x + Vector.ShiftRightArithmetic(sum, 1);
+                x.CopyTo(row[c..]);
+            }
+        }
+
+        if (first)
+        {
+            for (; c < row.Length; c++)
+            {
+                row[c] -= (lo[c] + hi[c] + 2) >> 2;
+            }
+        }
+        else
+        {
+            for (; c < row.Length; c++)
+            {
+                row[c] += (lo[c] + hi[c]) >> 1;
+            }
+        }
+    }
+
+    private static void Update97(Span<float> row, ReadOnlySpan<float> lo, ReadOnlySpan<float> hi, float coef)
+    {
+        int c = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var vc = new Vector<float>(coef);
+            for (; c <= row.Length - Vector<float>.Count; c += Vector<float>.Count)
+            {
+                var sum = new Vector<float>(lo[c..]) + new Vector<float>(hi[c..]);
+                (new Vector<float>(row[c..]) - (vc * sum)).CopyTo(row[c..]);
+            }
+        }
+
+        for (; c < row.Length; c++)
+        {
+            row[c] -= coef * (lo[c] + hi[c]);
         }
     }
 
@@ -337,13 +523,7 @@ internal static class JpxDwt
         {
             int li = i > 0 ? i - 1 : i + 1;
             int ri = i + 1 < h ? i + 1 : i - 1;
-            Span<float> row = tmp.AsSpan(i * bw, bw);
-            ReadOnlySpan<float> lo = tmp.AsSpan(li * bw, bw);
-            ReadOnlySpan<float> hi = tmp.AsSpan(ri * bw, bw);
-            for (int c = 0; c < row.Length; c++)
-            {
-                row[c] -= coef * (lo[c] + hi[c]);
-            }
+            Update97(tmp.AsSpan(i * bw, bw), tmp.AsSpan(li * bw, bw), tmp.AsSpan(ri * bw, bw), coef);
         }
     }
 }

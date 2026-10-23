@@ -95,6 +95,20 @@ internal sealed class JpxDecodeOptions
 
     /// <summary>Most code-blocks or precincts one tile may declare (default 2^21).</summary>
     public int MaxCodeBlocksPerTile { get; init; } = 1 << 21;
+
+    internal JpxDecodeOptions WithDegree(int degree) => new()
+    {
+        Limits = Limits,
+        ReductionLevels = ReductionLevels,
+        Region = Region,
+        Strict = Strict,
+        ConvertSycc = ConvertSycc,
+        ApplyPalette = ApplyPalette,
+        MaxDegreeOfParallelism = degree,
+        MaxComponents = MaxComponents,
+        MaxWorkingBytes = MaxWorkingBytes,
+        MaxCodeBlocksPerTile = MaxCodeBlocksPerTile,
+    };
 }
 
 /// <summary>Header-level facts about a JPEG 2000 file, available without decoding any tile.</summary>
