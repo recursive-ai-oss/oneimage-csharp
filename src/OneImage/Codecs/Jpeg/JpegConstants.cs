@@ -150,6 +150,66 @@ internal sealed class JpegHuffmanTable
         return skip;
     }
 
+    /// <summary>Number of lookahead bits of <see cref="Look"/>.</summary>
+    public const int LookBits = 12;
+
+    private int[]? _look;
+
+    /// <summary>
+    /// Gets the lookahead table for AC decoding, indexed by the next <see cref="LookBits"/> bits. An entry resolves a whole
+    /// coefficient at once when its Huffman code and the magnitude bits that follow fit in the window: bits 0-4 are the
+    /// number of bits consumed, bits 8-11 the zero run, bit 5 marks a symbol without a coefficient (size 0: run 15 is a run of sixteen zeros,
+    /// anything else ends the block or, in progressive scans, starts an end-of-band run of that exponent), and bits 16-31 hold the sign-extended coefficient (T.81 F.2.2.1 EXTEND). 0 means the symbol is not
+    /// resolved by the window and the 9-bit table and the long-code path take over. Built on first use.
+    /// </summary>
+    public int[] Look => _look ??= BuildLook();
+
+    /// <summary>An all-zero lookahead table: every symbol takes the 9-bit table and long-code path. Used where building <see cref="Look"/> would cost more than it saves.</summary>
+    public static readonly int[] NoLook = new int[1 << LookBits];
+
+    /// <summary>Gets <see cref="Look"/> if it was built, else <see cref="NoLook"/>.</summary>
+    public int[] LookOrNone => _look ?? NoLook;
+
+    private int[] BuildLook()
+    {
+        var look = new int[1 << LookBits];
+        int k = 0;
+        for (int l = 1; l <= LookBits; l++)
+        {
+            int n = Bits[l];
+            for (int i = 0; i < n; i++, k++)
+            {
+                // Every window that starts with this code: the bits after the code are the magnitude bits.
+                int rs = Values[k];
+                int size = rs & 15;
+                int first = (MinCode[l] + i) << (LookBits - l);
+                int span = 1 << (LookBits - l);
+                if (size == 0)
+                {
+                    look.AsSpan(first, span).Fill(l | 0x20 | ((rs >> 4) << 8));
+                }
+                else if (l + size <= LookBits)
+                {
+                    int shift = LookBits - l - size;
+                    int top = 1 << (size - 1);
+                    int bias = (1 << size) - 1;
+                    for (int j = 0; j < span; j++)
+                    {
+                        int v = j >> shift;
+                        if (v < top)
+                        {
+                            v -= bias;
+                        }
+
+                        look[first + j] = (l + size) | ((rs >> 4) << 8) | (v << 16);
+                    }
+                }
+            }
+        }
+
+        return look;
+    }
+
     /// <summary>Largest code of each length, or -1.</summary>
     public readonly int[] MaxCode = new int[18];
 

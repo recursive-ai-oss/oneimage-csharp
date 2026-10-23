@@ -125,6 +125,9 @@ internal sealed class JpegScanDecoder
         ArithAcRefine,
     }
 
+    // Below this many pixels the 12-bit lookahead table (built per AC table) is not worth its construction.
+    internal static int LookMinPixels = 1 << 18;
+
     private readonly JpegReader _r;
     private readonly JpegFrame _f;
     private readonly JpegTables _t;
@@ -139,8 +142,11 @@ internal sealed class JpegScanDecoder
         _store = store;
     }
 
-    /// <summary>Gets or sets whether only DC coefficients are needed, so AC data is parsed but not stored.</summary>
-    public bool DcOnly { get; set; }
+    /// <summary>
+    /// Gets or sets, per component index, whether only the DC coefficient of that component is needed, so its AC data is
+    /// parsed but not stored. <see langword="null"/> means every component needs its AC coefficients.
+    /// </summary>
+    public bool[]? DcOnlyComponents { get; set; }
 
     /// <summary>
     /// Decodes a whole scan. <paramref name="mcuRowDone"/> is called after every MCU row (a row of blocks for
@@ -170,6 +176,12 @@ internal sealed class JpegScanDecoder
                 if (needAc)
                 {
                     acT[i] = _t.Ac[comps[i].AcTable] ?? throw new ImageFormatException("JPEG scan uses an undefined AC Huffman table.");
+                }
+
+                if (mode is Mode.Baseline or Mode.AcFirst or Mode.AcRefine && acT[i] is { } acTable && (long)_f.Width * _f.Height >= LookMinPixels && !(DcOnlyComponents is { } d && d[comps[i].Index]))
+                {
+                    // Build the lookahead table up front; for small images it costs more than it saves.
+                    _ = acTable.Look;
                 }
             }
         }
@@ -293,7 +305,7 @@ internal sealed class JpegScanDecoder
                 DecodeAcRefine(block, ac!, s.Ss, s.Se, s.Al);
                 break;
             case Mode.ArithBaseline:
-                arith!.DecodeSequential(block, c, DcOnly);
+                arith!.DecodeSequential(block, c, DcOnlyComponents is { } m1 && m1[c.Index]);
                 break;
             case Mode.ArithDcFirst:
                 arith!.DecodeDcFirst(block, c, s.Al);
@@ -311,7 +323,7 @@ internal sealed class JpegScanDecoder
     }
 
     private void DecodeBaseline(Span<short> block, JpegComponent c, JpegHuffmanTable dc, JpegHuffmanTable ac) =>
-        _r.DecodeBlockBaseline(block, ref c.DcPred, dc, ac, DcOnly);
+        _r.DecodeBlockBaseline(block, ref c.DcPred, dc, ac, DcOnlyComponents is { } m && m[c.Index]);
 
     private void DecodeDcFirst(Span<short> block, JpegComponent c, JpegHuffmanTable dc, int al)
     {
@@ -335,150 +347,9 @@ internal sealed class JpegScanDecoder
         block[0] = (short)(c.DcPred << al);
     }
 
-    private void DecodeAcFirst(Span<short> block, JpegHuffmanTable ac, int ss, int se, int al)
-    {
-        if (_eobRun > 0)
-        {
-            _eobRun--;
-            return;
-        }
+    private void DecodeAcFirst(Span<short> block, JpegHuffmanTable ac, int ss, int se, int al) =>
+        _r.DecodeAcFirst(block, ac, ss, se, al, ref _eobRun);
 
-        JpegReader r = _r;
-        ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
-        for (int k = ss; k <= se; k++)
-        {
-            if (r.BitCount < 32)
-            {
-                r.Fill();
-            }
-
-            int rs = r.DecodeHuffman(ac);
-            int s = rs & 15;
-            int run = rs >> 4;
-            if (s != 0)
-            {
-                k += run;
-                if (k > 63)
-                {
-                    throw new ImageFormatException("JPEG AC coefficient index out of range.");
-                }
-
-                block[zz[k]] = (short)(r.ReceiveExtend(s) << al);
-            }
-            else if (run == 15)
-            {
-                k += 15;
-            }
-            else
-            {
-                _eobRun = 1 << run;
-                if (run != 0)
-                {
-                    _eobRun += r.GetBits(run);
-                }
-
-                _eobRun--;
-                break;
-            }
-        }
-    }
-
-    private void DecodeAcRefine(Span<short> block, JpegHuffmanTable ac, int ss, int se, int al)
-    {
-        JpegReader r = _r;
-        ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
-        int p1 = 1 << al;
-        int m1 = -1 << al;
-        int k = ss;
-        if (_eobRun == 0)
-        {
-            for (; k <= se; k++)
-            {
-                if (r.BitCount < 32)
-                {
-                    r.Fill();
-                }
-
-                int rs = r.DecodeHuffman(ac);
-                int s = rs & 15;
-                int run = rs >> 4;
-                if (s != 0)
-                {
-                    if (s != 1)
-                    {
-                        throw new ImageFormatException("Invalid JPEG progressive refinement.");
-                    }
-
-                    s = r.GetBit() != 0 ? p1 : m1;
-                }
-                else if (run != 15)
-                {
-                    _eobRun = 1 << run;
-                    if (run != 0)
-                    {
-                        _eobRun += r.GetBits(run);
-                    }
-
-                    break;
-                }
-
-                // Skip over already-nonzero coefficients (refining them) and 'run' zero ones.
-                do
-                {
-                    ref short coef = ref block[zz[k]];
-                    if (coef != 0)
-                    {
-                        if (r.BitCount < 1)
-                        {
-                            r.Fill();
-                        }
-
-                        if (r.GetBit() != 0 && (coef & p1) == 0)
-                        {
-                            coef += (short)(coef >= 0 ? p1 : m1);
-                        }
-                    }
-                    else if (--run < 0)
-                    {
-                        break;
-                    }
-
-                    k++;
-                }
-                while (k <= se);
-
-                if (s != 0)
-                {
-                    if (k > se)
-                    {
-                        throw new ImageFormatException("JPEG AC coefficient index out of range.");
-                    }
-
-                    block[zz[k]] = (short)s;
-                }
-            }
-        }
-
-        if (_eobRun > 0)
-        {
-            for (; k <= se; k++)
-            {
-                ref short coef = ref block[zz[k]];
-                if (coef != 0)
-                {
-                    if (r.BitCount < 1)
-                    {
-                        r.Fill();
-                    }
-
-                    if (r.GetBit() != 0 && (coef & p1) == 0)
-                    {
-                        coef += (short)(coef >= 0 ? p1 : m1);
-                    }
-                }
-            }
-
-            _eobRun--;
-        }
-    }
+    private void DecodeAcRefine(Span<short> block, JpegHuffmanTable ac, int ss, int se, int al) =>
+        _r.DecodeAcRefine(block, ac, ss, se, al, ref _eobRun);
 }

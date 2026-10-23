@@ -194,6 +194,18 @@ internal sealed class JpegPipeline<T> : IDisposable
         }
     }
 
+    /// <summary>Gets, per component index, whether only that component's DC coefficient influences the output.</summary>
+    public bool[] DcOnlyComponents()
+    {
+        var r = new bool[_planes.Length];
+        foreach (Plane p in _planes)
+        {
+            r[p.Src.Index] = p.Ss == 1;
+        }
+
+        return r;
+    }
+
     public int RowsWritten => _written;
 
     private static T[] Rent(int length)

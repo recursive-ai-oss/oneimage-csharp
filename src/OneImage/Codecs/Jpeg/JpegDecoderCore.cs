@@ -33,7 +33,7 @@ internal static class JpegDecoderCore
         where T : unmanaged, System.Numerics.IBinaryInteger<T>
     {
         using var pipe = new JpegPipeline<T>(f, plan, request.ScaleDenominator, request.Region, sink);
-        bool dcOnly = pipe.DcOnly;
+        bool[] dcOnly = pipe.DcOnlyComponents();
         JpegScan scan = JpegParser.ParseSos(reader, f);
 
         // A sequential image with a single scan over all components streams MCU row by MCU row; everything else
@@ -41,16 +41,16 @@ internal static class JpegDecoderCore
         bool streaming = !f.Progressive && scan.Components.Length == f.Components.Length;
         bool overlapped = streaming && (long)f.Width * f.Height >= OverlapMinPixels && Environment.ProcessorCount > 1;
         using var store = new JpegCoefficientStore(f, streaming, reader, limits, overlapped ? 2 : 1);
-        var decoder = new JpegScanDecoder(reader, f, tables, store) { DcOnly = dcOnly };
+        var decoder = new JpegScanDecoder(reader, f, tables, store) { DcOnlyComponents = dcOnly.Contains(true) ? dcOnly : null };
         using RowHandoff? handoff = overlapped ? new RowHandoff(row => pipe.AddMcuRow(row, store)) : null;
         Func<int, bool>? onRow = handoff is not null ? handoff.Post : streaming ? row => pipe.AddMcuRow(row, store) : null;
         bool more = true;
         while (more)
         {
             LatchQuantTables(scan, tables);
-            if (f.Progressive && dcOnly && scan.Ss > 0)
+            if (f.Progressive && scan.Ss > 0 && scan.Components.Length == 1 && dcOnly[scan.Components[0].Index])
             {
-                // Only the DC image matters at 1/8 size, so skip the AC scans without decoding them.
+                // This component only contributes its DC image at the requested size, so skip its AC scans without decoding them.
                 reader.SkipEntropyData();
             }
             else

@@ -93,7 +93,7 @@ internal sealed partial class JpegReader
         }
     }
 
-    /// <summary>Appends bits so that at least 32 are available.</summary>
+    /// <summary>Appends bits so that at least 56 are available (and at most 63 are counted, so shifts by the count stay valid).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public void Fill()
     {
@@ -111,7 +111,7 @@ internal sealed partial class JpegReader
                 if (!HasFF(v))
                 {
                     _bits |= v >> _count;
-                    int n = (64 - _count) >> 3;
+                    int n = (63 - _count) >> 3;
                     _pos += n;
                     _count += n << 3;
                     return;
@@ -119,7 +119,7 @@ internal sealed partial class JpegReader
             }
         }
 
-        while (_count <= 56)
+        while (_count <= 55)
         {
             if (_marker != 0)
             {
@@ -249,15 +249,31 @@ internal sealed partial class JpegReader
 
         block[0] = (short)pred;
         int k = 1;
+        byte[] buf = _buf;
+        int pos = _pos;
+        int fastEnd = _marker == 0 ? _end - 8 : -1;
+        ulong w;
         while (k < 64)
         {
-            if (count < 32)
+            // Refill before every symbol without a branch on the bit count (a 64-bit read; the bytes it re-reads past the
+            // advance are the same data, so OR-ing them in again changes nothing). Words holding 0xFF, and the last bytes of
+            // the buffer, take the careful path.
+            if (pos <= fastEnd && !HasFF(w = BinaryPrimitives.ReadUInt64BigEndian(buf.AsSpan(pos, 8))))
+            {
+                bits |= w >> count;
+                pos += (63 - count) >> 3;
+                count |= 56;
+            }
+            else if (count < 32)
             {
                 _bits = bits;
                 _count = count;
+                _pos = pos;
                 Fill();
                 bits = _bits;
                 count = _count;
+                pos = _pos;
+                fastEnd = _marker == 0 ? _end - 8 : -1;
             }
 
             int x = skip[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
@@ -276,6 +292,26 @@ internal sealed partial class JpegReader
                 if (k > 64 && advance != 16)
                 {
                     throw new ImageFormatException("JPEG AC coefficient index out of range.");
+                }
+
+                // A second symbol from the same refill: after the first at most 24 bits are gone, and this one needs at most 24.
+                x = skip[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
+                if (x != 0 && k < 64)
+                {
+                    total = x >> 8;
+                    advance = x & 0xFF;
+                    bits <<= total;
+                    count -= total;
+                    if (advance == 64)
+                    {
+                        break;
+                    }
+
+                    k += advance;
+                    if (k > 64 && advance != 16)
+                    {
+                        throw new ImageFormatException("JPEG AC coefficient index out of range.");
+                    }
                 }
 
                 continue;
@@ -310,11 +346,14 @@ internal sealed partial class JpegReader
 
         _bits = bits;
         _count = count;
+        _pos = pos;
     }
 
     /// <summary>
     /// Decodes one sequential block (T.81 F.2.2): the DC difference and the run-length coded AC coefficients, written in
-    /// natural order. The hot loop keeps the bit buffer in locals, which is what makes the entropy stage fast.
+    /// natural order. The hot loop keeps the bit buffer in locals, which is what makes the entropy stage fast; most AC
+    /// symbols are resolved together with their magnitude bits by one lookup in the 12-bit table (see
+    /// <see cref="JpegHuffmanTable.Look"/>), the rest by the 9-bit table and the long-code search.
     /// </summary>
     /// <param name="block">64 coefficients; cleared here.</param>
     /// <param name="pred">The component's running DC value.</param>
@@ -328,16 +367,18 @@ internal sealed partial class JpegReader
             throw new ArgumentException("A block needs 64 coefficients.", nameof(block));
         }
 
-        ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
-        ushort[] dcFast = dc.Fast;
-        ushort[] acFast = ac.Fast;
         if (dcOnly)
         {
             DecodeBlockDcOnly(block, ref pred, dc, ac);
             return;
         }
 
-        block[..64].Clear();
+        ReadOnlySpan<byte> zz = JpegConstants.Zigzag;
+        ushort[] dcFast = dc.Fast;
+        ushort[] acFast = ac.Fast;
+        int[] look = ac.LookOrNone;
+        block = block[..64];
+        block.Clear();
         ulong bits = _bits;
         int count = _count;
         if (count < 32)
@@ -381,15 +422,77 @@ internal sealed partial class JpegReader
         }
 
         block[0] = (short)pred;
+        byte[] buf = _buf;
+        int pos = _pos;
+        int fastEnd = _marker == 0 ? _end - 8 : -1;
+        ulong w;
         for (int k = 1; k < 64;)
         {
-            if (count < 32)
+            // Refill before every symbol without a branch on the bit count (a 64-bit read; the bytes it re-reads past the
+            // advance are the same data, so OR-ing them in again changes nothing). Words holding 0xFF, and the last bytes of
+            // the buffer, take the careful path.
+            if (pos <= fastEnd && !HasFF(w = BinaryPrimitives.ReadUInt64BigEndian(buf.AsSpan(pos, 8))))
+            {
+                bits |= w >> count;
+                pos += (63 - count) >> 3;
+                count |= 56;
+            }
+            else if (count < 32)
             {
                 _bits = bits;
                 _count = count;
+                _pos = pos;
                 Fill();
                 bits = _bits;
                 count = _count;
+                pos = _pos;
+                fastEnd = _marker == 0 ? _end - 8 : -1;
+            }
+
+            e = look[(int)(bits >> (64 - JpegHuffmanTable.LookBits))];
+            if (e != 0)
+            {
+                int used = e & 31;
+                bits <<= used;
+                count -= used;
+                if ((e & 0x20) == 0)
+                {
+                    k += (e >> 8) & 15;
+                    if (k > 63)
+                    {
+                        throw new ImageFormatException("JPEG AC coefficient index out of range.");
+                    }
+
+                    block[zz[k] & 63] = (short)(e >> 16);
+                    k++;
+
+                    // A second plain coefficient from the same refill: at least 44 bits are left and it needs at most 12.
+                    e = look[(int)(bits >> (64 - JpegHuffmanTable.LookBits))];
+                    if ((uint)((e & 0x3F) - 1) < 31 && k < 64)
+                    {
+                        used = e & 31;
+                        bits <<= used;
+                        count -= used;
+                        k += (e >> 8) & 15;
+                        if (k > 63)
+                        {
+                            throw new ImageFormatException("JPEG AC coefficient index out of range.");
+                        }
+
+                        block[zz[k] & 63] = (short)(e >> 16);
+                        k++;
+                    }
+
+                    continue;
+                }
+
+                if ((e & 0xF00) != 0xF00)
+                {
+                    break;
+                }
+
+                k += 16;
+                continue;
             }
 
             e = acFast[(int)(bits >> (64 - JpegHuffmanTable.FastBits))];
@@ -431,16 +534,13 @@ internal sealed partial class JpegReader
             int val = (int)(bits >> (64 - s));
             bits <<= s;
             count -= s;
-            if (!dcOnly)
-            {
-                block[zz[k] & 63] = (short)(val + (((val - (1 << (s - 1))) >> 31) & ((-1 << s) + 1)));
-            }
-
+            block[zz[k] & 63] = (short)(val + (((val - (1 << (s - 1))) >> 31) & ((-1 << s) + 1)));
             k++;
         }
 
         _bits = bits;
         _count = count;
+        _pos = pos;
     }
 
     /// <summary>Reads <paramref name="n"/> (1..16) bits as an unsigned value. Needs the buffer filled.</summary>
