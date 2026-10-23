@@ -564,6 +564,17 @@ foreach (bool lossless in new[] { true, false })
         Console.Error.WriteLine("svg clip and mask smoke failed");
         return 1;
     }
+
+    byte[] filterDoc = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='20' height='20'>"
+        + "<filter id='f' x='0' y='0' width='1' height='1'><feFlood flood-color='#ff0000'/><feGaussianBlur stdDeviation='1'/><feOffset dx='2'/><feComposite in='SourceGraphic' in2='SourceGraphic' operator='over'/></filter>"
+        + "<rect x='4' y='4' width='12' height='12' fill='#0000ff' filter='url(#f)'/><rect x='0' y='0' width='3' height='3' fill='#00ff00' style='filter: grayscale(1) drop-shadow(1px 1px 0px black)'/></svg>");
+    Rgba32[] filteredPixels = Image.Load(filterDoc, new LoadOptions { Configuration = svgConfig }).Resize(width: 40).ToArray<Rgba32>();
+    if (filteredPixels[(20 * 40) + 20].A != 255 || filteredPixels[(20 * 40) + 20].B != 255 || filteredPixels[(2 * 40) + 2].A != 255 || filteredPixels[(35 * 40) + 35].A != 0)
+    {
+        Console.Error.WriteLine("svg filter smoke failed");
+        return 1;
+    }
 }
 
 // Complex scripts: Devanagari (reph, pre-base matra) and Khmer (coeng, pre-base vowel) through the Indic and USE shapers.
