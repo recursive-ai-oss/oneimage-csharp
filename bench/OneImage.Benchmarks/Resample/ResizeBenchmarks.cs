@@ -60,6 +60,7 @@ internal sealed class ResizeSources : IDisposable
 
 [MemoryDiagnoser]
 [ShortRunJob]
+[BenchmarkCategory("resize")]
 public class DownscaleBenchmarks : IDisposable
 {
     private ResizeSources _src = null!;
@@ -114,6 +115,18 @@ public class DownscaleBenchmarks : IDisposable
     public int NetVipsResize()
     {
         using VipsImage r = _src.Vips.Resize((double)TargetWidth / _src.Width, kernel: NetVips.Enums.Kernel.Lanczos3);
+        return r.WriteToMemory<byte>().Length;
+    }
+
+    // A 3x reduction is below the box pre-reduce threshold, so the whole cost is the two filter passes.
+    [Benchmark(Description = "oneimage Lanczos3 (linear), 6000 to 2000")]
+    public OneImage.Rgba32[] OursThird() =>
+        _src.Ours.Resize(width: 2000, filter: ResamplingFilter.Lanczos3).ToArray<OneImage.Rgba32>();
+
+    [Benchmark(Description = "NetVips resize Lanczos3, 6000 to 2000")]
+    public int NetVipsThird()
+    {
+        using VipsImage r = _src.Vips.Resize(2000.0 / _src.Width, kernel: NetVips.Enums.Kernel.Lanczos3);
         return r.WriteToMemory<byte>().Length;
     }
 }

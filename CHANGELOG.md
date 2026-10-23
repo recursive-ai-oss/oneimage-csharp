@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- Resize costs less CPU, with identical output: a box pre-reduce of 8-bit RGB/RGBA now converts and averages in one pass instead of writing a float row first, the horizontal pass computes four output pixels at a time and the vertical pass four vectors at a time (both hide add latency; every sum keeps its tap order). On a decoded 24 MP image at the default degree, 24 MP to 400 px takes 8.8 ms (was 11.5) and a 3x reduction 25.3 ms (was 30.0).
+
 ## [1.3.0] - 2026-10-22
 
 ### Added

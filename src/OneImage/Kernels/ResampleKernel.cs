@@ -364,6 +364,113 @@ internal static class ResampleKernel
         }
     }
 
+    /// <summary>True when <see cref="UnpackReduceRow"/> handles the layout (8-bit RGB/RGBA with straight alpha).</summary>
+    public static bool CanFuseReduce(in ResampleLayout l) =>
+        BitConverter.IsLittleEndian && l.Sample == SampleType.U8 && l.Colors == 3 && !l.PremultipliedStorage;
+
+    /// <summary>
+    /// <see cref="UnpackRow"/> followed by <see cref="ReduceRow"/> in one pass, with the same arithmetic in the same order (so the
+    /// result is bit-identical) but without the full-width float row in between. Pairs of output pixels run side by side because the
+    /// sum inside one group is a dependent chain of float adds.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static void UnpackReduceRow(ReadOnlySpan<byte> src, Span<float> dst, int width, int factor, int outputPixels, in ResampleLayout l)
+    {
+        int c = l.Channels;
+        if (!CanFuseReduce(l) || factor < 1 || src.Length < width * c || dst.Length < outputPixels * 4 || (long)outputPixels * factor < width || (long)(outputPixels - 1) * factor >= width)
+        {
+            throw new ArgumentException("Row buffers do not match the reduction.");
+        }
+
+        float[] lut = l.Linear ? SrgbTables.ToLinear8 : SrgbTables.Identity8;
+        ref byte s0 = ref MemoryMarshal.GetReference(src);
+        ref float d0 = ref MemoryMarshal.GetReference(dst);
+        ref float t = ref MemoryMarshal.GetArrayDataReference(lut);
+        int i = 0;
+        if (c == 4)
+        {
+            float inv = 1f / factor;
+            for (; ((i + 2) * factor) <= width; i += 2)
+            {
+                int a = i * factor;
+                int b = a + factor;
+                Vector128<float> accA = Px4(ref s0, ref t, a);
+                Vector128<float> accB = Px4(ref s0, ref t, b);
+                for (int j = 1; j < factor; j++)
+                {
+                    accA += Px4(ref s0, ref t, a + j);
+                    accB += Px4(ref s0, ref t, b + j);
+                }
+
+                (accA * inv).StoreUnsafe(ref d0, (nuint)(i * 4));
+                (accB * inv).StoreUnsafe(ref d0, (nuint)((i + 1) * 4));
+            }
+
+            for (; i < outputPixels; i++)
+            {
+                int first = i * factor;
+                int n = Math.Min(factor, width - first);
+                Vector128<float> acc = Px4(ref s0, ref t, first);
+                for (int j = 1; j < n; j++)
+                {
+                    acc += Px4(ref s0, ref t, first + j);
+                }
+
+                (acc * (1f / n)).StoreUnsafe(ref d0, (nuint)(i * 4));
+            }
+
+            return;
+        }
+
+        float inv3 = 1f / factor;
+        for (; ((i + 2) * factor) <= width; i += 2)
+        {
+            int a = i * factor;
+            int b = a + factor;
+            Vector128<float> accA = Px3(ref s0, ref t, a);
+            Vector128<float> accB = Px3(ref s0, ref t, b);
+            for (int j = 1; j < factor; j++)
+            {
+                accA += Px3(ref s0, ref t, a + j);
+                accB += Px3(ref s0, ref t, b + j);
+            }
+
+            (accA * inv3).StoreUnsafe(ref d0, (nuint)(i * 4));
+            (accB * inv3).StoreUnsafe(ref d0, (nuint)((i + 1) * 4));
+        }
+
+        for (; i < outputPixels; i++)
+        {
+            int first = i * factor;
+            int n = Math.Min(factor, width - first);
+            Vector128<float> acc = Px3(ref s0, ref t, first);
+            for (int j = 1; j < n; j++)
+            {
+                acc += Px3(ref s0, ref t, first + j);
+            }
+
+            (acc * (1f / n)).StoreUnsafe(ref d0, (nuint)(i * 4));
+        }
+    }
+
+    private static readonly float OpaqueAlpha = 255 * (1f / 255f);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> Px4(ref byte s, ref float t, int x)
+    {
+        uint v = Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref s, x * 4));
+        Vector128<float> px = Vector128.Create(Unsafe.Add(ref t, (int)(v & 255)), Unsafe.Add(ref t, (int)((v >> 8) & 255)), Unsafe.Add(ref t, (int)((v >> 16) & 255)), 1f);
+        // Opaque pixels (the usual case): multiplying by exactly 1 changes nothing, so skip it.
+        return (v >> 24) == 255 && OpaqueAlpha == 1f ? px : px * ((v >> 24) * (1f / 255f));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> Px3(ref byte s, ref float t, int x)
+    {
+        ref byte p = ref Unsafe.Add(ref s, x * 3);
+        return Vector128.Create(Unsafe.Add(ref t, p), Unsafe.Add(ref t, Unsafe.Add(ref p, 1)), Unsafe.Add(ref t, Unsafe.Add(ref p, 2)), 0f);
+    }
+
     /// <summary>
     /// Box-averages groups of <paramref name="factor"/> pixels: output pixel i is the mean of source pixels
     /// [i * factor, min((i + 1) * factor, sourcePixels)). The last group may be shorter and is averaged over what exists.
@@ -486,7 +593,67 @@ internal static class ResampleKernel
         ref float s0 = ref MemoryMarshal.GetReference(src);
         ref float w0 = ref MemoryMarshal.GetReference(weights);
         ref float d0 = ref MemoryMarshal.GetReference(dst);
-        for (int i = 0; i < n; i++)
+        int done = 0;
+        if (stride == 4)
+        {
+            // Four output pixels at a time: each one's sum is a dependent chain of adds, so interleaving independent chains hides the
+            // add latency. Every output still adds its own taps in ascending order.
+            for (; done + 4 <= n; done += 4)
+            {
+                int f0 = start[done] - srcFirst;
+                int f1 = start[done + 1] - srcFirst;
+                int f2 = start[done + 2] - srcFirst;
+                int f3 = start[done + 3] - srcFirst;
+                int k0 = count[done];
+                int k1 = count[done + 1];
+                int k2 = count[done + 2];
+                int k3 = count[done + 3];
+                ref float w0a = ref Unsafe.Add(ref w0, offset[done]);
+                ref float w1a = ref Unsafe.Add(ref w0, offset[done + 1]);
+                ref float w2a = ref Unsafe.Add(ref w0, offset[done + 2]);
+                ref float w3a = ref Unsafe.Add(ref w0, offset[done + 3]);
+                Vector128<float> a0 = Vector128.LoadUnsafe(ref s0, (nuint)(f0 * 4)) * w0a;
+                Vector128<float> a1 = Vector128.LoadUnsafe(ref s0, (nuint)(f1 * 4)) * w1a;
+                Vector128<float> a2 = Vector128.LoadUnsafe(ref s0, (nuint)(f2 * 4)) * w2a;
+                Vector128<float> a3 = Vector128.LoadUnsafe(ref s0, (nuint)(f3 * 4)) * w3a;
+                int common = Math.Min(Math.Min(k0, k1), Math.Min(k2, k3));
+                int t = 1;
+                for (; t < common; t++)
+                {
+                    a0 += Vector128.LoadUnsafe(ref s0, (nuint)((f0 + t) * 4)) * Unsafe.Add(ref w0a, t);
+                    a1 += Vector128.LoadUnsafe(ref s0, (nuint)((f1 + t) * 4)) * Unsafe.Add(ref w1a, t);
+                    a2 += Vector128.LoadUnsafe(ref s0, (nuint)((f2 + t) * 4)) * Unsafe.Add(ref w2a, t);
+                    a3 += Vector128.LoadUnsafe(ref s0, (nuint)((f3 + t) * 4)) * Unsafe.Add(ref w3a, t);
+                }
+
+                for (int u = t; u < k0; u++)
+                {
+                    a0 += Vector128.LoadUnsafe(ref s0, (nuint)((f0 + u) * 4)) * Unsafe.Add(ref w0a, u);
+                }
+
+                for (int u = t; u < k1; u++)
+                {
+                    a1 += Vector128.LoadUnsafe(ref s0, (nuint)((f1 + u) * 4)) * Unsafe.Add(ref w1a, u);
+                }
+
+                for (int u = t; u < k2; u++)
+                {
+                    a2 += Vector128.LoadUnsafe(ref s0, (nuint)((f2 + u) * 4)) * Unsafe.Add(ref w2a, u);
+                }
+
+                for (int u = t; u < k3; u++)
+                {
+                    a3 += Vector128.LoadUnsafe(ref s0, (nuint)((f3 + u) * 4)) * Unsafe.Add(ref w3a, u);
+                }
+
+                a0.StoreUnsafe(ref d0, (nuint)(done * 4));
+                a1.StoreUnsafe(ref d0, (nuint)((done + 1) * 4));
+                a2.StoreUnsafe(ref d0, (nuint)((done + 2) * 4));
+                a3.StoreUnsafe(ref d0, (nuint)((done + 3) * 4));
+            }
+        }
+
+        for (int i = done; i < n; i++)
         {
             int first = start[i] - srcFirst;
             int taps = count[i];
@@ -536,6 +703,32 @@ internal static class ResampleKernel
         int j = 0;
         if (Vector256.IsHardwareAccelerated)
         {
+            // Four vectors at a time: the taps of one vector are a dependent chain of adds, so independent chains hide the add latency.
+            // Each element still sums its taps in ascending order.
+            for (; j + 32 <= dst.Length; j += 32)
+            {
+                nuint at = baseIndex + (nuint)j;
+                float w = w0;
+                Vector256<float> a0 = Vector256.LoadUnsafe(ref r0, at) * w;
+                Vector256<float> a1 = Vector256.LoadUnsafe(ref r0, at + 8) * w;
+                Vector256<float> a2 = Vector256.LoadUnsafe(ref r0, at + 16) * w;
+                Vector256<float> a3 = Vector256.LoadUnsafe(ref r0, at + 24) * w;
+                for (int t = 1; t < taps; t++)
+                {
+                    at += (nuint)rowStride;
+                    w = Unsafe.Add(ref w0, t);
+                    a0 += Vector256.LoadUnsafe(ref r0, at) * w;
+                    a1 += Vector256.LoadUnsafe(ref r0, at + 8) * w;
+                    a2 += Vector256.LoadUnsafe(ref r0, at + 16) * w;
+                    a3 += Vector256.LoadUnsafe(ref r0, at + 24) * w;
+                }
+
+                a0.StoreUnsafe(ref d0, (nuint)j);
+                a1.StoreUnsafe(ref d0, (nuint)(j + 8));
+                a2.StoreUnsafe(ref d0, (nuint)(j + 16));
+                a3.StoreUnsafe(ref d0, (nuint)(j + 24));
+            }
+
             for (; j + 8 <= dst.Length; j += 8)
             {
                 Vector256<float> acc = Vector256.LoadUnsafe(ref r0, baseIndex + (nuint)j) * w0;

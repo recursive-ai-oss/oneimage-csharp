@@ -124,9 +124,18 @@ Notes:
   the one that counts. The floor is LZW decoding in safe code.
 - **Resize.** The thumbnail rows are where resize cost shows: thumb-jpeg
   is 37.5 ms against NetVips's 49.5 ms and thumb-webp 46.9 against 55.1,
-  and 2× upscale is 6.3 ms against 9.7 ms. No row isolates a downscale of
-  an already decoded image, which is where NetVips's dedicated resize
-  is ahead of ours.
+  and 2× upscale is 6.3 ms against 9.7 ms. Those rows are decode-bound (the
+  resize runs on a 1/8-size decode). A downscale of an already decoded
+  24 MP RGBA image is where NetVips's dedicated resize is ahead. Measured on
+  the worker at the default degree of 4 (AVX2, minimum of 40 runs, load 4-7;
+  base and new alternated three times): 24 MP to 400 px went from 11.5 to
+  8.8 ms, a 3× reduction (6000 to 2000) from 30.0 to 25.3 ms and a 2×
+  upscale from 5.35 to 4.85 ms. NetVips measured 6.2-7.4 ms and 17.5-18.1 ms
+  on the first two with every core, so the gap that remains is 1.2-1.5×;
+  it comes from the per-call degree, not from CPU time (a local count shows
+  NetVips using about as much CPU as we do on the first row and 2.5× as much
+  on the second). The `resize` benchmark category
+  (`--anyCategories resize`) runs these rows.
 - **png-encode.** Only the natural-content input is beyond 1.5×; the
   photo and screenshot inputs take 0.54× and 1.27× of NetVips's time.
 - **gif-decode** is 1.3 ms behind SkiaSharp on a 50-frame 500×500 file.

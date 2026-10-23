@@ -601,6 +601,42 @@ public class ResampleBehaviorTests
         }
     }
 
+    [Theory]
+    [InlineData(1, 2, true, true)]
+    [InlineData(2, 2, true, true)]
+    [InlineData(5, 3, false, true)]
+    [InlineData(31, 7, true, true)]
+    [InlineData(100, 7, true, false)]
+    [InlineData(101, 4, false, false)]
+    [InlineData(257, 15, true, true)]
+    [InlineData(300, 1, true, false)]
+    public void FusedUnpackAndReduceMatchesTheTwoStepsBitForBit(int width, int factor, bool linear, bool alpha)
+    {
+        var layout = new ResampleLayout(alpha ? PixelFormat.Rgba8 : PixelFormat.Rgb8, linear);
+        Assert.True(ResampleKernel.CanFuseReduce(layout));
+        int channels = alpha ? 4 : 3;
+        var rnd = new Random(width * 31 + factor);
+        byte[] src = new byte[width * channels];
+        rnd.NextBytes(src);
+        // Mix opaque runs with arbitrary alpha so both the shortcut and the multiply are taken.
+        for (int x = 0; alpha && x < width; x++)
+        {
+            src[(x * 4) + 3] = (x / 5) % 2 == 0 ? (byte)255 : src[(x * 4) + 3];
+        }
+
+        int outPixels = (width + factor - 1) / factor;
+        var floats = new float[width * 4];
+        ResampleKernel.UnpackRow(src, floats, width, layout);
+        var want = new float[outPixels * 4];
+        ResampleKernel.ReduceRow(floats, want, 4, factor, width, outPixels);
+        var got = new float[outPixels * 4];
+        ResampleKernel.UnpackReduceRow(src, got, width, factor, outPixels, layout);
+        for (int i = 0; i < want.Length; i++)
+        {
+            Assert.Equal(BitConverter.SingleToInt32Bits(want[i]), BitConverter.SingleToInt32Bits(got[i]));
+        }
+    }
+
     [Fact]
     public void KernelsRejectTablesThatReadOutsideTheBuffer()
     {

@@ -204,7 +204,8 @@ internal sealed class ResampleNode : Node
             if (srcY0 < srcY1)
             {
                 bytes = PooledTileStore.Instance.Rent(bandRows * srcPix * ibpp, clear: false);
-                rowF = FloatScratch.Rent(srcPix * p);
+                bool fuse = ResampleKernel.CanFuseReduce(_layout);
+                rowF = fuse && _fx > 1 ? null : FloatScratch.Rent(srcPix * p);
                 red = _fx > 1 ? FloatScratch.Rent(redCols * p) : null;
                 acc = _fy > 1 ? FloatScratch.Rent(redCols * p) : null;
                 int count = 0;
@@ -218,12 +219,22 @@ internal sealed class ResampleNode : Node
                     for (int r = 0; r < n; r++)
                     {
                         int yy = y + r;
-                        ResampleKernel.UnpackRow(bytes.AsSpan(r * srcPix * ibpp, srcPix * ibpp), rowF, srcPix, _layout);
-                        Span<float> cur = rowF.AsSpan(0, srcPix * p);
-                        if (_fx > 1)
+                        ReadOnlySpan<byte> srcRow = bytes.AsSpan(r * srcPix * ibpp, srcPix * ibpp);
+                        Span<float> cur;
+                        if (_fx > 1 && fuse)
                         {
-                            ResampleKernel.ReduceRow(cur, red!, p, _fx, srcPix, redCols);
+                            ResampleKernel.UnpackReduceRow(srcRow, red!, srcPix, _fx, redCols, _layout);
                             cur = red.AsSpan(0, redCols * p);
+                        }
+                        else
+                        {
+                            ResampleKernel.UnpackRow(srcRow, rowF!, srcPix, _layout);
+                            cur = rowF!.AsSpan(0, srcPix * p);
+                            if (_fx > 1)
+                            {
+                                ResampleKernel.ReduceRow(cur, red!, p, _fx, srcPix, redCols);
+                                cur = red.AsSpan(0, redCols * p);
+                            }
                         }
 
                         if (_fy == 1)
