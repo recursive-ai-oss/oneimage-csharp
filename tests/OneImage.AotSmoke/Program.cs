@@ -516,6 +516,19 @@ foreach (bool lossless in new[] { true, false })
         return 1;
     }
 
+    // Markers (orient, viewBox, context paint) and a blended group.
+    byte[] marked = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' width='40' height='40'>"
+        + "<marker id='m' viewBox='0 0 10 10' markerWidth='10' markerHeight='10' refX='5' refY='5' markerUnits='userSpaceOnUse' orient='auto'><rect width='10' height='10' fill='context-stroke'/></marker>"
+        + "<polyline points='5,20 20,20 35,20' fill='none' stroke='#ff0000' marker-start='url(#m)' marker-end='url(#m)'/>"
+        + "<rect x='0' y='30' width='40' height='10' fill='#808080'/><rect x='0' y='30' width='20' height='10' fill='#808080' style='mix-blend-mode:multiply'/></svg>");
+    Rgba32[] markedPixels = Image.Load(marked, new LoadOptions { Configuration = svgConfig }).Resize(width: 40).ToArray<Rgba32>();
+    if (markedPixels[(18 * 40) + 5].R != 255 || markedPixels[(18 * 40) + 5].G != 0 || markedPixels[(35 * 40) + 10].R is < 60 or > 70 || markedPixels[(35 * 40) + 30].R is < 125 or > 131)
+    {
+        Console.Error.WriteLine("svg marker smoke failed");
+        return 1;
+    }
+
     // Paint servers: a focal radial gradient with a transform, a linear gradient and a pattern tile.
     byte[] paints = System.Text.Encoding.UTF8.GetBytes(
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20' width='40' height='20'>"
