@@ -89,7 +89,15 @@ internal static class Program
         public override void DrawImage(in OnePdf.PdfImage image, in OnePdf.PdfGraphicsState state)
         {
             OnePdf.PdfImageData? d = image.GetData();
-            Console.WriteLine(d is null ? "image: null" : $"image {image.Name}: {d.Width}x{d.Height} decoded={d.IsDecoded} stencil={d.IsStencil} space={d.ColorSpace} alpha={d.Alpha?.Width}x{d.Alpha?.Height} filter={d.EncodedFilter}");
+            Console.WriteLine(d is null ? "image: null" : $"image {image.Name}: {d.Width}x{d.Height} decoded={d.IsDecoded} stencil={d.IsStencil} space={d.ColorSpace} alpha={d.Alpha?.Width}x{d.Alpha?.Height} filter={d.EncodedFilter} alphaStats={Stats(d.Alpha)} samples={d.Samples.Length}");
+        }
+
+        private static string Stats(OnePdf.PdfImageAlpha? a)
+        {
+            if (a is null) return "none";
+            var v = a.Values.Span; int mn = 255, mx = 0; long sum = 0;
+            foreach (byte b in v) { mn = Math.Min(mn, b); mx = Math.Max(mx, b); sum += b; }
+            return $"{mn}..{mx} mean {(v.Length == 0 ? 0 : sum / v.Length)} len {v.Length}";
         }
     }
 

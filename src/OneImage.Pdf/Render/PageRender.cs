@@ -82,6 +82,7 @@ internal sealed class PageRender
                         PdfAnnotationRendering.None => PdfAnnotationMode.None,
                         _ => PdfAnnotationMode.View,
                     },
+                    GenerateAppearances = _options.GenerateAppearances,
                     Scale = 1,
                 };
                 var probe = new InfoProbe(list);

@@ -61,6 +61,14 @@ public sealed class PdfRenderOptions
     public PdfAnnotationRendering Annotations { get; init; } = PdfAnnotationRendering.View;
 
     /// <summary>
+    /// Gets whether form fields and markup annotations without a usable appearance stream are drawn from an appearance OnePDF generates
+    /// (text and choice values, check marks, highlights, lines and so on), and whether a form that sets <c>/NeedAppearances true</c> has its
+    /// field appearances rebuilt, as viewers do. Default <see langword="true"/>. Has no effect when <see cref="Annotations"/> is
+    /// <see cref="PdfAnnotationRendering.None"/>.
+    /// </summary>
+    public bool GenerateAppearances { get; init; } = true;
+
+    /// <summary>
     /// Gets the color the page is drawn on. PDF pages have no background of their own; viewers show white. Use a transparent color to
     /// get the page content alone. Default opaque white.
     /// </summary>

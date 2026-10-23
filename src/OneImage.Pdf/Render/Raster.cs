@@ -226,7 +226,8 @@ internal static class Resize
                 continue;
             }
 
-            float inv = 1f / a;
+            // The sums hold color in 0..255 times alpha in 0..1, so dividing by alpha and by 255 gives the 0..1 range ToByte expects.
+            float inv = 1f / (a * 255f);
             dst[o + x] = stencil
                 ? new Rgba32(0, 0, 0, ToByte(a))
                 : new Rgba32(ToByte(acc[x * 4] * inv), ToByte(acc[(x * 4) + 1] * inv), ToByte(acc[(x * 4) + 2] * inv), ToByte(a));

@@ -24,7 +24,9 @@ def names(lines):
 def pdfium(job, outdir, dpi):
     code = (
         "import sys, pypdfium2 as p\n"
-        "pdf = p.PdfDocument(sys.argv[1], password=sys.argv[4] or None); page = pdf[0]\n"
+        "pdf = p.PdfDocument(sys.argv[1], password=sys.argv[4] or None)\n"
+        "pdf.init_forms()  # form fields draw only with a form environment, as a viewer sets one up\n"
+        "page = pdf[0]\n"
         "page.render(scale=float(sys.argv[3]) / 72, may_draw_forms=True).to_pil().convert('RGB').save(sys.argv[2])\n"
     )
     src, name, pw = job

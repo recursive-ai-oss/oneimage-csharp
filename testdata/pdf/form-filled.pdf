@@ -1,0 +1,104 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [8 0 R 10 0 R 13 0 R 14 0 R 18 0 R 19 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv 3 0 R >> >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Title (OnePdf test document) /Author (OnePdf) /Producer (hand-assembled) /CreationDate (D:20260101000000Z) >>
+endobj
+5 0 obj
+<<  /Length 87 >>
+stream
+BT /F1 14 Tf 20 TL 72 760 Td
+(Registration form.) Tj T*
+(Fill in every field.) Tj T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R  >> >> /Contents 5 0 R /Annots [8 0 R 10 0 R 13 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R] >>
+endobj
+7 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] /Resources << /Font << /Helv 3 0 R >> >> /Length 64 >>
+stream
+/Tx BMC q BT /Helv 12 Tf 0 g 2 6.0 Td (Ada Lovelace) Tj ET Q EMC
+endstream
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Ada Lovelace) /DA (/Helv 12 Tf 0 g) /Rect [72 600 272 620] /F 4 /AP << /N 7 0 R >> >>
+endobj
+9 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] /Resources << /Font << /Helv 3 0 R >> >> /Length 58 >>
+stream
+/Tx BMC q BT /Helv 12 Tf 0 g 2 6.0 Td (London) Tj ET Q EMC
+endstream
+endobj
+10 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (city) /V (London) /DA (/Helv 12 Tf 0 g) /Rect [72 570 272 590] /F 4 /AP << /N 9 0 R >> >>
+endobj
+11 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Length 22 >>
+stream
+q 0 g 2 2 10 10 re f Q
+endstream
+endobj
+12 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Length 26 >>
+stream
+q 0 G 0.5 0.5 13 13 re S Q
+endstream
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /V /Yes /AS /Yes /Rect [72 540 86 554] /F 4 /AP << /N << /Yes 11 0 R /Off 12 0 R >> >> >>
+endobj
+14 0 obj
+<< /FT /Btn /Ff 49152 /T (size) /V /Medium /Kids [15 0 R 16 0 R 17 0 R] >>
+endobj
+15 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 14 0 R /Rect [72 510 86 524] /F 4 /AS /Off /AP << /N << /Small 11 0 R /Off 12 0 R >> >> >>
+endobj
+16 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 14 0 R /Rect [112 510 126 524] /F 4 /AS /Medium /AP << /N << /Medium 11 0 R /Off 12 0 R >> >> >>
+endobj
+17 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 14 0 R /Rect [152 510 166 524] /F 4 /AS /Off /AP << /N << /Large 11 0 R /Off 12 0 R >> >> >>
+endobj
+18 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (color) /V (Green) /Opt [(Red) (Green) (Blue)] /DA (/Helv 12 Tf 0 g) /Rect [72 470 200 490] /F 4 >>
+endobj
+19 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 2097152 /T (tags) /V [(alpha) (gamma)] /Opt [(alpha) (beta) (gamma)] /DA (/Helv 12 Tf 0 g) /Rect [72 400 200 460] /F 4 >>
+endobj
+xref
+0 20
+0000000000 65535 f 
+0000000015 00000 n 
+0000000187 00000 n 
+0000000244 00000 n 
+0000000341 00000 n 
+0000000470 00000 n 
+0000000608 00000 n 
+0000000800 00000 n 
+0000001004 00000 n 
+0000001160 00000 n 
+0000001358 00000 n 
+0000001509 00000 n 
+0000001630 00000 n 
+0000001755 00000 n 
+0000001914 00000 n 
+0000002005 00000 n 
+0000002153 00000 n 
+0000002307 00000 n 
+0000002457 00000 n 
+0000002628 00000 n 
+trailer
+<< /Size 20 /Root 1 0 R /Info 4 0 R /ID [<4f6e65506466546573744f6e6550646620> <4f6e65506466546573744f6e6550646620>]  >>
+startxref
+2811
+%%EOF
