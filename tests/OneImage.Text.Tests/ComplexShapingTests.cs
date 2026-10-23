@@ -216,12 +216,21 @@ public class ComplexShapingTests
         string text = string.Concat(Enumerable.Repeat(unit, repeat));
         var (collection, face) = ComplexScriptReferenceTests.Load(Deva);
         var o = new TextOptions(collection.First().CreateFont(face.UnitsPerEm));
+
+        // Linearity is checked against a quarter-size run rather than a fixed wall-clock bound, so a slow or
+        // busy machine does not fail the test: quadratic behavior would make the full run about 16 times slower,
+        // linear about 4 times. The absolute cap only catches a hang.
+        string quarter = string.Concat(Enumerable.Repeat(unit, repeat / 4));
         var sw = Stopwatch.StartNew();
+        TextLayout.Create(quarter, o);
+        TimeSpan small = sw.Elapsed;
+        sw.Restart();
         TextLayout layout = TextLayout.Create(text, o);
         sw.Stop();
-        TestReport.Line($"COMPLEX LIMITS {text.Length} chars of U+{(int)unit[0]:X4}...: {sw.ElapsedMilliseconds} ms, {layout.Glyphs.Count} glyphs");
+        TestReport.Line($"COMPLEX LIMITS {text.Length} chars of U+{(int)unit[0]:X4}...: {sw.ElapsedMilliseconds} ms (quarter {small.TotalMilliseconds:F0} ms), {layout.Glyphs.Count} glyphs");
         Assert.True(layout.Glyphs.Count <= (2 * text.Length) + 16, $"{layout.Glyphs.Count} glyphs");
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(20), $"took {sw.Elapsed}");
+        Assert.True(sw.Elapsed < (8 * small) + TimeSpan.FromSeconds(1), $"took {sw.Elapsed}, quarter size took {small}");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(60), $"took {sw.Elapsed}");
     }
 
     [Theory]
