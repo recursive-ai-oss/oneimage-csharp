@@ -136,6 +136,21 @@ Notes:
   On a local run of the same two builds (another job was running) the read went from 188 to
   160 ms at one thread and from 61 to 51 ms at four. The gap to NetVips is
   still about 2×; the floor is LZW decoding in safe code.
+  **Direct whole-frame read.** A whole-frame read of a TIFF of 1 Mpixel or more
+  (`CopyPixelsTo`, `ToArray`) no longer goes through 128×128 tiles: strips and
+  tiles are handed out one at a time to the call's threads, each decoded into
+  pooled memory and converted row by row straight into its own part of the
+  caller's buffer, so the pixels are copied once instead of three times (block,
+  band, tile, caller). Output is byte-identical (hash-compared over the test
+  corpora at degrees 1, 4 and 16, with AVX2 and all intrinsics off). Same worker
+  (Ryzen 9 7950X3D, 32 logical cores, .NET 10.0.13, AVX-512 off), before and
+  after, one run each, other jobs on the host raised the load to 4-5 during the
+  "after" run: the gate row 49.9 → 46.9 ms and allocation 965 → 92 KB; with the
+  per-call degree raised to 8 42.7 → 32.0 ms, and to all cores 46.9 → 27.1 ms
+  (NetVips 26.3 ms on all cores). At the default degree the 10 strips of a page
+  still need three rounds, so the LZW decode, not the copy, sets the time.
+  Reads under 1 Mpixel, region reads and frames whose strip is over 16 MiB of
+  raw samples keep the tile path, which caches blocks for later reads.
 - **Resize.** The thumbnail rows are where resize cost shows: thumb-jpeg
   is 37.5 ms against NetVips's 49.5 ms and thumb-webp 46.9 against 55.1,
   and 2× upscale is 6.3 ms against 9.7 ms. Those rows are decode-bound (the
@@ -345,6 +360,29 @@ on a shared machine with other jobs running (load 4-12 during the runs).
 - A cold flatten allocates 0.25 MB. The raw figures and the method (the
   benchmark is in `bench/OneImage.Benchmarks`) are in
   [layers.md](layers.md#measured).
+
+## Whole-frame copy-out
+
+Copying a computed 24 MP image (6000×4000, tiles in memory) into a caller's buffer, `CopyPixelsTo`, same worker as above (AVX-512 off, load 1-3 from
+other jobs, `CoreHotPathBenchmarks`):
+
+| Row | 1 thread | default (4) | 8 threads |
+|---|--:|--:|--:|
+| Rgba32 from tiles (96 MB) | 9.3 ms | 6.1 ms | 5.7 ms |
+| Rgb24 from tiles (72 MB) | 7.5 ms | 4.4 ms | 4.2 ms |
+| Same 96 MB as plain contiguous copies on the same threads (floor) | 5.0 ms | 3.1 ms | 2.9 ms |
+| ImageSharp `CopyPixelDataTo` Rgba32 (single-threaded) | 6.1 ms | | |
+
+The copy scales with threads and sits at 1.9× the contiguous floor at every
+degree. The gap is the layout, not the engine: a tile row is 512 bytes of
+Rgba32, so a frame is 192,000 separate 512-byte copies into rows 24 KB apart. A
+stand-alone test of that loop (no engine) takes 10-11 ms against 6 ms for one
+contiguous copy, and walking the destination in row-major order or in bands of
+8 or 32 rows, or copying rows with 256-bit loads and stores, moved it by less
+than 10%. Writing whole tiles to contiguous memory is not an option for a caller
+buffer in row-major order. The extra copies that could be removed were in
+decoders, and TIFF (above) was the one left; PNG, GIF, WebP and BMP already decode
+straight into the caller's buffer on a whole-frame read.
 
 ## AVX-512 (information)
 

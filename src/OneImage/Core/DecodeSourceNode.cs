@@ -27,6 +27,17 @@ internal interface ICheapTileDecoder
 {
 }
 
+/// <summary>A random-access decoder that can fill a caller's whole-frame buffer in one parallel pass, without going through tiles.</summary>
+internal interface IDirectFrameDecoder
+{
+    /// <summary>
+    /// Decodes the whole frame straight into <paramref name="destination"/> (tightly packed rows in <paramref name="destinationFormat"/>, converted with
+    /// <paramref name="converter"/> when it is not the frame format), using up to <paramref name="degree"/> threads. Returns false, touching nothing,
+    /// when this frame is better read through tiles (small frames keep their blocks cached for later reads).
+    /// </summary>
+    bool TryDecodeInto(Func<Stream> openSource, ImageInfo info, int frameIndex, PinnedDestination destination, PixelFormat destinationFormat, ConvertRowKernel? converter, int degree, ImageLimits limits, CancellationToken cancellationToken);
+}
+
 /// <summary>Decoder state that holds reusable scratch (decoded blocks) which a finished one-shot read can give back.</summary>
 internal interface IReleasableDecoderState
 {
@@ -186,7 +197,12 @@ internal sealed class DecodeSourceNode : Node
     /// </summary>
     public bool TryDecodeInto(Span<byte> destination, PixelFormat destinationFormat, IRowStage? stage, int degree, CancellationToken cancellationToken)
     {
-        if (_randomAccess || Volatile.Read(ref _grid) != null)
+        if (_randomAccess)
+        {
+            return stage == null && TryDecodeRandomAccessInto(destination, destinationFormat, degree, cancellationToken);
+        }
+
+        if (Volatile.Read(ref _grid) != null)
         {
             return false;
         }
@@ -217,6 +233,22 @@ internal sealed class DecodeSourceNode : Node
             CheckComplete(sink.RowsWritten, Height);
         });
         return true;
+    }
+
+    /// <summary>A whole-frame read of a random-access decoder that can fill the buffer itself: blocks decode in parallel and convert straight into it.</summary>
+    private bool TryDecodeRandomAccessInto(Span<byte> destination, PixelFormat destinationFormat, int degree, CancellationToken cancellationToken)
+    {
+        if (_session.Decoder is not IDirectFrameDecoder direct || !IsFull || _scale != 1 || _targetWidth != 0
+            || destination.Length < (long)Width * Height * destinationFormat.BytesPerPixel)
+        {
+            return false;
+        }
+
+        ConvertRowKernel? converter = destinationFormat != Format ? KernelRegistry.Get<ConvertRowKernel>("convert") : null;
+        bool done = false;
+        PinnedDestination.Run(destination, 0, (pinned, _) =>
+            done = direct.TryDecodeInto(_session.Source.Open, _session.Info, _frame, pinned, destinationFormat, converter, degree, _session.Limits, cancellationToken));
+        return done;
     }
 
     protected override Tile ComputeTile(int tx, int ty, RenderContext context)

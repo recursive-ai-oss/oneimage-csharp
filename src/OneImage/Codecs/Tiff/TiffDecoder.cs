@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using OneImage.Kernels;
 
 namespace OneImage.Codecs.Tiff;
@@ -32,7 +33,7 @@ internal sealed class TiffImageState : IReleasableDecoderState
 /// TIFF decoder. Strips and tiles are addressed through the offset tables, so a region read touches only the blocks that
 /// intersect it and the decoder advertises random access. See <see cref="TiffFormat"/> for the supported feature set.
 /// </summary>
-internal sealed class TiffDecoder : IImageDecoder
+internal sealed class TiffDecoder : IImageDecoder, IDirectFrameDecoder
 {
     // Offset tables, palettes and JPEG tables of all pages stay in memory; many pages pointing at the same big table must not multiply it.
     private const long MaxRetainedBytes = 128L << 20;
@@ -229,6 +230,137 @@ internal sealed class TiffDecoder : IImageDecoder
         {
             ArrayPool<byte>.Shared.Return(band);
         }
+    }
+
+    /// <summary>Block rows (all planes) up to this many raw bytes per worker are decoded into the caller's buffer without the tile cache.</summary>
+    private const long MaxDirectUnitBytes = 16L << 20;
+
+    /// <inheritdoc />
+    public bool TryDecodeInto(Func<Stream> openSource, ImageInfo info, int frameIndex, PinnedDestination destination, PixelFormat destinationFormat, ConvertRowKernel? converter, int degree, ImageLimits limits, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(openSource);
+        ArgumentNullException.ThrowIfNull(info);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(limits);
+        if (info.DecoderState is not TiffImageState state || (uint)frameIndex >= (uint)state.Frames.Length)
+        {
+            return false;
+        }
+
+        TiffFrame f = state.Frames[frameIndex];
+        if ((long)f.Width * f.Height < DirectReadPixels || f.BlockRowBytes * f.BlockHeight * f.Planes > MaxDirectUnitBytes)
+        {
+            return false;
+        }
+
+        int bpp = f.Format.BytesPerPixel;
+        int dbpp = destinationFormat.BytesPerPixel;
+        int rowBytes = (int)f.BlockRowBytes;
+        int units = f.BlocksAcross * f.BlocksDown;
+        var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, degree), CancellationToken = cancellationToken };
+
+        // Each unit is one strip or tile (all of its planes): decoded into pooled memory, converted row by row into its own disjoint
+        // rectangle of the destination, and returned. The bytes written never depend on scheduling.
+        void Unit(int u, TiffFile file)
+        {
+            int by = u / f.BlocksAcross;
+            int bx = u % f.BlocksAcross;
+            int blockTop = by * f.BlockHeight;
+            int blockLeft = bx * f.BlockWidth;
+            int rows = Math.Min(f.BlockHeight, f.Height - blockTop);
+            int x1 = Math.Min(f.Width, blockLeft + f.BlockWidth);
+            int count = x1 - blockLeft;
+            var blocks = new byte[]?[f.Planes];
+            byte[]? scratch = converter == null ? null : ArrayPool<byte>.Shared.Rent(count * bpp);
+            try
+            {
+                for (int plane = 0; plane < f.Planes; plane++)
+                {
+                    blocks[plane] = DecodeDirect(state, file, f, (plane * f.BlocksPerPlane) + u, limits, cancellationToken);
+                }
+
+                for (int row = 0; row < rows; row++)
+                {
+                    Span<byte> target = converter == null
+                        ? destination.Slice((((blockTop + row) * f.Width) + blockLeft) * dbpp, count * dbpp)
+                        : scratch.AsSpan(0, count * bpp);
+                    for (int plane = 0; plane < f.Planes; plane++)
+                    {
+                        f.Converter.ConvertRow(blocks[plane].AsSpan(row * rowBytes, rowBytes), plane, 0, count, target);
+                    }
+
+                    if (f.UnpremultiplyOnRead)
+                    {
+                        if (f.Format.Sample == SampleType.U16)
+                        {
+                            TiffKernels.Unpremultiply16(target, f.Format.ChannelCount);
+                        }
+                        else
+                        {
+                            TiffKernels.Unpremultiply8(target, f.Format.ChannelCount);
+                        }
+                    }
+
+                    if (converter != null)
+                    {
+                        converter(target, f.Format, destination.Slice((((blockTop + row) * f.Width) + blockLeft) * dbpp, count * dbpp), destinationFormat, count);
+                    }
+                }
+            }
+            finally
+            {
+                ReleaseHeld(blocks);
+                if (scratch != null)
+                {
+                    ArrayPool<byte>.Shared.Return(scratch);
+                }
+            }
+        }
+
+        try
+        {
+            if (options.MaxDegreeOfParallelism == 1 || units == 1)
+            {
+                using Stream stream = openSource();
+                TiffFile file = state.File.Rebind(stream);
+                for (int u = 0; u < units; u++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Unit(u, file);
+                }
+            }
+            else
+            {
+                // Every worker reads through its own stream, opened once and kept for all the blocks it takes. Blocks are handed out one
+                // at a time: a page has only a handful of strips, and range chunking would leave some workers with twice the work of others.
+                Parallel.ForEach(
+                    Partitioner.Create(0, units, 1),
+                    options,
+                    () =>
+                    {
+                        Stream stream = openSource();
+                        return (stream, file: state.File.Rebind(stream));
+                    },
+                    (range, _, local) =>
+                    {
+                        for (int u = range.Item1; u < range.Item2; u++)
+                        {
+                            Unit(u, local.file);
+                        }
+
+                        return local;
+                    },
+                    local => local.stream.Dispose());
+            }
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
+        {
+            // Surface the real error (format, limit, cancellation) rather than the wrapper.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+            throw;
+        }
+
+        return true;
     }
 
     private static void ReleaseHeld(byte[]?[] held)

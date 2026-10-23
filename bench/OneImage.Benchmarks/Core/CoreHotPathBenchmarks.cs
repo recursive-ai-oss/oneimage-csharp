@@ -15,10 +15,13 @@ public class CoreHotPathBenchmarks : IDisposable
     private Sources _src = null!;
     private OneImage.Rgba32[] _rgba = [];
     private OneImage.Rgb24[] _rgb = [];
+    private OneImage.Rgba32[] _rgbaCopy = [];
     private byte[] _rowSrc = [];
     private byte[] _rowDst = [];
     private Image _asRgb = null!;
     private Image _small = null!;
+    private Image _rgbImage = null!;
+    private SixLabors.ImageSharp.PixelFormats.Rgba32[] _sharpOut = [];
 
     [GlobalSetup]
     public void Setup()
@@ -26,6 +29,9 @@ public class CoreHotPathBenchmarks : IDisposable
         _src = new Sources(6000, 4000);
         _rgba = new OneImage.Rgba32[6000 * 4000];
         _rgb = new OneImage.Rgb24[6000 * 4000];
+        _rgbaCopy = new OneImage.Rgba32[6000 * 4000];
+        _rgbImage = Image.FromPixels<OneImage.Rgb24>(new OneImage.Rgb24[6000 * 4000], 6000, 4000);
+        _sharpOut = new SixLabors.ImageSharp.PixelFormats.Rgba32[6000 * 4000];
         _small = Image.FromPixels<OneImage.Rgba32>(new OneImage.Rgba32[2000 * 1500], 2000, 1500);
         _asRgb = _src.Ours.ConvertTo(PixelFormat.Rgb8);
         _rowSrc = new byte[6000 * 4];
@@ -49,6 +55,32 @@ public class CoreHotPathBenchmarks : IDisposable
     {
         _src.Ours.CopyPixelsTo<OneImage.Rgba32>(_rgba, new ImageRect(0, 0, 6000, 4000), Degree);
         return _rgba.Length;
+    }
+
+    [Benchmark(Description = "copy out 6000x4000 Rgb24 to caller buffer")]
+    public int CopyOutRgb24()
+    {
+        _rgbImage.CopyPixelsTo<OneImage.Rgb24>(_rgb, new ImageRect(0, 0, 6000, 4000), Degree);
+        return _rgb.Length;
+    }
+
+    // The bandwidth floor for the copy-out above: the same 96 MB moved by plain contiguous copies on the same number of threads.
+    [Benchmark(Description = "floor: contiguous 96 MB memcpy on Degree threads")]
+    public int MemcpyFloor()
+    {
+        int threads = Degree == 0 ? Math.Min(4, Environment.ProcessorCount) : Degree;
+        int chunks = 64;
+        int per = _rgba.Length / chunks;
+        System.Threading.Tasks.Parallel.For(0, chunks, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = threads }, c =>
+            _rgbaCopy.AsSpan(c * per, per).CopyTo(_rgba.AsSpan(c * per, per)));
+        return _rgba.Length;
+    }
+
+    [Benchmark(Description = "ImageSharp CopyPixelDataTo 6000x4000 Rgba32 (single-threaded)")]
+    public int ImageSharpCopyOut()
+    {
+        _src.Sharp.CopyPixelDataTo(_sharpOut);
+        return _sharpOut.Length;
     }
 
     [Benchmark(Description = "copy out region 512x512 Rgba32")]
