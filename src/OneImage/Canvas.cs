@@ -27,6 +27,7 @@ public sealed partial class Canvas : IDisposable
 {
     private TileGrid _grid;
     private object _token = new();
+    private ITileStore? _store;
     private bool _disposed;
     private List<WeakReference<TileGrid>>? _retired;
 
@@ -48,6 +49,34 @@ public sealed partial class Canvas : IDisposable
     internal Canvas(Node backing)
     {
         _grid = new TileGrid(backing.Width, backing.Height, backing.Format, backing);
+    }
+
+    /// <summary>A canvas whose tiles come from <paramref name="store"/> (a document's spilling store), optionally reading through to <paramref name="backing"/> until written.</summary>
+    internal Canvas(int width, int height, PixelFormat format, ITileStore? store, Node? backing = null)
+    {
+        _grid = new TileGrid(width, height, format, backing);
+        _store = store;
+    }
+
+    /// <summary>
+    /// Takes an O(1) snapshot of the tile table (the next write copies it) and returns it for comparison with an earlier one.
+    /// With a spilling store the tiles become immutable here, so the store may move them to disk.
+    /// </summary>
+    internal TileGrid SnapshotGrid()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _grid.Shared = true;
+        _token = new object();
+        TileGrid grid = _grid;
+        if (_store is SpillTileStore)
+        {
+            foreach (Tile? t in grid.Tiles)
+            {
+                t?.Seal();
+            }
+        }
+
+        return grid;
     }
 
     /// <summary>Gets the width in pixels.</summary>
@@ -331,14 +360,14 @@ public sealed partial class Canvas : IDisposable
         if (t != null)
         {
             // The new table's own reference on the old tile is dropped below; snapshots keep theirs.
-            fresh = willOverwriteAll ? Tile.Rent(t.Length, clear: false) : t.CopyForWrite(_token);
+            fresh = willOverwriteAll ? Tile.Rent(t.Length, clear: false, _store) : t.CopyForWrite(_token, _store);
         }
         else if (_grid.Backing != null && !willOverwriteAll)
         {
             Tile src = _grid.Backing.GetTile(tx, ty, RenderContext.Create(1, CancellationToken.None));
             try
             {
-                fresh = src.CopyForWrite(_token);
+                fresh = src.CopyForWrite(_token, _store);
             }
             finally
             {
@@ -347,7 +376,7 @@ public sealed partial class Canvas : IDisposable
         }
         else
         {
-            fresh = Tile.Rent(Tile.ByteSize(Format), clear: !willOverwriteAll);
+            fresh = Tile.Rent(Tile.ByteSize(Format), clear: !willOverwriteAll, _store);
         }
 
         fresh.Owner = _token;
@@ -356,7 +385,7 @@ public sealed partial class Canvas : IDisposable
         return fresh;
     }
 
-    private void WriteBytes(ImageRect rect, ReadOnlySpan<byte> source, PixelFormat sourceFormat)
+    internal void WriteBytes(ImageRect rect, ReadOnlySpan<byte> source, PixelFormat sourceFormat)
     {
         if (rect.IsEmpty)
         {

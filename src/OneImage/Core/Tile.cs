@@ -8,7 +8,7 @@ namespace OneImage;
 /// reference goes. A tile is mutated only by the canvas that owns it (see <see cref="Owner"/>); everything shared is immutable.
 /// Pixels outside the image in edge tiles are undefined.
 /// </summary>
-internal sealed class Tile
+internal sealed partial class Tile
 {
     public const int Size = 128;
     public const int Shift = 7;
@@ -19,7 +19,7 @@ internal sealed class Tile
     private static long s_copied;
 
     private readonly ITileStore? _store;
-    private byte[] _buffer;
+    private byte[]? _buffer;
     private int _refs;
 
     private Tile(byte[] buffer, int length, ITileStore? store, int refs)
@@ -45,13 +45,25 @@ internal sealed class Tile
     public int Length { get; }
 
     /// <summary>Gets the tile's bytes. Every read and write of tile memory goes through here, so a store that spills tiles can make them resident at this point.</summary>
-    public Span<byte> Span => _buffer.AsSpan(0, Length);
+    public Span<byte> Span => _spill == null ? _buffer!.AsSpan(0, Length) : SpillSpan();
 
     public static int ByteSize(PixelFormat format) => Size * Size * format.BytesPerPixel;
 
-    public static Tile Rent(int length, bool clear)
+    /// <summary>Rents a tile from <paramref name="store"/>, or from the process-wide store when it is null.</summary>
+    public static Tile Rent(int length, bool clear, ITileStore? store)
     {
-        ITileStore store = TileStores.Current;
+        if (store is SpillTileStore spill)
+        {
+            return RentSpilling(length, clear, spill);
+        }
+
+        return store == null ? Rent(length, clear) : Create(length, clear, store);
+    }
+
+    public static Tile Rent(int length, bool clear) => Create(length, clear, TileStores.Current);
+
+    private static Tile Create(int length, bool clear, ITileStore store)
+    {
         byte[] buf = store.Rent(length, clear);
         Interlocked.Increment(ref s_rented);
         return new Tile(buf, length, store, refs: 1);
@@ -61,9 +73,9 @@ internal sealed class Tile
     public static Tile Zero(PixelFormat format) =>
         s_zero.GetOrAdd(format, static f => new Tile(new byte[ByteSize(f)], ByteSize(f), store: null, refs: 1 << 30));
 
-    public Tile CopyForWrite(object owner)
+    public Tile CopyForWrite(object owner, ITileStore? store = null)
     {
-        Tile t = Rent(Length, clear: false);
+        Tile t = Rent(Length, clear: false, store);
         Span.CopyTo(t.Span);
         t.Owner = owner;
         Interlocked.Increment(ref s_copied);
@@ -98,10 +110,16 @@ internal sealed class Tile
     {
         if (Interlocked.Decrement(ref _refs) == 0 && _store != null)
         {
-            byte[] buf = _buffer;
+            Interlocked.Increment(ref s_returned);
+            if (_spill != null)
+            {
+                _spill.Store.OnDead(this);
+                return;
+            }
+
+            byte[] buf = _buffer!;
             _buffer = [];
             _store.Return(buf);
-            Interlocked.Increment(ref s_returned);
         }
     }
 }

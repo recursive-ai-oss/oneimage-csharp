@@ -130,6 +130,11 @@ public static class Program
             return 0;
         }
 
+        if (args.Length > 0 && args[0] == "layers")
+        {
+            return Layers.LayerScenarios.Run(args);
+        }
+
         if (args.Length > 0 && args[0] == "svg-hash")
         {
             return SvgHash.Run();

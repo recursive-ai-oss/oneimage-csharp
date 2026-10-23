@@ -4,8 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `OneImage.Layers`: a layered document that renders on demand. `Document` holds pixel layers (a `Canvas` at an offset), pass-through and isolated groups, fill layers (solid or gradient brush) and adjustment layers (`Adjustment.Levels`, `Curves`, `HueSaturation`, `ColorMatrix`, ...), each with visibility, opacity, fill opacity, any `BlendMode`, a raster mask (density, feather, outside value), clipping to the layer below and lock flags. `Document.Render()` is a lazy `Image`; a stack of layers renders to exactly the bytes of the equivalent chain of `Composite` calls. `Snapshot()` takes O(layers) and finds the tiles that changed by comparing canvas tile tables, so a re-render after an edit recomputes only the dirty tiles. Layers and documents have serializable descriptions with language-neutral names. See [docs/layers.md](docs/layers.md).
+- `DocumentOptions.Spill`: an opt-in disk-spill tile store for a document. Cold tiles move to a temporary file (unlinked on Unix, delete-on-close on Windows) under a byte budget and come back on demand.
+
 ### Changed
 
+- `Image.Composite` of 8-bit RGBA onto 8-bit RGBA with the Normal blend mode and source-over runs a vector kernel; the output is bit-identical to the previous float path and it costs about a fifth of the CPU time.
 - Resize costs less CPU, with identical output: a box pre-reduce of 8-bit RGB/RGBA now converts and averages in one pass instead of writing a float row first, the horizontal pass computes four output pixels at a time and the vertical pass four vectors at a time (both hide add latency; every sum keeps its tap order). On a decoded 24 MP image at the default degree, 24 MP to 400 px takes 8.8 ms (was 11.5) and a 3x reduction 25.3 ms (was 30.0).
 - `RecursiveAI.OneImage.Svg`: filter speed. Gaussian blur and the 8-bit/float/linear-light conversions of filters run on AVX kernels with scalar references and byte-identical output (a 1024 px blur of 400 shapes 10.7 ms against 33.5, a 4096 px blur 156 ms against 491, a drop shadow 17.8 ms against 44.1); the blur works in place without a second buffer, skips empty lines and runs in parallel bands.
 

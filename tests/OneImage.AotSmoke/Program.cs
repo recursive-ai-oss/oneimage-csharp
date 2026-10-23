@@ -781,5 +781,46 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Layers: a small document with a spill store, groups, a mask, a clipped layer and an adjustment.
+{
+    string spillDir = Path.Combine(Path.GetTempPath(), "oneimage-aot-spill-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        using var doc = new OneImage.Layers.Document(300, 200, new OneImage.Layers.DocumentOptions
+        {
+            Background = new Rgba32(255, 255, 255, 255),
+            Spill = new OneImage.Layers.SpillOptions { BudgetBytes = 64 * 1024, Directory = spillDir },
+        });
+        OneImage.Layers.PixelLayer baseLayer = doc.Add(doc.CreatePixelLayer("base", 200, 150, 20, 10));
+        baseLayer.Pixels.Clear(new Rgba32(200, 30, 30, 255));
+        baseLayer.Flush();
+        OneImage.Layers.LayerMask mask = baseLayer.AddMask(revealAll: false);
+        mask.Pixels.Fill(new Rgba32(255, 255, 255, 255), OneImage.Drawing.Path.Rectangle(0, 0, 100, 150), antialias: false);
+        mask.Feather = 3;
+        OneImage.Layers.GroupLayer group = doc.Add(doc.CreateGroup("group", passThrough: false));
+        OneImage.Layers.PixelLayer clipped = group.Add(doc.CreatePixelLayer("clipped", 300, 200));
+        clipped.Pixels.Clear(new Rgba32(30, 200, 30, 255));
+        clipped.BlendMode = BlendMode.Multiply;
+        clipped.ClipToBelow = true;
+        group.Opacity = 0.8f;
+        doc.Add(doc.CreateAdjustmentLayer("levels", OneImage.Layers.Adjustment.Levels(inBlack: 0.1, inWhite: 0.9)));
+        doc.Add(doc.CreateFillLayer("tint", new Rgba32(0, 0, 255, 255))).Opacity = 0.1f;
+        Rgba32[] layered = doc.Render().ToArray<Rgba32>();
+        string description = doc.Describe().Children.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (layered.Length != 300 * 200 || layered[0].A != 255 || description != "4" || doc.SpillStatistics is null)
+        {
+            Console.Error.WriteLine("layers smoke failed");
+            return 1;
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(spillDir))
+        {
+            Directory.Delete(spillDir, true);
+        }
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

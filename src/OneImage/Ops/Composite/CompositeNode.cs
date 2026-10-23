@@ -18,6 +18,11 @@ internal sealed class CompositeNode : Node
     private readonly AlphaComposition _composition;
     private readonly PixelFormat _work;
 
+    /// <summary>Gets a value indicating whether this node is a throwaway used for one tile (by the layer renderer): its tile skips the shared cache.</summary>
+    public bool Ephemeral { get; init; }
+
+    public override bool Cacheable => !Ephemeral;
+
     public CompositeNode(Node baseNode, Node overlay, int x, int y, float opacity, BlendMode blend = BlendMode.Normal, AlphaComposition composition = AlphaComposition.SrcOver)
         : base(
             baseNode.Width,
@@ -87,7 +92,16 @@ internal sealed class CompositeNode : Node
             int row0 = (need.Y + _y) - o.Y;
             bool fast = bf == PixelFormat.Rgb8 && of == PixelFormat.Rgba8 && _blend == BlendMode.Normal && _composition == AlphaComposition.SrcOver;
             uint fixedOpacity = CompositeKernel.OpacityFixed(_opacity);
-            if (fast)
+            bool fastRgba = bf == PixelFormat.Rgba8 && of == PixelFormat.Rgba8 && _blend == BlendMode.Normal && _composition == AlphaComposition.SrcOver;
+            if (fastRgba)
+            {
+                for (int r = 0; r < need.Height; r++)
+                {
+                    int at = ((row0 + r) * tileStride) + (col * bbpp);
+                    CompositeKernel.OverRgba8(back.Span.Slice(at, need.Width * bbpp), scratch.AsSpan(r * ostride, ostride), result.Span.Slice(at, need.Width * bbpp), need.Width, _opacity);
+                }
+            }
+            else if (fast)
             {
                 for (int r = 0; r < need.Height; r++)
                 {

@@ -184,7 +184,7 @@ public sealed partial class Canvas
                         if (exclusive)
                         {
                             int idx = (ty * _grid.TilesX) + tx;
-                            Tile fresh = Tile.Rent(Tile.ByteSize(Format), clear: false);
+                            Tile fresh = Tile.Rent(Tile.ByteSize(Format), clear: false, _store);
                             fresh.Owner = _token;
                             replaced.Add((idx, _grid.Tiles[idx]));
                             _grid.Tiles[idx] = fresh;
