@@ -32,6 +32,14 @@ internal static class Program
             return 0;
         }
 
+        if (args.Length >= 2 && args[0] == "glyphs")
+        {
+            // The outline of the first glyphs of the first text run on page 1, as OnePDF hands them to the device.
+            using var doc = OnePdf.PdfDocument.Open(File.ReadAllBytes(args[1]));
+            OnePdf.PdfPageInterpretExtensions.Interpret(doc.Pages[0], new GlyphProbe(), new OnePdf.PdfInterpretOptions { GlyphOutlines = true });
+            return 0;
+        }
+
         if (args.Length >= 2 && args[0] == "images")
         {
             // What the image decoders make of each image on page 1: size, color space, decoded or not.
@@ -82,6 +90,60 @@ internal static class Program
 
         Console.Error.WriteLine("usage: render <in.pdf> <out.png> [dpi] [page] | dump <in.pdf> [password] | batch <list.txt> <outdir> [dpi] [timeoutSeconds]");
         return 2;
+    }
+
+    private sealed class GlyphProbe : OnePdf.PdfDevice
+    {
+        private int _runs;
+
+        public override void ShowGlyphRun(in OnePdf.PdfGlyphRun run, in OnePdf.PdfGraphicsState state)
+        {
+            if (_runs++ != int.Parse(Environment.GetEnvironmentVariable("GLYPH_RUN") ?? "0", CultureInfo.InvariantCulture))
+            {
+                return;
+            }
+
+            // Both fill rules of the first glyph, 400 px square, next to each other.
+            {
+                OnePdf.PdfPath o = run.Glyphs.Span[0].Outline;
+                var b = new OneImage.Drawing.PathBuilder();
+                var vs = o.VerbBytes.Span;
+                var ps = o.Points.Span;
+                int q = 0;
+                for (int k = 0; k < vs.Length; k++)
+                {
+                    switch (vs[k])
+                    {
+                        case 0: b.MoveTo((float)(ps[q] * 360 + 20), (float)(380 - ps[q + 1] * 360)); q += 2; break;
+                        case 1: b.LineTo((float)(ps[q] * 360 + 20), (float)(380 - ps[q + 1] * 360)); q += 2; break;
+                        case 2: b.CubicBezierTo((float)(ps[q] * 360 + 20), (float)(380 - ps[q + 1] * 360), (float)(ps[q + 2] * 360 + 20), (float)(380 - ps[q + 3] * 360), (float)(ps[q + 4] * 360 + 20), (float)(380 - ps[q + 5] * 360)); q += 6; break;
+                        default: b.Close(); break;
+                    }
+                }
+
+                OneImage.Drawing.Path path = b.Build();
+                using var canvas = new Canvas(820, 400, PixelFormat.Rgba8);
+                canvas.Clear(new Rgba32(255, 255, 255, 255));
+                canvas.Fill(new Rgba32(0, 0, 0, 255), path, true, OneImage.Drawing.IntersectionRule.NonZero);
+                canvas.Fill(new Rgba32(0, 0, 0, 255), path, true, OneImage.Drawing.IntersectionRule.EvenOdd, 1f, BlendMode.Normal, AlphaComposition.SrcOver, false, System.Numerics.Matrix3x2.CreateTranslation(420, 0));
+                canvas.Snapshot().Save("glyph.png");
+            }
+
+            for (int i = 0; i < Math.Min(4, run.Glyphs.Length); i++)
+            {
+                OnePdf.PdfGlyph g = run.Glyphs.Span[i];
+                Console.WriteLine($"glyph {i} id={g.GlyphId} u={g.Unicode} w={g.Width} verbs={g.Outline.VerbBytes.Length} points={g.Outline.Points.Length / 2}");
+                var v = g.Outline.VerbBytes.Span;
+                var pts = g.Outline.Points.Span;
+                int p = 0;
+                for (int k = 0; k < v.Length; k++)
+                {
+                    int n = v[k] switch { 0 => 2, 1 => 2, 2 => 6, _ => 0 };
+                    Console.WriteLine("  " + v[k] + " " + string.Join(' ', pts.Slice(p, Math.Min(n, pts.Length - p)).ToArray().Select(x => x.ToString("0.###", CultureInfo.InvariantCulture))));
+                    p += n;
+                }
+            }
+        }
     }
 
     private sealed class ImageProbe : OnePdf.PdfDevice

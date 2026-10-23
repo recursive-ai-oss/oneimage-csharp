@@ -39,6 +39,10 @@ internal sealed partial class CanvasDevice
             return;
         }
 
+        // A picture enlarged to at least twice its size keeps its pixels square unless it asks for interpolation (/Interpolate true): the
+        // reference viewers do, and smoothing would blur a pixel-art picture or a barcode. A smaller enlargement is sampled bilinearly.
+        bool magnified = devW >= 2 * raster.Width && devH >= 2 * raster.Height && !data.Interpolate;
+
         // Picture pixel (column, row) to the unit square: x = column / width, and row 0 is the top, at y = 1.
         var toUnit = new PdfMatrix(1.0 / raster.Width, 0, 0, -1.0 / raster.Height, 0, 1);
         PdfMatrix placement = toUnit.Then(m);
@@ -52,7 +56,7 @@ internal sealed partial class CanvasDevice
             else if (state.FillColor.Space.Kind == PdfColorSpaceKind.Pattern)
             {
                 // A stencil painted with a pattern: the pattern's own paint is used through the coverage.
-                PaintStencilWithPattern(raster, placement, m, state);
+                PaintStencilWithPattern(raster, placement, m, state, magnified);
                 return;
             }
             else
@@ -67,7 +71,7 @@ internal sealed partial class CanvasDevice
             return;
         }
 
-        var brush = new PixelBrush(raster, placement, nearest: false, stencil);
+        var brush = new PixelBrush(raster, placement, nearest: magnified, stencil);
         PaintBrush(brush, quad, IntersectionRule.NonZero, state.FillAlpha, state);
     }
 
@@ -76,7 +80,7 @@ internal sealed partial class CanvasDevice
         new double[] { 0, 0, 1, 0, 1, 1, 0, 1 });
 
     /// <summary>Paints a pattern through a stencil's coverage: the pattern is drawn into a layer, and the layer is masked by the stencil.</summary>
-    private void PaintStencilWithPattern(Raster stencil, in PdfMatrix placement, in PdfMatrix m, in PdfGraphicsState state)
+    private void PaintStencilWithPattern(Raster stencil, in PdfMatrix placement, in PdfMatrix m, in PdfGraphicsState state, bool nearest)
     {
         DrawingPath? quad = PathConvert.ToPath(UnitSquare, m);
         Brush? paint = MakeBrush(state.FillColor);
@@ -88,7 +92,7 @@ internal sealed partial class CanvasDevice
         using var patternLayer = new Canvas(_w, _h, PixelFormat.Rgba8);
         patternLayer.Fill(paint, quad, true, IntersectionRule.NonZero, 1f, BlendMode.Normal, AlphaComposition.SrcOver, false, null, _clip.Path, _clip.Rule);
         using var coverage = new Canvas(_w, _h, PixelFormat.Rgba8);
-        var cover = new PixelBrush(stencil, placement, nearest: false, new Rgba32(255, 255, 255, 255));
+        var cover = new PixelBrush(stencil, placement, nearest: nearest, new Rgba32(255, 255, 255, 255));
         coverage.Fill(cover, quad, true, IntersectionRule.NonZero, 1f, BlendMode.Normal, AlphaComposition.SrcOver);
         Image masked = patternLayer.View().ApplyMask(coverage.View(), MaskChannel.Alpha);
         var brush = new ImageBrush(masked, null, 0, 0, null, tile: false, pooled: true);
