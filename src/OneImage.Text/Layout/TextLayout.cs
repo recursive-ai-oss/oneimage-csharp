@@ -75,6 +75,9 @@ internal sealed class TextPart
     /// <summary>Whether a null brush or pen means the one given to the drawing call.</summary>
     public bool InheritBrush;
     public bool InheritPen;
+
+    /// <summary>A COLR version 1 glyph painted from its paint graph; <see cref="Path"/> is then empty.</summary>
+    public ColorGlyph? Glyph;
 }
 
 /// <summary>One line of the result: a range of glyphs plus the text range it came from.</summary>
@@ -1551,6 +1554,7 @@ internal sealed class TextLayout
         var layerOrder = new List<(int Layer, bool Foreground, PaintKey Paint, uint Color, int Seq)>();
         var builders = new Dictionary<PaintKey, PathBuilder>();
         var order = new List<PaintKey>();
+        var paintGraphs = new List<TextPart>();
 
         PathBuilder For(PaintKey key)
         {
@@ -1578,6 +1582,17 @@ internal sealed class TextLayout
                 }
 
                 GlyphStyle st = Styles[g.Style];
+                if (colorPalette >= 0 && st.Face.Color is { HasPaintGraphs: true } graphs && graphs.GetProgram(g.GlyphId) is { } program)
+                {
+                    // A COLR version 1 glyph: painted from its graph; the plain outline stands in if that cannot be done.
+                    Matrix3x2 gm = GlyphMatrix(l, k, st, route);
+                    var fb = new PathBuilder();
+                    GlyphPaths.Append(fb, st.Face.GetOutline(g.GlyphId), gm);
+                    PaintKey gk = FillKey(st);
+                    paintGraphs.Add(new TextPart { Path = Path.Empty, Brush = gk.Brush, Pen = null, InheritBrush = true, InheritPen = false, Glyph = new ColorGlyph(st.Face, g.GlyphId, program, gm, colorPalette, fb.Build()) });
+                    continue;
+                }
+
                 if (colorPalette >= 0 && st.Face.Color is { } colors && colors.TryGetLayers(g.GlyphId, out int firstLayer, out int layerCount))
                 {
                     Matrix3x2 m = GlyphMatrix(l, k, st, route);
@@ -1666,6 +1681,7 @@ internal sealed class TextLayout
             }
         }
 
+        parts.AddRange(paintGraphs);
         return parts;
     }
 

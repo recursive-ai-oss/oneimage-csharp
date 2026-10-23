@@ -25,6 +25,9 @@
     <!-- ImageSharp.Drawing brings SixLabors.Fonts: both are black-box references for layout, measurement and rendering. -->
     <PackageReference Include="SixLabors.ImageSharp" />
     <PackageReference Include="SixLabors.ImageSharp.Drawing" />
+    <!-- Skia draws COLR version 1 glyphs: the black-box oracle for the paint graph renders (Linux only). -->
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
   </ItemGroup>
 
   <ItemGroup>

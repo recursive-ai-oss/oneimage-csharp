@@ -5,7 +5,7 @@ namespace OneImage.Text.Fonts;
 /// glyphs painted bottom to top, each with a palette entry or the foreground color. Version 1 paint graphs are not read: a glyph
 /// that only has one draws as its plain outline. Damaged tables are ignored (the font then has no color glyphs), like damaged layout tables.
 /// </summary>
-internal sealed class ColorGlyphs
+internal sealed partial class ColorGlyphs
 {
     /// <summary>Palette index meaning "use the text color" (CPAL/COLR specification).</summary>
     public const int ForegroundIndex = 0xFFFF;
@@ -31,6 +31,8 @@ internal sealed class ColorGlyphs
         _layerOffset = Offset(Be.U32(c, 8), 4L * Be.U16(c, 12), c.Length);
         _layerCount = Be.U16(c, 12);
 
+        ReadGraphHeader(c);
+
         ReadOnlySpan<byte> p = cpal.Span;
         _paletteEntries = Be.U16(p, 2);
         _paletteCount = Be.U16(p, 4);
@@ -51,6 +53,9 @@ internal sealed class ColorGlyphs
         }
     }
 
+    /// <summary>Whether the table is version 1 and has a base glyph list of paint graphs.</summary>
+    public bool HasPaintGraphs => _paintGraphCount > 0;
+
     /// <summary>Number of palettes in <c>CPAL</c>; at least 1.</summary>
     public int PaletteCount => _paletteCount;
 
@@ -70,7 +75,7 @@ internal sealed class ColorGlyphs
             }
 
             var g = new ColorGlyphs(colr, cpal);
-            return g._baseCount == 0 ? null : g;
+            return g._baseCount == 0 && !g.HasPaintGraphs ? null : g;
         }
         catch (FontFormatException)
         {

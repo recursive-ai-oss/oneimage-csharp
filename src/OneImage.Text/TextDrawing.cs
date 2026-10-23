@@ -42,6 +42,21 @@ public static class TextDrawing
         foreach (TextPart part in parts)
         {
             Brush? b = part.Brush ?? (part.InheritBrush ? brush : null);
+            if (part.Glyph is { } colorGlyph)
+            {
+                // COLR version 1: the glyph's own paint graph, or its plain outline when the graph cannot be painted.
+                if (ColrPainter.TryCreateFill(colorGlyph, b, out Brush gb, out Path ga))
+                {
+                    result = result.Fill(gb, ga, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+                else if (b is not null)
+                {
+                    result = result.Fill(b, colorGlyph.Fallback, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+
+                continue;
+            }
+
             if (b is not null)
             {
                 result = result.Fill(b, part.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
@@ -96,6 +111,20 @@ public static class TextDrawing
         foreach (TextPart part in parts)
         {
             Brush? b = part.Brush ?? (part.InheritBrush ? brush : null);
+            if (part.Glyph is { } colorGlyph)
+            {
+                if (ColrPainter.TryCreateFill(colorGlyph, b, out Brush gb, out Path ga))
+                {
+                    canvas.Fill(gb, ga, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+                else if (b is not null)
+                {
+                    canvas.Fill(b, colorGlyph.Fallback, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
+                }
+
+                continue;
+            }
+
             if (b is not null)
             {
                 canvas.Fill(b, part.Path, antialias, IntersectionRule.NonZero, opacity, blend, composition, linear);
