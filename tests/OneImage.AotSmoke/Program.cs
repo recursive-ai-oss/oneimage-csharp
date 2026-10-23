@@ -748,5 +748,38 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// SVG: the separate package registered through the public format API; style sheets, gradients, patterns, masks, filters, text and the limits.
+{
+    var svgFonts = new OneImage.Svg.SvgFontOptions { UseSystemFonts = false };
+    svgFonts.AddFont(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSans-Subset-Regular.ttf"));
+    var svgConfig = new ImageConfiguration().Add(new OneImage.Svg.SvgFormat(fonts: svgFonts));
+    var svgLoad = new LoadOptions { Configuration = svgConfig };
+    const string Doc = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' font-family='Noto Sans'><style>.a{fill:url(#g)}</style>" +
+        "<defs><linearGradient id='g'><stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>" +
+        "<pattern id='p' width='4' height='4' patternUnits='userSpaceOnUse'><rect width='2' height='2' fill='green'/></pattern>" +
+        "<mask id='m'><rect width='20' height='40' fill='white'/></mask><filter id='f'><feGaussianBlur stdDeviation='1'/></filter></defs>" +
+        "<rect class='a' width='40' height='20' mask='url(#m)'/><rect y='20' width='40' height='10' fill='url(#p)' filter='url(#f)'/>" +
+        "<text x='2' y='38' font-size='10'>Hi</text></svg>";
+    byte[] svgBytes = System.Text.Encoding.UTF8.GetBytes(Doc);
+    Rgba32[] svgPixels = Image.Load(svgBytes, svgLoad).Resize(width: 80).ToArray<Rgba32>();
+    ImageInfo svgInfo = Image.Identify(svgBytes, svgLoad);
+    bool refused = false;
+    try
+    {
+        var tight = new ImageConfiguration().Add(new OneImage.Svg.SvgFormat(new OneImage.Svg.SvgLimits { MaxElements = 3 }));
+        Image.Load(svgBytes, new LoadOptions { Configuration = tight }).ToArray<Rgba32>();
+    }
+    catch (ImageLimitException)
+    {
+        refused = true;
+    }
+
+    if (svgInfo.Width != 40 || svgPixels.Length != 80 * 80 || svgPixels[(5 * 80) + 5].A == 0 || !refused)
+    {
+        Console.Error.WriteLine("svg smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;

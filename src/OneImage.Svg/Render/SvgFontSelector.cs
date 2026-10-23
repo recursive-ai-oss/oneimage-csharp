@@ -263,7 +263,9 @@ internal sealed class SvgFontSelector
                 _sized.Clear();
             }
 
-            _sized[key] = f = proto.WithSize((float)size);
+            // A size too large or small for a float ("1e300") would be infinity or zero in the font, which refuses it: keep it in a range
+            // where the glyphs are still finite numbers.
+            _sized[key] = f = proto.WithSize((float)Math.Clamp(size, 1e-4, 1e6));
         }
 
         return f;

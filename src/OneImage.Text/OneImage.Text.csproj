@@ -44,4 +44,14 @@
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
+  <!-- The package uses internals of the projects it references (InternalsVisibleTo), so it only works with the exact version it was built
+       against: the packed dependencies are [version], not the default "version or later". -->
+  <Target Name="RequireExactProjectReferenceVersions" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)">
+        <ProjectVersion>[%(ProjectVersion)]</ProjectVersion>
+      </_ProjectReferencesWithVersions>
+    </ItemGroup>
+  </Target>
+
 </Project>

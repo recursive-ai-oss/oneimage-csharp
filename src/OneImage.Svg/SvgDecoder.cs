@@ -54,8 +54,18 @@ internal sealed class SvgDecoder : IImageDecoder
     public ImageInfo ReadInfo(Stream source, ImageLimits limits)
     {
         SvgLimits svg = _format.Limits;
-        byte[] head = SvgSource.Read(source, svg, limits, svg.MaxRootTagScanBytes, out _);
-        XmlElement root = XmlParser.ParseRootStart(head, svg);
+        byte[] head = SvgSource.Read(source, svg, limits, svg.MaxRootTagScanBytes, out bool truncated);
+        XmlElement root;
+        try
+        {
+            root = XmlParser.ParseRootStart(head, svg);
+        }
+        catch (ImageFormatException) when (truncated)
+        {
+            // The start tag did not end inside the scan window (a huge comment or attribute before it): that is the window, not bad XML.
+            throw new ImageLimitException($"The root element's start tag is not complete within the first {svg.MaxRootTagScanBytes} bytes.");
+        }
+
         if (root.LocalName != "svg" || root.Namespace != SvgSize.SvgNamespace)
         {
             throw new ImageFormatException("The root element is not an SVG element.");

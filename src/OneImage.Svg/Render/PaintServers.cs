@@ -175,6 +175,8 @@ internal sealed class RPatternPaint : RPaint
 
     public required SvgLimits Limits { get; init; }
 
+    private const double MaxTileSide = 16384;
+
     public override Brush? CreateBrush(Affine dev)
     {
         double tx = X, ty = Y, tw = Width, th = Height;
@@ -231,8 +233,10 @@ internal sealed class RPatternPaint : RPaint
         // Each level of nesting gets half the pixels of the one outside it, so nested tiles stay within about twice the limit.
         double budget = Limits.MaxPatternTilePixels / (double)(1L << Math.Min(s_depth, 20));
         double w = Math.Ceiling(fw - 1e-4), h = Math.Ceiling(fh - 1e-4);
-        w = Math.Max(w, 1);
-        h = Math.Max(h, 1);
+        // A very long thin tile (a pattern skewed by 90 degrees scales one axis by 10^16) is cheap in pixels but costs a render pass per 128-row
+        // band, so each side is also kept to a fixed length; the tile is then drawn coarser along that axis.
+        w = Math.Clamp(w, 1, MaxTileSide);
+        h = Math.Clamp(h, 1, MaxTileSide);
         double scaleX = sx, scaleY = sy;
         if (w * h > budget)
         {

@@ -104,6 +104,9 @@ errors appear, how sources are held, limits and threading.
   strokes, brushes, boolean operations, clipping) is in the core package;
   [OneImage.Text](docs/text.md) adds fonts, OpenType shaping, line
   breaking, rich text and color glyphs.
+- **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
+  registers SVG and `.svgz` as an image format that is drawn at the size you
+  ask for; it depends on the core package and OneImage.Text.
 - **Choosing a library:** [how OneImage compares](docs/comparison.md),
   including where the others win.
 - **Evidence:** [benchmark tables](docs/performance.md#results-at-a-glance)

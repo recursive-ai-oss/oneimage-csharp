@@ -31,7 +31,7 @@ public sealed class SvgLimits
     /// <summary>Gets how many namespace declarations may be in scope at once. Default 256.</summary>
     public int MaxNamespaceBindings { get; init; } = 256;
 
-    /// <summary>Gets how many bytes of a file are examined to find the root element's start tag when only the size is wanted. Default 1 MiB.</summary>
+    /// <summary>Gets how many bytes of a file are examined to find the root element's start tag when only the size is wanted. A start tag that does not end inside the window fails with <see cref="ImageLimitException"/>. Default 1 MiB.</summary>
     public int MaxRootTagScanBytes { get; init; } = 1024 * 1024;
 
     /// <summary>
@@ -51,6 +51,13 @@ public sealed class SvgLimits
     /// rendered at a coarser resolution (nested patterns get half of their parent's share each), not refused. Default 16 megapixels.
     /// </summary>
     public int MaxPatternTilePixels { get; init; } = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// Gets how many path segments (moves, lines, curves and arcs, and the points of <c>polyline</c> and <c>polygon</c>) all the shapes of one
+    /// document may hold together, nested images included. A document past this fails with <see cref="ImageLimitException"/> while the path data
+    /// is read. Default 4,000,000.
+    /// </summary>
+    public int MaxPathSegments { get; init; } = 4_000_000;
 
     /// <summary>Gets the largest total size in characters of all <c>&lt;style&gt;</c> elements and <c>style</c> attributes together. Default 2 MiB.</summary>
     public int MaxCssBytes { get; init; } = 2 * 1024 * 1024;

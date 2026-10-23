@@ -98,6 +98,7 @@ internal sealed partial class SceneBuilder
         public int Instances;
         public long ImageBytes;
         public long TextChars;
+        public PathData.PathBudget? Paths;
     }
 
     private static readonly string[] DefaultLanguages = ["en"];
@@ -141,7 +142,7 @@ internal sealed partial class SceneBuilder
     /// <param name="languages">The languages <c>systemLanguage</c> is matched against; <c>en</c> when <see langword="null"/>.</param>
     /// <param name="fonts">The fonts text is drawn with; installed fonts only when <see langword="null"/>.</param>
     public static SvgScene Build(SvgDocument doc, SvgLimits limits, CancellationToken cancel, ImageLimits? imageLimits = null, IReadOnlyList<string>? languages = null, SvgFontOptions? fonts = null) =>
-        new SceneBuilder(doc, limits, imageLimits ?? ImageLimits.Default, languages ?? DefaultLanguages, 0, new Budget(), new SvgFontSelector(fonts), cancel).BuildRoot();
+        new SceneBuilder(doc, limits, imageLimits ?? ImageLimits.Default, languages ?? DefaultLanguages, 0, new Budget { Paths = new PathData.PathBudget(limits.MaxPathSegments) }, new SvgFontSelector(fonts), cancel).BuildRoot();
 
     private SvgScene BuildRoot()
     {
@@ -1118,7 +1119,7 @@ internal sealed partial class SceneBuilder
                 Path? parsed = null;
                 if (d is not null)
                 {
-                    PathData.Parse(d, out Path p, out dotted);
+                    PathData.Parse(d, out Path p, out dotted, null, _budget.Paths);
                     parsed = p;
                 }
 
@@ -1167,6 +1168,8 @@ internal sealed partial class SceneBuilder
                 {
                     return null;
                 }
+
+                _budget.Paths?.Spend(count);
 
                 var pb = new PathBuilder();
                 pb.MoveTo(Coord.F(n[0]), Coord.F(n[1]));

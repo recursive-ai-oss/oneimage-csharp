@@ -21,9 +21,9 @@ internal static class PathData
     public static bool Parse(ReadOnlySpan<char> data, out Path path, out Path? dotted) => Parse(data, out path, out dotted, null);
 
     /// <summary>As the other overload, and records the segments into <paramref name="markers"/> (when given) for marker placement.</summary>
-    public static bool Parse(ReadOnlySpan<char> data, out Path path, out Path? dotted, MarkerPath? markers)
+    public static bool Parse(ReadOnlySpan<char> data, out Path path, out Path? dotted, MarkerPath? markers, PathBudget? budget = null)
     {
-        var b = new Dual(markers);
+        var b = new Dual(markers, budget);
         int i = 0;
         char cmd = '\0';
         bool first = true;
@@ -208,8 +208,25 @@ internal static class PathData
     }
 
     // Builds the path and, beside it, the variant in which zero-length open subpaths are closed.
+    /// <summary>How many more path segments a document may spend; shared by every path parsed for it.</summary>
+    internal sealed class PathBudget(long segments)
+    {
+        private long _left = segments;
+        private readonly long _total = segments;
+
+        /// <summary>Spends <paramref name="count"/> segments, failing with <see cref="ImageLimitException"/> once the budget is gone.</summary>
+        public void Spend(long count)
+        {
+            if ((_left -= count) < 0)
+            {
+                throw new ImageLimitException($"The SVG has more than {_total} path segments.");
+            }
+        }
+    }
+
     private sealed class Dual
     {
+        private readonly PathBudget? _budget;
         private readonly PathBuilder _main = new();
         private readonly PathBuilder _dotted = new();
         private readonly MarkerPath? _rec;
@@ -219,10 +236,15 @@ internal static class PathData
         private float _sx;
         private float _sy;
 
-        public Dual(MarkerPath? rec) => _rec = rec;
+        public Dual(MarkerPath? rec, PathBudget? budget)
+        {
+            _rec = rec;
+            _budget = budget;
+        }
 
         public void MoveTo(float x, float y)
         {
+            _budget?.Spend(1);
             _rec?.MoveTo(x, y);
             Flush();
             _main.MoveTo(x, y);
@@ -235,6 +257,7 @@ internal static class PathData
 
         public void LineTo(float x, float y)
         {
+            _budget?.Spend(1);
             _rec?.LineTo(x, y);
             _main.LineTo(x, y);
             _dotted.LineTo(x, y);
@@ -243,6 +266,7 @@ internal static class PathData
 
         public void QuadraticBezierTo(float cx, float cy, float x, float y)
         {
+            _budget?.Spend(1);
             _rec?.QuadTo(cx, cy, x, y);
             _main.QuadraticBezierTo(cx, cy, x, y);
             _dotted.QuadraticBezierTo(cx, cy, x, y);
@@ -252,6 +276,7 @@ internal static class PathData
 
         public void CubicBezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
         {
+            _budget?.Spend(1);
             _rec?.CubicTo(c1x, c1y, c2x, c2y, x, y);
             _main.CubicBezierTo(c1x, c1y, c2x, c2y, x, y);
             _dotted.CubicBezierTo(c1x, c1y, c2x, c2y, x, y);
@@ -262,6 +287,7 @@ internal static class PathData
 
         public void ArcTo(float rx, float ry, float rotation, bool large, bool sweep, float x, float y)
         {
+            _budget?.Spend(1);
             _rec?.ArcTo(rx, ry, rotation, large, sweep, x, y);
             _main.ArcTo(rx, ry, rotation, large, sweep, x, y);
             _dotted.ArcTo(rx, ry, rotation, large, sweep, x, y);

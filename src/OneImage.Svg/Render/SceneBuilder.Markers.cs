@@ -269,7 +269,7 @@ internal sealed partial class SceneBuilder
             case "path":
                 if (e.Attr("d") is { } d)
                 {
-                    PathData.Parse(d, out _, out _, rec);
+                    PathData.Parse(d, out _, out _, rec, _budget.Paths);
                 }
 
                 break;
