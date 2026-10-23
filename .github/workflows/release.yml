@@ -111,6 +111,11 @@ jobs:
           dotnet pack src/OneImage.Text -c Release --no-build -o "$RUNNER_TEMP/packages"
           dotnet pack src/OneImage.Svg -c Release --no-build -o "$RUNNER_TEMP/packages"
           dotnet pack src/OneImage.Psd -c Release --no-build -o "$RUNNER_TEMP/packages"
+          # The PDF package ships from 1.6 on; earlier tags leave it out.
+          case "${GITHUB_REF_NAME#v}" in
+            1.[0-5].*) ;;
+            *) dotnet pack src/OneImage.Pdf -c Release --no-build -o "$RUNNER_TEMP/packages" ;;
+          esac
           ls -l "$RUNNER_TEMP/packages"
 
       - name: Attest build provenance

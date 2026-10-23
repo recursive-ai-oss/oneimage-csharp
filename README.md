@@ -109,6 +109,7 @@ errors appear, how sources are held, limits and threading.
   demand with incremental re-rendering, and an optional disk-spill store) is in
   the core package.
 - **Photoshop files:** [OneImage.Psd](docs/psd.md) (`RecursiveAI.OneImage.Psd`)
+- **PDF pages:** [OneImage.Pdf](docs/pdf.md) (`RecursiveAI.OneImage.Pdf`, not released yet)
   reads PSD and PSB as an image format (the merged composite) and loads the
   layer tree into a [layers](docs/layers.md) document, edits and writes it
   back. Photoshop's posterize, curves and brightness/contrast formulas are

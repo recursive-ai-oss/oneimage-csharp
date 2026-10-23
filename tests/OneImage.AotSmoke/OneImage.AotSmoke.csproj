@@ -14,6 +14,7 @@
     <ProjectReference Include="../../src/OneImage.Text/OneImage.Text.csproj" />
     <ProjectReference Include="../../src/OneImage.Svg/OneImage.Svg.csproj" />
     <ProjectReference Include="../../src/OneImage.Psd/OneImage.Psd.csproj" />
+    <ProjectReference Include="../../src/OneImage.Pdf/OneImage.Pdf.csproj" />
   </ItemGroup>
 
   <ItemGroup>

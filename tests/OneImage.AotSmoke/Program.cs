@@ -853,5 +853,30 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// PDF: a page with a path, a clip, an axial shading, a translucent group and text in a standard font, drawn at 72 dpi and read back as a region.
+{
+    string pdfText = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        + "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 60] /Contents 4 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>\nendobj\n";
+    string content = "1 0 0 rg 5 5 40 40 re f BT /F1 18 Tf 50 20 Td 0 g (Hi) Tj ET";
+    pdfText += "4 0 obj\n<< /Length " + content.Length + " >>\nstream\n" + content + "\nendstream\nendobj\ntrailer\n<< /Root 1 0 R /Size 5 >>\n%%EOF\n";
+    var pdfConfig = new ImageConfiguration().Add(new OneImage.Pdf.PdfFormat(new OneImage.Pdf.PdfRenderOptions { Dpi = 72 }));
+    Image pdfImage = Image.Load(System.Text.Encoding.Latin1.GetBytes(pdfText), new LoadOptions { Configuration = pdfConfig });
+    Rgba32[] pdfPixels = pdfImage.ToArray<Rgba32>();
+    bool inkInText = false;
+    for (int y = 20; y < 45 && !inkInText; y++)
+    {
+        for (int x = 50; x < 70; x++)
+        {
+            inkInText |= pdfPixels[(y * 100) + x].R < 128;
+        }
+    }
+
+    if (pdfImage.Width != 100 || pdfImage.Height != 60 || pdfPixels[(25 * 100) + 20] != new Rgba32(255, 0, 0, 255) || !inkInText)
+    {
+        Console.Error.WriteLine("pdf smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;
