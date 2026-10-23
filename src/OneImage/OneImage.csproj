@@ -43,6 +43,7 @@
     <InternalsVisibleTo Include="$(LibName).Fuzz" />
     <InternalsVisibleTo Include="$(LibName).Text" />
     <InternalsVisibleTo Include="$(LibName).Psd" />
+    <InternalsVisibleTo Include="$(LibName).Pdf" />
   </ItemGroup>
 
   <ItemGroup>
