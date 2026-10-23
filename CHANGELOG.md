@@ -16,6 +16,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `OneImage.Layers`: an edit of a layer's pixels now also recomputes the tiles that an inner effect (inner shadow, inner glow, inside stroke) draws from the edited shape, not only the ones outer effects reach. The pixels were correct after a fresh render; an incremental render could leave a stale tile next to the edit.
 - `RecursiveAI.OneImage.Psd`: an effect contour with a point that is not a number, or two points a hair apart that become one float, is skipped and counted in `EffectsNotDrawn` instead of throwing an argument exception (found by fuzzing).
 
+### Changed
+
+- Progressive JPEG decoding is much faster, with identical output. Refinement scans read their correction bits through a mask of the nonzero coefficient positions instead of one coefficient at a time, and the scans of a progressive Huffman file of 1 MP or more decode side by side, each waiting only for the rows of earlier scans it depends on; rows reach the transform while the last scan is still running. On a 24 MP file: 389 to 68.5 ms (noisy) and 199 to 62.3 ms (smooth) at full size, 38.5 to 12.8 ms at 1/8 scale (ImageSharp 3.1.12: 432 and 210 ms; NetVips: 404 and 257 ms). A progressive file that fails in a late scan may now deliver some rows to the destination before the exception, as the streaming decoders already do; the exception is the same as before.
+
 ## [1.5.0] - 2026-10-23
 
 ### Added

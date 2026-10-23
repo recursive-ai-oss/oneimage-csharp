@@ -303,6 +303,36 @@ Measured on the shared worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.402, 
 
 The gate rows are unchanged (their files have no restart markers): jpeg-decode 32.2 vs 32.7 ms, jpeg-decode-rgba 32.4 vs 32.0 ms, thumb-jpeg 27.6 vs 27.5 ms. At full size the decode is now bound by the transform and delivery threads (about 24 ms), not by entropy decoding, so scales 1/2 and 1/4, which are transform-bound, do not change. The "before" runs started at load 3.9 (falling to 1.6) and the "after" runs at load 1.0; the two share the same machine and settings but not the same minute.
 
+## Progressive JPEG decoding
+
+Progressive JPEGs (common on the web) used to decode several times slower than
+baseline ones, because their refinement scans were read one coefficient at a
+time. Two changes, both with output identical to before at every scale, degree
+and hardware path (984 decodes hashed per setting: default, AVX2 off,
+intrinsics off):
+
+- Refinement scans keep a 64-bit mask of the nonzero positions of each block, so
+  the correction bits between two symbols are read at once and applied without
+  branches. The coefficient-by-coefficient reader stays as the reference.
+- The scans of a progressive Huffman file of 1 MP or more decode side by side,
+  each with its own reader, waiting only for the rows of earlier scans that touch
+  the same coefficients; finished rows go to the transform while the last scan
+  is still running. Errors are ranked by scan order, so a damaged file fails
+  with the same exception as before, though it may deliver some rows first.
+
+Measured on the worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.13,
+`DOTNET_EnableAVX512=0`, default degree 4, load 0.4 to 1.6), 24 MP files:
+
+| Row | Before | After | ImageSharp 3.1.12 | NetVips |
+|---|--:|--:|--:|--:|
+| noisy, full size | 389.0 ms | 68.5 ms | 432.0 ms | 404.2 ms |
+| smooth, full size | 199.0 ms | 62.3 ms | 209.7 ms | 257.4 ms |
+| noisy, 1/8 scale | 38.5 ms | 12.8 ms | 396.8 ms | 335.8 ms |
+| smooth, 1/8 scale | 35.1 ms | 12.7 ms | 182.7 ms | 185.0 ms |
+
+Baseline rows are unchanged (jpeg-decode 32.5 to 31.8 ms, thumb-jpeg 27.3 to
+26.8 ms). The last luma refinement scan is now the critical path.
+
 ## WebP encode memory
 
 The lossy encoder held a 4-bytes-per-pixel copy of the frame, whole source
