@@ -518,11 +518,13 @@ public sealed class SatinEffect : LayerEffect
 /// The effects of a layer, an immutable list. Effects are drawn from the layer's shape (its alpha, after its mask) when the document is
 /// composited. Bottom to top the drawing order is fixed by kind: drop shadows, outer glows, the layer's pixels, color overlays, satin,
 /// inner glows, inner shadows, strokes; effects of the same kind are drawn in list order. The layer's opacity scales every effect, while its fill
-/// opacity scales the layer's own pixels and the overlays (which replace its fill), not shadows, glows, satin or strokes. A layer's blend mode applies to its pixels only; each effect has its own.
+/// opacity scales the layer's own pixels, and with them the color overlays (which recolor those pixels and leave their alpha alone), but not shadows, glows,
+/// satin or strokes. A layer's blend mode applies to its pixels only; each effect has its own.
 /// <para>
 /// Effects reach beyond the layer's bounds (a shadow by its distance plus size), and the document recomputes the tiles an edit can reach
-/// through them. Styles are supported on pixel and fill layers; a style on a group, an adjustment layer or a layer clipped to the layer below is kept
-/// but not drawn.
+/// through them. Styles are drawn on pixel and fill layers; a style on a group or an adjustment layer is kept but not drawn. A layer clipped to the layer below, and
+/// the base of a clipping run, draw their effects in a simpler pass (effects are cut to the base, and interior effects are laid over the pixels rather than
+/// mixed into them), so edge pixels can differ slightly from an unclipped layer.
 /// </para>
 /// </summary>
 public sealed class LayerStyle

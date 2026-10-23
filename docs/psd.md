@@ -20,7 +20,9 @@ file.Save("edited.psd");                       // PSB when the document is wider
 
 **Modelled, and round-tripped through `PsdFile.Save`:** pixel layers with their offsets, groups (pass-through or isolated), the blend modes the layer model has, opacity, fill opacity, visibility, clipping to the layer below, lock flags, raster masks (area, default value, density, feather, disabled flag), vector masks (rasterized to a raster mask), solid color fill layers, gradient and pattern fill layers (drawn from their settings, see [Gradient and pattern fills](#gradient-and-pattern-fills)), and the adjustment layers levels, curves, hue/saturation, brightness/contrast, exposure, invert, threshold and posterize. These render with the library's own engine.
 
-**Kept only as their stored pixels plus untouched data blocks:** text layers, smart objects, layer effects and styles (`lfx2`, `lrFX`), vector strokes, and gradient or pattern fills that cannot be drawn (the fallbacks listed under [Gradient and pattern fills](#gradient-and-pattern-fills)). They render from the raster Photoshop stored with the layer, are not redrawn and cannot be edited here, and their blocks are written back unchanged. Dissolve and the darker/lighter color blend modes are also kept as keys but render as Normal, Darken and Lighten.
+**Layer effects** (`lmfx`/`lfx2`) are read into an `OneImage.Layers.LayerStyle` and drawn when the document is composited; see [Layer effects](#layer-effects).
+
+**Kept only as their stored pixels plus untouched data blocks:** text layers, smart objects, the layer effects that are not drawn (listed under [Layer effects](#layer-effects); a file with only the legacy `lrFX` block is not parsed), vector strokes, and gradient or pattern fills that cannot be drawn (the fallbacks listed under [Gradient and pattern fills](#gradient-and-pattern-fills)). They render from the raster Photoshop stored with the layer, are not redrawn and cannot be edited here, and their blocks are written back unchanged. Dissolve and the darker/lighter color blend modes are also kept as keys but render as Normal, Darken and Lighten.
 
 **Known fidelity gaps** against Photoshop: brightness/contrast in Photoshop's current (non-legacy) mode is a fitted approximation (see below); hard mix and vivid light differ slightly; vector-mask path operations (combine, subtract, intersect) use the non-zero rule only; levels, curves, hue/saturation, brightness/contrast and exposure layers in CMYK and Lab documents are kept but not applied; the base layer's fill opacity in a clipping group applies to the whole group. Figures are in [Fidelity of the layer render](#fidelity-of-the-layer-render).
 
@@ -47,7 +49,8 @@ The merged image is read in the file's own depth: gray, RGB and indexed at 8, 16
 | Solid color fill (`SoCo`) | `FillLayer` | Written as a document-size layer plus `SoCo`. |
 | Levels, curves, hue/saturation, brightness/contrast, exposure, invert, threshold, posterize | `AdjustmentLayer` | Per-channel levels and curves apply before the master set. Posterize, curves and brightness/contrast use Photoshop's formulas, described under [Adjustment formulas](#adjustment-formulas). Levels, curves, hue/saturation, brightness/contrast and exposure layers of CMYK and Lab documents are kept as placeholders (the pixels were converted to RGB, and these act on ink or Lab channels), and written as an identity levels layer, since their parameters mean nothing in an RGB file. Invert, threshold and posterize apply as usual. |
 | Gradient and pattern fills (`GdFl`, `PtFl`), shape layers with such fills | `FillLayer` with a gradient or pattern brush | Drawn from the settings; the original block is kept and written back. Fills outside the supported subset, or read with `PsdReadOptions.DrawFills = false`, are pixel layers of the stored pixels. |
-| Text, smart objects, layer effects (`lfx2`, `lrFX`), strokes (`vstk`) | Pixel layer + kept blocks | Drawn from the stored pixels only; the blocks are written back untouched. |
+| Layer effects (`lmfx` preferred, else `lfx2`) | `Layer.Style` | Drop shadow, inner shadow, outer and inner glow, solid stroke, color overlay, satin are drawn; the block is written back untouched. See [Layer effects](#layer-effects). |
+| Text, smart objects, effects that are not drawn, strokes (`vstk`) | Pixel layer + kept blocks | Drawn from the stored pixels only; the blocks are written back untouched. |
 | Image resources, ICC profile, document-level blocks | `PsdFile.Resources`, `SourceProfile`, `DocumentBlocks` | Kept and written back. Document-level odd-length blocks keep their unpadded length so they write back byte for byte. |
 | Layer info of 16 and 32-bit files | `Lr16` / `Lr32` blocks | Written like Photoshop does. |
 
@@ -86,19 +89,41 @@ The rules were derived from the rasters and composites Photoshop stored in the s
 
 Against the stored rasters without the stored-color rule, patterns are exact, gradients typically differ by 0.1 to 1.2 levels in the mean (worst case 6.8, a 60 degree reflected gradient on 32 px), and gray and CMYK fills by 3 to 6 levels. Midpoint ownership with three or more stops is checked on one file only.
 
+## Layer effects
+
+The effects block (`lmfx`, else `lfx2`) of a pixel, shape or fill layer is read into a [`LayerStyle`](layers.md#layer-styles) and drawn at composite time from the layer's own shape, so moving or editing the layer redraws them. The master effects switch, a layer's "effects visible" flag (`lrFX` common state) and each effect's enabled flag are respected; disabled effects draw nothing and stay in the file. Effects that use the global light take the document's light angle (image resource 1037).
+
+**Drawn:** drop shadow, inner shadow, outer glow, inner glow (edge or center source, range), a solid-color stroke (outside, inside, center), color overlay and satin, each with its blend mode, opacity, color, size, distance, spread/choke and contour. Several effects of one kind (the "multi" lists of newer Photoshop) are drawn in file order. Shadows and glows use a blur of 0.41 x size as the Gaussian sigma; spread and choke grow or shrink the shape by that fraction of the size before blurring.
+
+**Not drawn (counted in `PsdLayerInfo.EffectsNotDrawn`, kept and written back):** gradient and pattern overlays, gradient and pattern strokes, gradient glows, bevel and emboss, effects whose blend mode is dissolve or darker/lighter color, effects with a value outside the model's range (size above 250, distance above 30,000, a contour that is not a clean increasing curve of at most 256 points), effects beyond `PsdLimits.MaxEffectsPerLayer` (32), effects on groups and adjustment layers. The random grain of a shadow or glow is dropped and counted in `EffectsApproximated`, as is a layer whose own vector stroke (`vstk`) Photoshop draws inside the effects.
+
+**Rules the renderer follows** (derived from the stored composites of the sample files):
+
+- The shape is the layer's alpha times its mask. Fill layers and layers with a vector mask use the mask coverage alone (a gradient's transparency is fill, not shape).
+- An outside stroke is drawn below the layer's pixels with antialiased edge pixels fully covered; an inside stroke replaces the pixels it covers; a centered one does both halves.
+- A color overlay recolors the layer's pixels and leaves their alpha alone, so fill opacity scales it; shadows, glows, satin and strokes do not follow fill opacity. With fill 0 a drop shadow shows only outside the shape (knockout).
+- A shadow moves by (-cos a, sin a) x distance, y down.
+- Drawing order, bottom to top: drop shadows, outer glows, the pixels, color overlays, satin, inner glows, inner shadows, strokes.
+
+Satin and contours are implemented from Photoshop's description but not verified against stored pixels (no sample file isolates them). Corners of outside strokes are about 0.07 px off, and the glow range and spread/choke rules were fitted on few files.
+
+**Saving:** a layer whose `Style` is still the object read from the file is written back as the original block, byte for byte. Any other style on a layer that had effects, or any style on a layer that had none (including `null` for a layer that had effects, or a new but equal style), makes `Save` throw `ImageOperationException` naming the layer, because the effects block is not written from the model yet. Effects can be inspected and redrawn after an edit, but not yet saved.
+
+**Fidelity** (mean error against the stored composite, levels 0-255): 10 files became fully modelled, among them antialiased-stroke-edge 17.4 to 0.14, center-stroke-sizes 20.7 to 0.04, feathered-stroke 28.8 to 0.07, group-clips-child-stroke 34.4 to 0.11, inset-stroke-sizes 14.8 to 0.00, outside-stroke 36.0 to 0.16, shape-stroke-raster-mask 25.6 to 0.13 and stroke-effect-transparent-shape 40.4 to 0.00. Files that also use effects that are not drawn improved without being exact: layer_effects 108 to 4.6, stroke-effects 43 to 12, blend-modes 8.0 to 2.2. `EffectCorpusTests` pins the stroke files at 0.5 levels or less.
+
 ## Fidelity of the layer render
 
 Rendering a loaded layer tree and comparing with the file's own stored composite (corpus of 316 PSD/PSB test files from the psd-tools project, MIT licensed, fetched by `tools/fetch-psd-tests.sh`, never committed): 315 load; the one that does not is a multichannel file. Of the 152 files with layers and no feature we do not draw (the set before fills were drawn), the median mean error is 0.134 levels and is unchanged with fills drawn; 160 files are fully modelled now (the 8 added are fill files: gradient-fill went from 8.3 to 0.0 levels, vector-mask2 from 71.9 to 1.0), with a median of 0.108 (106 files at or under 0.5, 115 at or under 2, 128 at or under 10; it was 0.275 before the Photoshop adjustment formulas). Over all 315 loadable files the median went from 0.353 to 0.276. The 19 files with posterize, curves or brightness/contrast layers (or the adjustment compositions that use them) have a median of 0.005 (was 10.5): posterize, curves and legacy brightness/contrast layers are now exact or within a level. The rest differ for known reasons:
 
 - stored composites that are stale or are Photoshop's "not saved with a composite" placeholder (`layers-minimal/*`, `masks/2.psd`, `note.psd`);
-- text, smart objects, layer effects and strokes, which are not drawn (gradient and pattern fills outside the supported subset also render from stored pixels);
+- text, smart objects, vector strokes and the layer effects that are not drawn (see [Layer effects](#layer-effects)) (gradient and pattern fills outside the supported subset also render from stored pixels);
 - brightness/contrast in Photoshop's current mode is approximated (mean error 8 levels on the sample files); hard-mix and vivid-light differ slightly;
 - path operations on vector masks (combine, subtract, intersect) use the non-zero rule only;
 - adjustments in CMYK and Lab documents.
 
 ## Limits and safety
 
-Everything is parsed in safe code. `PsdLimits` bounds layers (20,000), group nesting (64), one block (64 MiB), all blocks (256 MiB), decoded channel bytes in total (16 GiB) and per channel (1 GiB), and descriptor depth (32) and items (65,536); `ImageLimits` bounds pixels, dimensions and the expansion ratio of ZIP channels. Every size is checked against the header before anything is allocated, nesting is followed with explicit stacks, and a 300,000 x 300,000 layer rectangle in a few hundred bytes of file fails on its header. `tests/OneImage.Psd.Tests/HostileFileTests.cs` has a crafted file for each limit; the `psd` fuzz target (see `fuzz/README.md`) ran 10 minutes (61,770 executions) clean.
+Everything is parsed in safe code. `PsdLimits` bounds layers (20,000), group nesting (64), one block (64 MiB), all blocks (256 MiB), decoded channel bytes in total (16 GiB) and per channel (1 GiB), and descriptor depth (32) and items (65,536), and enabled effects per layer (32); `ImageLimits` bounds pixels, dimensions and the expansion ratio of ZIP channels. Every size is checked against the header before anything is allocated, nesting is followed with explicit stacks, and a 300,000 x 300,000 layer rectangle in a few hundred bytes of file fails on its header. `tests/OneImage.Psd.Tests/HostileFileTests.cs` has a crafted file for each limit, and `EffectsTests.cs` has crafted effect blocks (too many effects, oversized sizes and distances, huge contours, deep nesting, truncated and garbage descriptors); the `psd` fuzz target (see `fuzz/README.md`) ran 10 minutes (61,770 executions) clean; after layer effects it ran 10 minutes again (38,454 executions from the sample files and effect seeds; it found a hue/saturation block with an out-of-range value that threw an argument exception, now kept without being reproduced).
 
 ## Speed
 

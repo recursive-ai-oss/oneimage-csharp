@@ -212,8 +212,9 @@ internal static class AdjustmentCodec
         int hue = r.I16();
         int sat = r.I16();
         int light = r.I16();
-        if (colorize)
+        if (colorize || sat is < -100 or > 100 || light is < -100 or > 100)
         {
+            // Colorize is not modelled, and a value outside Photoshop's -100..100 is a corrupt file: kept, not reproduced.
             return null;
         }
 

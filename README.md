@@ -111,8 +111,8 @@ errors appear, how sources are held, limits and threading.
 - **Photoshop files:** [OneImage.Psd](docs/psd.md) (`RecursiveAI.OneImage.Psd`)
   reads PSD and PSB as an image format (the merged composite) and loads the
   layer tree into a [layers](docs/layers.md) document, edits and writes it
-  back. Gradient and pattern fills are drawn from their settings; text, smart
-  objects and layer effects are kept as their stored pixels plus untouched blocks, and multichannel
+  back. Gradient and pattern fills are drawn from their settings; common layer effects (shadows, glows, strokes, overlays, satin) are drawn; text, smart
+  objects and the other effects are kept as their stored pixels plus untouched blocks, and multichannel
   documents are refused; the page lists what is modelled and the known gaps.
 - **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
   registers SVG and `.svgz` as an image format that is drawn at the size you

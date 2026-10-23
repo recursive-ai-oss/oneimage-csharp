@@ -35,6 +35,7 @@ doc.Render().Save("out2.webp");       // recomputes just the tiles the circle to
 | `Layer` | Base class: `Name`, `Visible`, `Opacity`, `FillOpacity`, `BlendMode`, `ClipToBelow`, `Locks`, `Mask`, `Bounds`. |
 | `PixelLayer` | A `Canvas` (the document's pixel format) placed at `X`, `Y`. Paint on `Pixels` with any `Canvas` operation. |
 | `GroupLayer` | Children, bottom first; `PassThrough` or isolated. The document's `Root` is a group. |
+| `LayerStyle` | Optional `Layer.Style`: drop shadow, inner shadow, outer and inner glow, stroke, color overlay and satin, drawn from the layer's shape at composite time. See [Layer styles](#layer-styles). |
 | `FillLayer` | A `Brush` (solid or gradient) covering the whole document. |
 | `AdjustmentLayer` | An `Adjustment` (a point operation) applied to everything below it in its scope. |
 | `LayerMask` | An 8-bit gray canvas placed at `X`, `Y` in document coordinates with `Density`, `Feather`, `OutsideValue` and `Enabled`. |
@@ -82,6 +83,18 @@ The edge cases, and where they follow Photoshop and where they do not:
 ### Adjustment layers
 
 `Adjustment` has factories for `Levels`, `Curves`, `HueSaturation`, `BrightnessContrast`, `Exposure`, `Gamma`, `Invert`, `Threshold`, `Posterize`, `Grayscale` and `ColorMatrix` (the defaults are those of the `Image` method of the same name; `Curves`, `BrightnessContrast` and `Posterize` also have overloads that take a `CurveInterpolation`, `BrightnessContrastMode` or `PosterizeMode` to select Photoshop's formulas, which is what the PSD reader uses), and `Custom(name, Func<Image, Image>)`. An adjustment must be a **point operation**: each output pixel depends only on the same input pixel. Tiles are adjusted one at a time, so an operation that looks at neighbors (blur, resize) would show tile seams; the built-in factories are all point operations. Alpha is untouched. The adjusted backdrop is blended back as `backdrop + k·(adjusted − backdrop)`, `k = opacity × mask`; with a blend mode other than Normal the adjusted backdrop is first blended over the backdrop with that mode (Luminosity or Color make an adjustment touch tone only).
+
+## Layer styles
+
+`Layer.Style` (null by default) holds a `LayerStyle`: an immutable list of up to 64 effects, each an immutable `LayerEffect` with a blend mode, opacity (0..1) and color. Kinds: `DropShadowEffect`, `InnerShadowEffect`, `OuterGlowEffect`, `InnerGlowEffect`, `StrokeEffect` (outside, inside, center), `ColorOverlayEffect` and `SatinEffect`; shadows, glows and satin take an `EffectContour` (a piecewise-linear falloff remap of up to 256 points). Sizes are 0..250 px, distances 0..30000 px, spread and choke fractions 0..1, angles degrees counter-clockwise from the right; a value outside throws `ArgumentOutOfRangeException` when the effect is built. `Describe()` lists the style as `style.*` parameters with language-neutral names (`drop-shadow`, `stroke`, ...).
+
+**Defaults** (as in Photoshop): shadows Multiply, 75 %, black, light 120 degrees, distance 5, size 5; glows Screen, 75 %, light yellow, size 5; stroke Normal, 100 %, black, 3 px outside; overlay Normal, 100 %, black; satin Multiply, 50 %, black, 19 degrees, distance 11, size 14, inverted.
+
+**Drawing.** The shape is the layer's alpha times its mask (fill layers and `LayerStyle.ShapeFromMask` use the mask coverage alone). Bottom to top: drop shadows, outer glows, the layer's pixels, color overlays, satin, inner glows, inner shadows, strokes; the same kind draws in list order. The layer's opacity scales every effect. Fill opacity scales the pixels and, since an overlay recolors the pixels without changing their alpha, the overlays; shadows, glows, satin and strokes ignore it, and a drop shadow is knocked out where the shape is (`KnockedOut`, default true). Shadows and glows blur with sigma 0.41 x size (exact Gaussian up to sigma 2.5, three box blurs beyond); strokes and edge falloffs come from an exact signed distance of the antialiased alpha. Effects are computed per tile over a window around it, so a region render equals the same pixels of a whole render at any degree.
+
+**Which layers.** Pixel and fill layers draw their style. A style on a group or an adjustment layer is kept in the model but not drawn. A layer clipped to the layer below, and the base of a clipping run, draw effects in a simpler pass (cut to the base; interior effects laid over rather than mixed in). Disabled effects are skipped.
+
+**Dirty tiles.** An effect reaches beyond the layer by its distance plus size (`Layer.Reach`); a layer edit or a style change marks the layer's bounds widened by that reach, so a stroke painted next to a shadow recomputes the tiles the shadow reaches and no others. Replacing `Style` marks both the old and the new reach.
 
 ## Render on demand and dirty regions
 

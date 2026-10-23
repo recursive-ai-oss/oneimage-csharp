@@ -405,4 +405,18 @@ public class HostileFileTests
             }
         }
     }
+
+    [Fact]
+    public void AHueSaturationBlockOutsideTheRangeIsKeptNotReproduced()
+    {
+        // A fuzzer-found file whose saturation or lightness lies beyond -100..100 used to escape as an argument exception.
+        string path = System.IO.Path.Combine(AppContext.BaseDirectory, "testdata", "psd", "repro-hue-saturation-out-of-range.psd");
+        try
+        {
+            LoadAndRender(File.ReadAllBytes(path));
+        }
+        catch (ImageException)
+        {
+        }
+    }
 }

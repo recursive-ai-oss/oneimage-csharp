@@ -330,7 +330,7 @@ internal static class EffectsCodec
     private static bool ReadContour(object? shape, out EffectContour? contour)
     {
         contour = null;
-        if (shape is not Descriptor sh || sh.Get("Crv") is not List<object?> pts)
+        if (shape is not Descriptor sh || sh.Get("Crv ") is not List<object?> pts)
         {
             return true;
         }
