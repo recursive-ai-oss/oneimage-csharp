@@ -17,6 +17,13 @@ internal sealed class RasterScratch
     public readonly int[] SpanEnd = new int[Tile.Size];
     public readonly bool[] Dirty = new bool[Tile.Size];
 
+    // The first and last accumulator cell an edge touched in each dirty row, so only that part is read and cleared again.
+    public readonly int[] RowMin = new int[Tile.Size];
+    public readonly int[] RowMax = new int[Tile.Size];
+
+    // Accum is all zero between uses; this is set while it may not be (a use that was cut short), and the next use clears it whole.
+    public bool AccumUnclean;
+
     /// <summary>The run of fills being computed together (see <c>FillNode</c>).</summary>
     public readonly List<FillNode> Layers = new(8);
 
@@ -33,9 +40,34 @@ internal sealed class RasterScratch
     // One decoded run of 8-bit pixels as straight floats (linear-light fills).
     public readonly byte[] LinearBytes = new byte[Tile.Size * 16];
 
-    public static RasterScratch Rent() => Pool.TryTake(out RasterScratch? s) ? s : new RasterScratch();
+    // The scratch a thread used last is kept for that thread: tile workers rent and return in a tight loop, and a shared bag
+    // would make them contend on its lock for every tile. Scratch returned while the slot is taken goes to the shared bag.
+    [ThreadStatic]
+    private static RasterScratch? t_own;
 
-    public static void Return(RasterScratch s) => Pool.Add(s);
+    public static RasterScratch Rent()
+    {
+        RasterScratch? s = t_own;
+        if (s is not null)
+        {
+            t_own = null;
+            return s;
+        }
+
+        return Pool.TryTake(out s) ? s : new RasterScratch();
+    }
+
+    public static void Return(RasterScratch s)
+    {
+        if (t_own is null)
+        {
+            t_own = s;
+        }
+        else
+        {
+            Pool.Add(s);
+        }
+    }
 
     public readonly record struct Crossing(int Row, float X, int Dir);
 }
@@ -121,7 +153,12 @@ internal static class TileRasterizer
     private static bool Antialiased(ReadOnlySpan<Edge> edges, ReadOnlySpan<int> items, int ox, int oy, int tw, int th, RasterScratch s, IntersectionRule rule)
     {
         const int stride = Tile.Size + 2;
-        Array.Clear(s.Accum, 0, stride * th);
+        if (s.AccumUnclean)
+        {
+            Array.Clear(s.Accum);
+        }
+
+        s.AccumUnclean = true;
         Array.Clear(s.Dirty, 0, th);
         foreach (int index in items)
         {
@@ -144,34 +181,18 @@ internal static class TileRasterizer
                 continue;
             }
 
-            ReadOnlySpan<float> acc = s.Accum.AsSpan(r * stride, tw);
+            // Cells left of the first touched one are zero, so the running sum is 0 and the coverage 0 there; right of the last
+            // touched one the sum no longer changes, so the coverage is constant. Only the touched cells are summed.
+            int from = s.RowMin[r];
+            int to = Math.Min(s.RowMax[r] + 1, tw);
+            Span<float> accRow = s.Accum.AsSpan(r * stride, stride);
             Span<float> cov = s.Coverage.AsSpan(r * Tile.Size, tw);
             float sum = 0;
             int first = -1, last = -1;
-            for (int x = 0; x < tw; x++)
+            for (int x = from; x < to; x++)
             {
-                sum += acc[x];
-                float a = MathF.Abs(sum);
-                float c;
-                if (rule == IntersectionRule.NonZero)
-                {
-                    c = a > 1f ? 1f : a;
-                }
-                else
-                {
-                    a -= 2f * MathF.Floor(a * 0.5f);
-                    c = a > 1f ? 2f - a : a;
-                }
-
-                if (c < Snap)
-                {
-                    c = 0f;
-                }
-                else if (c > 1f - Snap)
-                {
-                    c = 1f;
-                }
-
+                sum += accRow[x];
+                float c = CoverageOf(sum, rule);
                 cov[x] = c;
                 if (c > 0f)
                 {
@@ -184,6 +205,24 @@ internal static class TileRasterizer
                 }
             }
 
+            if (to < tw)
+            {
+                float c = CoverageOf(sum, rule);
+                if (c > 0f)
+                {
+                    cov[to..].Fill(c);
+                    if (first < 0)
+                    {
+                        first = to;
+                    }
+
+                    last = tw - 1;
+                }
+            }
+
+            // Leave the accumulator zero for the next edge set (cells up to RowMax can hold values, including the one past the tile).
+            accRow[from..Math.Min(s.RowMax[r] + 1, stride - 1)].Clear();
+            accRow[stride - 1] = 0f;
             if (first >= 0)
             {
                 s.SpanStart[r] = first;
@@ -192,7 +231,30 @@ internal static class TileRasterizer
             }
         }
 
+        s.AccumUnclean = false;
         return any;
+    }
+
+    private static float CoverageOf(float sum, IntersectionRule rule)
+    {
+        float a = MathF.Abs(sum);
+        float c;
+        if (rule == IntersectionRule.NonZero)
+        {
+            c = a > 1f ? 1f : a;
+        }
+        else
+        {
+            a -= 2f * MathF.Floor(a * 0.5f);
+            c = a > 1f ? 2f - a : a;
+        }
+
+        if (c < Snap)
+        {
+            return 0f;
+        }
+
+        return c > 1f - Snap ? 1f : c;
     }
 
     // Adds one edge (tile-local coordinates) to the accumulation buffer, cutting it to the tile's columns first.
@@ -310,11 +372,30 @@ internal static class TileRasterizer
             float xa = x < xnext ? x : xnext, xb = x < xnext ? xnext : x;
             xa = MathF.Max(xa, 0f);
             xb = MathF.Min(xb, fw);
-            s.Dirty[r] = true;
             int o = r * stride;
             float xaFloor = MathF.Floor(xa);
             int xi0 = (int)xaFloor;
             int xi1 = (int)MathF.Ceiling(xb);
+            int xEnd = xi1 <= xi0 + 1 ? xi0 + 1 : xi1;
+            if (s.Dirty[r])
+            {
+                if (xi0 < s.RowMin[r])
+                {
+                    s.RowMin[r] = xi0;
+                }
+
+                if (xEnd > s.RowMax[r])
+                {
+                    s.RowMax[r] = xEnd;
+                }
+            }
+            else
+            {
+                s.Dirty[r] = true;
+                s.RowMin[r] = xi0;
+                s.RowMax[r] = xEnd;
+            }
+
             if (xi1 <= xi0 + 1)
             {
                 float xmf = (0.5f * (xa + xb)) - xaFloor;

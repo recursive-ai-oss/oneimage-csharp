@@ -314,10 +314,12 @@ Why the rest fails:
 
 Text, a 800 x 1000 page of 40 lines of `tspan`s (bold, colored, sized, kerned, some with per-character `dx` and `rotate`) and a block of text on a curve, drawn at 800 px wide with the committed Noto Sans subsets (BenchmarkDotNet, default job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET 10.0.402 / runtime 10.0.13, load average 3.9 before, 4.2 after from another job; no other library compared, because Svg.Skia takes its fonts from the system):
 
-| row | mean | allocated |
-|---|---:|---:|
-| text page, OneImage load + render | 9.2 ms | 15.1 MB |
-| text page, OneImage render (loaded) | 4.2 ms | 8.7 MB |
+| row | before | now | allocated before | now |
+|---|---:|---:|---:|---:|
+| text page, OneImage load + render | 9.1 ms | 6.0 ms | 15.1 MB | 10.2 MB |
+| text page, OneImage render (loaded) | 4.6 ms | 3.3 ms | 8.7 MB | 3.7 MB |
+
+(Rerun after the render-cost work with the short job, BenchmarkDotNet 0.15.8 short job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET SDK 10.0.402 / runtime 10.0.13, load average 2.9 before, 5.7 to 8.6 during and 6.1 after (other jobs on the worker); "before" is the commit before that work, same session.)
 
 ### Paint servers results
 
@@ -377,18 +379,18 @@ Two marker rules were taken from the reference images, not from the specificatio
 
 A marker- and blend-heavy drawing, 1000 x 800 with 250 paths of 25 vertices carrying arrow, dot and square markers and 60 groups blended with `mix-blend-mode` and `isolation`, and a polyline of 10,000 vertices with a marker on every vertex, both at 1024 px wide (local smoke, load 15 to 16 on a shared host, AMD Ryzen 9 7950X3D, .NET 10.0.11, BenchmarkDotNet short job, `SvgMarkerBenchmarks`):
 
-| row | mean | allocated |
-|---|---:|---:|
-| markers and blends, OneImage load + render | 115 ms | 83 MB |
-| markers and blends, OneImage render (loaded) | 87 ms | 65 MB |
-| markers and blends, Svg.Skia load + render | 132 ms | 18.7 MB |
-| markers and blends, Svg.Skia render (loaded) | 77 ms | managed 184 B |
-| 10k-vertex polyline, OneImage load + render | 62 ms | 100 MB |
-| 10k-vertex polyline, OneImage render (loaded) | 25 ms | 60 MB |
-| 10k-vertex polyline, Svg.Skia load + render | 100 ms | 31 MB |
-| 10k-vertex polyline, Svg.Skia render (loaded) | 28 ms | managed 184 B |
+| row | before | now | allocated before | now |
+|---|---:|---:|---:|---:|
+| markers and blends, OneImage load + render | 120.6 ms | 39.9 ms | 83.3 MB | 25.3 MB |
+| markers and blends, OneImage render (loaded) | 82.6 ms | 28.8 ms | 64.9 MB | 6.7 MB |
+| markers and blends, Svg.Skia load + render | 125.3 ms | 103.9 ms | 18.7 MB | 18.7 MB |
+| markers and blends, Svg.Skia render (loaded) | 82.8 ms | 69.8 ms | managed 184 B | managed 184 B |
+| 10k-vertex polyline, OneImage load + render | 62.0 ms | 30.4 ms | 99.8 MB | 47.8 MB |
+| 10k-vertex polyline, OneImage render (loaded) | 26.1 ms | 10.6 ms | 59.8 MB | 7.4 MB |
+| 10k-vertex polyline, Svg.Skia load + render | 101.7 ms | 79.2 ms | 30.6 MB | 30.4 MB |
+| 10k-vertex polyline, Svg.Skia render (loaded) | 28.4 ms | 28.2 ms | managed 184 B | managed 184 B |
 
-The 10,000-vertex document renders with a peak resident set of 136 MB for the whole process (a stopwatch run of ten renders). Rendering is level with Svg.Skia once loaded and ahead of it including the load on the polyline; the blend-heavy drawing allocates more than Svg.Skia because every blended group makes a layer canvas for the band part it covers.
+(`SvgMarkerBenchmarks`; BenchmarkDotNet 0.15.8 short job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET SDK 10.0.402 / runtime 10.0.13, load average 2.9 before, 5.7 to 8.6 during and 6.1 after (other jobs on the worker); "before" is the commit before the render-cost work, run in the same session.) The 10,000-vertex document renders with a peak resident set of 136 MB for the whole process (a stopwatch run of ten renders, measured before the work above). Rendering is ahead of Svg.Skia once loaded and including the load. A blended group's layer is read in place and its tiles return to the pool, so the allocation left in the rendering rows is the output array and the per-fill objects; the load rows now spend most of their allocation on parsing and building the render tree.
 
 ## Roadmap
 
@@ -408,20 +410,20 @@ Planned order. Each step is a coherent piece with its own observable claim, meas
 
 Done: package skeleton, format detection (plain and gzip), natural size (including the content-bounds fallback), the strict bounded XML parser, the typed document and styles, style sheets with the cascade, `switch` and conditional attributes, `data:` images (raster and nested SVG), `transform-origin`, the render tree and region renderer for shapes, strokes, layers, transforms, viewports and `use`/`symbol`, render-at-size in the core, the limits listed above, and the conformance harness with the committed test files. Fuzzed: `svg-xml` (3.9 million executions in 150 s) and `svg-render` (0.7 million in 150 s after fixing one crash, a path whose coordinates overflowed a float, whose repro is in `tests/testdata/svg`; then two runs of 130 s (0.55 and 0.44 million executions), no findings, with style sheets, `switch` and images in the seeds and the CSS and image limits lowered).
 
-Measured on a shared host (local smoke, load 7, .NET 10.0.400, BenchmarkDotNet short job), a 24×24 icon at 256 px and a 1000×800 illustration of about 3,000 shapes at 1024 px wide:
+A 24×24 icon at 256 px and a 1000×800 illustration of about 3,000 shapes at 1024 px wide (`SvgBenchmarks`; BenchmarkDotNet 0.15.8 short job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET SDK 10.0.402 / runtime 10.0.13, load average 2.9 before, 5.7 to 8.6 during and 6.1 after (other jobs on the worker)). "Before" is the same benchmark on the commit before the render-cost work, run in the same session:
 
-| row | mean | allocated |
-|---|---:|---:|
-| icon, OneImage load + render | 0.67 ms | 615 KB |
-| icon, Svg.Skia 5.2.3 load + render | 0.32 ms | 78 KB |
-| illustration, OneImage load + render | 40 ms | 58 MB |
-| illustration, OneImage render (loaded) | 30 ms | 38 MB |
-| illustration, Svg.Skia load + render | 73 ms | 21 MB |
-| illustration, Svg.Skia render (loaded) | 40 ms | managed 188 B |
-| illustration, resvg 0.48.1 CLI (process, parse, render, PNG write) | 112 ms | — |
-| icon, resvg 0.48.1 CLI (same) | 3.0 ms | — |
+| row | before | now | allocated before | now |
+|---|---:|---:|---:|---:|
+| icon, OneImage load + render | 329 µs | 141 µs | 434 KB | 323 KB |
+| icon, OneImage render (loaded) | 298 µs | 118 µs | 387 KB | 276 KB |
+| icon, Svg.Skia 5.2.3 load + render | 334 µs | 363 µs | 78 KB | 78 KB |
+| icon, Svg.Skia render (loaded) | 192 µs | 183 µs | managed 184 B | managed 184 B |
+| illustration, OneImage load + render | 36.4 ms | 25.2 ms | 57.4 MB | 27.6 MB |
+| illustration, OneImage render (loaded) | 25.2 ms | 11.5 ms | 34.9 MB | 5.0 MB |
+| illustration, Svg.Skia load + render | 81.6 ms | 78.7 ms | 21.0 MB | 21.0 MB |
+| illustration, Svg.Skia render (loaded) | 50.4 ms | 38.5 ms | managed 189 B | managed 184 B |
 
-The small icon is twice Svg.Skia's time: the fixed cost of four tile renders (canvas, layer and fill setup) dominates a drawing this small. Gradients and patterns are measured in [Paint servers](#paint-servers-results); filters and text are not drawn yet.
+Measured earlier on another host: resvg 0.48.1 as an external program takes 112 ms for the illustration (process, parse, render, PNG write) and 3.0 ms for the icon. What was slow: a 128 x 128 tile render costs a canvas and, for every shape, a flattened path, an edge table and a coverage buffer; those are now reused from fill to fill on a thread (the tile rasterizer clears and sums only the cells an edge touched, not the whole 130 x 128 accumulator), a layer is read in place and its tiles go back to the pool instead of waiting for the garbage collector, the RGBA 8-bit/float conversions that layer compositing runs per row no longer go through temporary float rows, and tile workers no longer contend on a shared scratch bag. The output is byte for byte the same as before (`bench/OneImage.Benchmarks` `svg-hash` renders the sample documents whole and in regions and prints a hash for each), and the resvg harness has the same result for every test. Rendering a small drawing in one pass instead of tile by tile was tried and was slower (icon 0.49 ms against 0.26 ms): the tiles render in parallel, and a single call draws each shape's tiles one after another. Gradients and patterns are measured in [Paint servers](#paint-servers-results).
 
 Paint servers, a 1000 x 800 drawing of about 600 shapes with 56 gradients and one of about 250 shapes with 26 patterns (rotated, skewed, nested), drawn at 1024 px wide (local smoke, load 18–20 on a shared host, .NET 10.0.11, BenchmarkDotNet short job, `SvgPaintBenchmarks`):
 

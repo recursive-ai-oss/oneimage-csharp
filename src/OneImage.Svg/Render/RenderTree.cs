@@ -30,6 +30,8 @@ internal sealed class RPath : RNode
     private sealed record Cached(float Tolerance, Path Outline);
 
     private Cached? _outline;
+    private Brush? _fillBrush;
+    private Brush? _strokeBrush;
 
     public required Path Geometry { get; init; }
 
@@ -78,6 +80,12 @@ internal sealed class RPath : RNode
 
     /// <summary>The region the shape is limited to (a viewport), in scene space, or <see langword="null"/>.</summary>
     public Path? Clip { get; init; }
+
+    /// <summary>The flat fill color as a brush, made once and shared by every tile (brushes are immutable).</summary>
+    public Brush FillBrush => _fillBrush ??= Brush.Solid(FillColor);
+
+    /// <summary>The flat stroke color as a brush, made once and shared by every tile.</summary>
+    public Brush StrokeBrush => _strokeBrush ??= Brush.Solid(StrokeColor);
 
     /// <summary>A copy that paints only the fill or only the stroke (<c>paint-order</c> puts markers between them).</summary>
     public RPath Part(bool fill)

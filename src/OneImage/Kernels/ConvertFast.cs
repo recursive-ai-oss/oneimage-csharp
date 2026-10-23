@@ -419,5 +419,142 @@ internal static class ConvertFast
         }
     }
 
+    // The float reference reads an 8-bit sample as v / 255f; the table holds those exact quotients.
+    private static readonly float[] ByteToUnit = CreateByteToUnit();
+
+    private static float[] CreateByteToUnit()
+    {
+        var t = new float[256];
+        for (int i = 0; i < t.Length; i++)
+        {
+            t[i] = i / 255f;
+        }
+
+        return t;
+    }
+
+    /// <summary>
+    /// 4-channel RGBA rows between 8-bit and 32-bit float samples, straight or premultiplied (what drawing and layer compositing convert
+    /// every row through). Each pixel runs the same float operations in the same order as the reference, so results are identical,
+    /// without the temporary float rows. Returns false, touching nothing, for any other pair.
+    /// </summary>
+    public static bool TryConvertRgbaFloat(ReadOnlySpan<byte> src, PixelFormat sf, Span<byte> dst, PixelFormat df, int width)
+    {
+        if (sf.Model != ColorModel.Rgb || df.Model != ColorModel.Rgb || sf.ChannelCount != 4 || df.ChannelCount != 4
+            || sf.Alpha == AlphaMode.None || df.Alpha == AlphaMode.None
+            || (sf.Sample is not (SampleType.U8 or SampleType.F32)) || (df.Sample is not (SampleType.U8 or SampleType.F32)))
+        {
+            return false;
+        }
+
+        bool unPremultiply = sf.Alpha == AlphaMode.Premultiplied;
+        bool premultiply = df.Alpha == AlphaMode.Premultiplied;
+        if (sf.Sample == SampleType.U8)
+        {
+            ReadOnlySpan<byte> s8 = src[..(width * 4)];
+            if (df.Sample == SampleType.F32)
+            {
+                Span<float> d32 = SpanCast.As<float>(dst)[..(width * 4)];
+                U8ToFloat(s8, d32, unPremultiply, premultiply);
+            }
+            else
+            {
+                Span<byte> d8 = dst[..(width * 4)];
+                for (int i = 0; i < d8.Length; i += 4)
+                {
+                    (float r, float g, float b, float a) = Convert4(ByteToUnit[s8[i]], ByteToUnit[s8[i + 1]], ByteToUnit[s8[i + 2]], ByteToUnit[s8[i + 3]], unPremultiply, premultiply);
+                    d8[i] = ToByte(r);
+                    d8[i + 1] = ToByte(g);
+                    d8[i + 2] = ToByte(b);
+                    d8[i + 3] = ToByte(a);
+                }
+            }
+
+            return true;
+        }
+
+        ReadOnlySpan<float> s32 = SpanCast.As<float>(src)[..(width * 4)];
+        if (df.Sample == SampleType.F32)
+        {
+            Span<float> d32 = SpanCast.As<float>(dst)[..(width * 4)];
+            for (int i = 0; i < d32.Length; i += 4)
+            {
+                (float r, float g, float b, float a) = Convert4(s32[i], s32[i + 1], s32[i + 2], s32[i + 3], unPremultiply, premultiply);
+                d32[i] = r;
+                d32[i + 1] = g;
+                d32[i + 2] = b;
+                d32[i + 3] = a;
+            }
+        }
+        else
+        {
+            Span<byte> d8 = dst[..(width * 4)];
+            for (int i = 0; i < d8.Length; i += 4)
+            {
+                (float r, float g, float b, float a) = Convert4(s32[i], s32[i + 1], s32[i + 2], s32[i + 3], unPremultiply, premultiply);
+                d8[i] = ToByte(r);
+                d8[i + 1] = ToByte(g);
+                d8[i + 2] = ToByte(b);
+                d8[i + 3] = ToByte(a);
+            }
+        }
+
+        return true;
+    }
+
+    private static void U8ToFloat(ReadOnlySpan<byte> s8, Span<float> d32, bool unPremultiply, bool premultiply)
+    {
+        ReadOnlySpan<float> table = ByteToUnit;
+        if (!unPremultiply && premultiply)
+        {
+            // The common case: straight 8-bit pixels become premultiplied floats.
+            for (int i = 0; i < d32.Length; i += 4)
+            {
+                float a = table[s8[i + 3]];
+                d32[i] = table[s8[i]] * a;
+                d32[i + 1] = table[s8[i + 1]] * a;
+                d32[i + 2] = table[s8[i + 2]] * a;
+                d32[i + 3] = a;
+            }
+
+            return;
+        }
+
+        for (int i = 0; i < d32.Length; i += 4)
+        {
+            (float r, float g, float b, float a) = Convert4(table[s8[i]], table[s8[i + 1]], table[s8[i + 2]], table[s8[i + 3]], unPremultiply, premultiply);
+            d32[i] = r;
+            d32[i + 1] = g;
+            d32[i + 2] = b;
+            d32[i + 3] = a;
+        }
+    }
+
+    // The reference's per-pixel arithmetic: divide the color by alpha if it is premultiplied (0 where alpha is 0), multiply by alpha if the target is.
+    private static (float R, float G, float B, float A) Convert4(float r, float g, float b, float a, bool unPremultiply, bool premultiply)
+    {
+        if (unPremultiply)
+        {
+            r = a > 0f ? r / a : 0f;
+            g = a > 0f ? g / a : 0f;
+            b = a > 0f ? b / a : 0f;
+        }
+
+        if (premultiply)
+        {
+            r *= a;
+            g *= a;
+            b *= a;
+        }
+
+        return (r, g, b, a);
+    }
+
+    private static byte ToByte(float unit)
+    {
+        float v = (unit * 255f) + 0.5f;
+        return !(v > 0f) ? (byte)0 : v >= 255f ? (byte)255 : (byte)v;
+    }
+
     private static Vector128<uint> Div257(Vector128<uint> v, Vector128<uint> bias, Vector128<uint> k) => ((v + bias) * k) >> 24;
 }

@@ -30,6 +30,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Changed
 
 - `Resize` with `Fit.Cover` pushes its crop down to a decoder that can produce a region.
+- Drawing and SVG rendering cost less per shape: a `Canvas` fill reuses its flattened path, edge table and buckets from one fill to the next on a thread, the tile rasterizer sums and clears only the accumulator cells an edge touched, tile workers no longer share one scratch bag, and 8-bit/float RGBA row conversion skips its temporary float rows. Output is unchanged. In `RecursiveAI.OneImage.Svg`, opacity and blend layers are read in place and give their tiles back to the pool, which cuts the allocation of a blend-heavy drawing from 65 MB to 7 MB per render; an icon at 256 px renders in 118 µs (298 µs before) and the 3,000-shape illustration in 11.5 ms (25.2 ms).
 
 ## [1.2.0] - 2026-10-22
 

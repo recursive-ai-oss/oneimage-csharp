@@ -158,6 +158,57 @@ public class ConvertFastTests
         Assert.True(n1.AsSpan().SequenceEqual(n2));
     }
 
+    /// <summary>The RGBA 8-bit/float32 pairs drawing converts through give exactly the float reference's bytes, for every alpha and a spread of colors.</summary>
+    [Fact]
+    public void RgbaFloatPairsAreBitIdenticalToFloatPath()
+    {
+        PixelFormat[] formats = [PixelFormat.Rgba8, PixelFormat.Rgba8Premultiplied, PixelFormat.RgbaF32, PixelFormat.RgbaF32Premultiplied];
+        var rnd = new Random(11);
+        foreach (PixelFormat from in formats)
+        {
+            foreach (PixelFormat to in formats)
+            {
+                if (from == to || (from.Sample == SampleType.U8 && to.Sample == SampleType.U8))
+                {
+                    continue; // 8-bit to 8-bit has its integer paths, tested above
+                }
+
+                const int Width = 70000;
+                byte[] src = new byte[Width * from.BytesPerPixel];
+                if (from.Sample == SampleType.U8)
+                {
+                    rnd.NextBytes(src);
+                    for (int i = 0; i < Width; i++)
+                    {
+                        src[(i * 4) + 3] = (byte)(i % 256); // every alpha, 0 included
+                    }
+                }
+                else
+                {
+                    Span<float> f = SpanCast.As<float>(src.AsSpan());
+                    for (int i = 0; i < Width; i++)
+                    {
+                        float a = (i % 256) / 255f;
+                        bool premultiplied = from.Alpha == AlphaMode.Premultiplied;
+                        for (int k = 0; k < 3; k++)
+                        {
+                            float v = rnd.NextSingle();
+                            f[(i * 4) + k] = premultiplied ? v * a : v;
+                        }
+
+                        f[(i * 4) + 3] = a;
+                    }
+                }
+
+                byte[] fast = new byte[Width * to.BytesPerPixel];
+                byte[] reference = new byte[fast.Length];
+                ConvertKernel.ConvertRow(src, from, fast, to, Width);
+                ConvertKernel.ConvertViaFloat(src, from, reference, to, Width);
+                Assert.True(fast.AsSpan().SequenceEqual(reference), $"{from} -> {to}");
+            }
+        }
+    }
+
     private static void AssertClose(byte[] expected, byte[] actual, int tolerance, bool wide, string what)
     {
         if (expected.Length != actual.Length)

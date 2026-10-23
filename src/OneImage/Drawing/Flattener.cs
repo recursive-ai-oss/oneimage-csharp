@@ -10,6 +10,13 @@ internal sealed class FlatPath
 
     public FlatPath(int limit) => _limit = limit;
 
+    /// <summary>Empties the path, keeping its buffers, so one instance can flatten many paths in turn.</summary>
+    public void Reset()
+    {
+        _figureCount = 0;
+        PointCount = 0;
+    }
+
     public float[] Xy { get; private set; } = new float[64];
 
     public int PointCount { get; private set; }
@@ -79,9 +86,12 @@ internal static class Flattener
     /// coordinates), a curve whose control polygon lies entirely outside it is replaced by its chord: the curve cannot enter the
     /// box, and the chord keeps the same winding, so work stays bounded however far away or large a curve is.
     /// </summary>
-    public static FlatPath Flatten(Path path, Matrix3x2 matrix, double tolerance, (double X0, double Y0, double X1, double Y1)? clip)
+    public static FlatPath Flatten(Path path, Matrix3x2 matrix, double tolerance, (double X0, double Y0, double X1, double Y1)? clip) =>
+        Flatten(path, matrix, tolerance, clip, new FlatPath(Path.MaxFlattenedPoints));
+
+    /// <summary>Like the overload without a target, appending into an empty <paramref name="flat"/> (see <see cref="FlatPath.Reset"/>).</summary>
+    public static FlatPath Flatten(Path path, Matrix3x2 matrix, double tolerance, (double X0, double Y0, double X1, double Y1)? clip, FlatPath flat)
     {
-        var flat = new FlatPath(Path.MaxFlattenedPoints);
         byte[] verbs = path.Verbs;
         float[] coords = path.Coords;
         bool identity = matrix.IsIdentity;

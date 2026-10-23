@@ -35,7 +35,7 @@ internal static class ConvertKernel
             return;
         }
 
-        if (ConvertFast.TryConvert(src, sourceFormat, dst, destinationFormat, width))
+        if (ConvertFast.TryConvert(src, sourceFormat, dst, destinationFormat, width) || ConvertFast.TryConvertRgbaFloat(src, sourceFormat, dst, destinationFormat, width))
         {
             return;
         }

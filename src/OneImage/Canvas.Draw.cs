@@ -79,8 +79,17 @@ public sealed partial class Canvas
 
     private void FillCore(Brush brush, Path path, FillSettings s)
     {
-        Raster raster = Raster.Build(path, s.Transform, Width, Height, s.Tolerance);
-        Raster? clip = s.Clip == null ? null : Raster.Build(s.Clip, Matrix3x2.Identity, Width, Height, s.Tolerance);
+        Raster raster = Raster.BuildScoped(path, s.Transform, Width, Height, s.Tolerance);
+        Raster? clip = s.Clip == null ? null : Raster.BuildScoped(s.Clip, Matrix3x2.Identity, Width, Height, s.Tolerance);
+        FillRasterized(brush, path, s, raster, clip);
+
+        // Both rasters were only read by the fill above, which has finished, so their buffers can serve the next fill on this thread.
+        raster.Recycle();
+        clip?.Recycle();
+    }
+
+    private void FillRasterized(Brush brush, Path path, FillSettings s, Raster raster, Raster? clip)
+    {
         bool linear8 = s.Linear && FillPlan.CanBlendLinear8(Format);
         if (s.Linear && !linear8)
         {
@@ -101,7 +110,9 @@ public sealed partial class Canvas
 
         // Writable tiles are taken one by one (the tile table is single-writer); painting them is independent per tile and
         // runs in parallel. Each tile's result depends only on its own rasterization, so the output never depends on scheduling.
-        var touched = new List<(int Tx, int Ty, Tile Tile)>();
+        List<(int Tx, int Ty, Tile Tile)> touched = s_touched ??= [];
+        s_touched = null; // taken: a fill started from a paint callback on this thread builds its own list
+        touched.Clear();
         for (int ty = raster.MinTileY; ty <= raster.MaxTileY; ty++)
         {
             for (int tx = raster.MinTileX; tx <= raster.MaxTileX; tx++)
@@ -120,12 +131,22 @@ public sealed partial class Canvas
             {
                 PaintTile(raster, clip, plan, s, tx, ty, tile);
             }
-
-            return;
+        }
+        else
+        {
+            PaintTilesInParallel(touched, degree, raster, clip, plan, s);
         }
 
-        Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => PaintTile(raster, clip, plan, s, touched[i].Tx, touched[i].Ty, touched[i].Tile));
+        touched.Clear();
+        s_touched = touched;
     }
+
+    [ThreadStatic]
+    private static List<(int Tx, int Ty, Tile Tile)>? s_touched;
+
+    // Kept apart so a fill that stays on one thread does not allocate the closure the parallel loop needs.
+    private void PaintTilesInParallel(List<(int Tx, int Ty, Tile Tile)> touched, int degree, Raster raster, Raster? clip, FillPlan plan, FillSettings s) =>
+        Parallel.For(0, touched.Count, new ParallelOptions { MaxDegreeOfParallelism = degree }, i => PaintTile(raster, clip, plan, s, touched[i].Tx, touched[i].Ty, touched[i].Tile));
 
     /// <summary>
     /// Linear light converts through the image pipeline; the tiles it produces replace the touched ones. Without an outside snapshot

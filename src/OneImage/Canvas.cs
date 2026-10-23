@@ -213,6 +213,20 @@ public sealed partial class Canvas : IDisposable
         Render.ReadRegion(source, rect, SpanCast.AsBytes(destination), 0, T.Format, RenderContext.Create(1, cancellationToken));
     }
 
+    /// <summary>Copies a rectangle as raw bytes in the canvas's own format (<see cref="Format"/>), tightly packed, for callers that pass the rows on as bytes.</summary>
+    internal void CopyToBytes(Span<byte> destination, ImageRect rect)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        CheckRect(rect);
+        if ((long)rect.Width * rect.Height * Format.BytesPerPixel > destination.Length)
+        {
+            throw new ArgumentException("Destination too short for the rectangle.", nameof(destination));
+        }
+
+        var source = new GridSourceNode(_grid);
+        Render.ReadRegion(source, rect, destination, 0, Format, RenderContext.Create(1, CancellationToken.None));
+    }
+
     /// <summary>Releases the pooled tiles this canvas owns exclusively. Tiles shared with a snapshot are left to the snapshot (and the garbage collector), so snapshots stay valid.</summary>
     public void Dispose()
     {

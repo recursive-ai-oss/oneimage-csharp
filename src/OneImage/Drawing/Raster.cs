@@ -25,10 +25,23 @@ internal sealed class Raster
     private const int MaxEdges = 1 << 25;
     private const long MaxBucketEntries = 1L << 25;
 
+    // A few rasters per thread are kept for the next scoped fill (see BuildScoped), with the buffers they grew.
+    private const int MaxKeptEdges = 1 << 14;
+    private const int MaxKeptItems = 1 << 15;
+    private const int MaxKeptPoints = 1 << 16;
+
+    [ThreadStatic]
+    private static Raster? s_spare0;
+    [ThreadStatic]
+    private static Raster? s_spare1;
+    [ThreadStatic]
+    private static FlatPath? s_flat;
+
     private Edge[] _edges = new Edge[16];
     private int _count;
     private int[] _rowStart = [];
     private int[] _rowItems = [];
+    private int[] _fill = [];
     private float _minX = float.MaxValue;
     private float _maxX = float.MinValue;
     private float _minY = float.MaxValue;
@@ -43,13 +56,13 @@ internal sealed class Raster
         TilesY = (height + Tile.Size - 1) >> Tile.Shift;
     }
 
-    public int Width { get; }
+    public int Width { get; private set; }
 
-    public int Height { get; }
+    public int Height { get; private set; }
 
-    public int TilesX { get; }
+    public int TilesX { get; private set; }
 
-    public int TilesY { get; }
+    public int TilesY { get; private set; }
 
     public int MinTileX { get; private set; }
 
@@ -73,7 +86,88 @@ internal sealed class Raster
     public static Raster Build(Path path, Matrix3x2 matrix, int width, int height, double tolerance)
     {
         FlatPath flat = Flattener.Flatten(path, matrix, tolerance, (0, 0, width, height));
-        var r = new Raster(width, height);
+        return Fill(new Raster(width, height), flat);
+    }
+
+    /// <summary>
+    /// Like <see cref="Build"/>, for a raster that is used only by the calling operation and given back with <see cref="Recycle"/>: the
+    /// flattened points, the edges and the buckets reuse the buffers of an earlier scoped raster on this thread, so a fill of a small
+    /// shape allocates nothing. The result is identical to <see cref="Build"/>.
+    /// </summary>
+    public static Raster BuildScoped(Path path, Matrix3x2 matrix, int width, int height, double tolerance)
+    {
+        FlatPath flat = s_flat ?? new FlatPath(Path.MaxFlattenedPoints);
+        s_flat = null;
+        flat.Reset();
+        try
+        {
+            Flattener.Flatten(path, matrix, tolerance, (0, 0, width, height), flat);
+            Raster r;
+            if (s_spare0 is { } a)
+            {
+                r = a;
+                s_spare0 = null;
+            }
+            else if (s_spare1 is { } b)
+            {
+                r = b;
+                s_spare1 = null;
+            }
+            else
+            {
+                r = new Raster(0, 0);
+            }
+
+            r.Reset(width, height);
+            return Fill(r, flat);
+        }
+        finally
+        {
+            if (flat.Xy.Length <= MaxKeptPoints * 2)
+            {
+                s_flat = flat;
+            }
+        }
+    }
+
+    /// <summary>Gives a raster made by <see cref="BuildScoped"/> back for reuse. The raster must not be used afterwards, by any thread.</summary>
+    public void Recycle()
+    {
+        if (_edges.Length > MaxKeptEdges || _rowItems.Length > MaxKeptItems)
+        {
+            return;
+        }
+
+        if (s_spare0 is null)
+        {
+            s_spare0 = this;
+        }
+        else
+        {
+            s_spare1 ??= this;
+        }
+    }
+
+    private void Reset(int width, int height)
+    {
+        Width = width;
+        Height = height;
+        TilesX = (width + Tile.Size - 1) >> Tile.Shift;
+        TilesY = (height + Tile.Size - 1) >> Tile.Shift;
+        _count = 0;
+        _minX = float.MaxValue;
+        _maxX = float.MinValue;
+        _minY = float.MaxValue;
+        _maxY = float.MinValue;
+        _rightClipped = false;
+        MinTileX = 0;
+        MaxTileX = -1;
+        MinTileY = 0;
+        MaxTileY = -1;
+    }
+
+    private static Raster Fill(Raster r, FlatPath flat)
+    {
         int begin = 0;
         for (int f = 0; f < flat.FigureCount; f++)
         {
@@ -224,7 +318,15 @@ internal sealed class Raster
 
     private void Bucket()
     {
-        _rowStart = new int[TilesY + 1];
+        if (_rowStart.Length < TilesY + 1)
+        {
+            _rowStart = new int[TilesY + 1];
+        }
+        else
+        {
+            Array.Clear(_rowStart, 0, TilesY + 1);
+        }
+
         if (_count == 0)
         {
             return;
@@ -256,8 +358,21 @@ internal sealed class Raster
             _rowStart[r + 1] += _rowStart[r];
         }
 
-        _rowItems = new int[(int)total];
-        var fill = new int[TilesY];
+        if (_rowItems.Length < total)
+        {
+            _rowItems = new int[(int)total];
+        }
+
+        if (_fill.Length < TilesY)
+        {
+            _fill = new int[TilesY];
+        }
+        else
+        {
+            Array.Clear(_fill, 0, TilesY);
+        }
+
+        int[] fill = _fill;
         for (int i = 0; i < _count; i++)
         {
             RowRange(in _edges[i], out int r0, out int r1);

@@ -32,7 +32,7 @@ internal sealed class ImageBrush : Brush
     private readonly Matrix3x2 _inverse;
     private readonly Pixels _pixels;
 
-    public ImageBrush(Image source, ImageRect? region, int offsetX, int offsetY, Matrix3x2? transform, bool tile, ImageSampling sampling = ImageSampling.Nearest)
+    public ImageBrush(Image source, ImageRect? region, int offsetX, int offsetY, Matrix3x2? transform, bool tile, ImageSampling sampling = ImageSampling.Nearest, bool pooled = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (sampling is < ImageSampling.Nearest or > ImageSampling.Bilinear)
@@ -65,15 +65,36 @@ internal sealed class ImageBrush : Brush
             throw new ArgumentException("The transform must be finite and invertible.", nameof(transform));
         }
 
-        _pixels = new Pixels(_node, r);
+        _pixels = new Pixels(_node, r, pooled);
     }
+
+    /// <summary>
+    /// For a brush made with <c>pooled: true</c> that is used for one fill and then dropped: gives the pixel copy back to the shared array
+    /// pool. The brush must not be used again.
+    /// </summary>
+    internal void Release() => _pixels.Release();
 
     internal override Node[] Sources => [_node];
 
     /// <summary>The region's pixels as 8-bit straight RGBA, read once on first use.</summary>
-    private sealed class Pixels(Node node, ImageRect region)
+    private sealed class Pixels(Node node, ImageRect region, bool pooled)
     {
         private byte[]? _data;
+
+        public void Release()
+        {
+            byte[]? d;
+            lock (this)
+            {
+                d = _data;
+                _data = null;
+            }
+
+            if (pooled && d != null)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(d);
+            }
+        }
 
         public byte[] Get()
         {
@@ -87,7 +108,8 @@ internal sealed class ImageBrush : Brush
             {
                 if (_data == null)
                 {
-                    var bytes = new byte[region.Width * region.Height * 4];
+                    int length = region.Width * region.Height * 4;
+                    byte[] bytes = pooled ? System.Buffers.ArrayPool<byte>.Shared.Rent(length) : new byte[length];
                     Render.ReadRegion(node, region, bytes, 0, PixelFormat.Rgba8, RenderContext.Create(1, CancellationToken.None));
                     Volatile.Write(ref _data, bytes);
                 }

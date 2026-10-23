@@ -30,6 +30,20 @@ internal static class SceneRenderer
         var scale = Affine.Scale(sx, sy);
         int bandRows = Math.Clamp(MaxBandPixels / Math.Max(region.Width, 1), 1, MaxBandRows);
         var hits = new List<int>();
+        try
+        {
+            RenderBands(scene, region, sink, limits, sx, sy, scale, bandRows, hits, cancel);
+        }
+        finally
+        {
+            // The clip cache points into the scene; do not keep a finished document alive from a pool thread.
+            t_clipSource = null;
+            t_clipDevice = null;
+        }
+    }
+
+    private static void RenderBands(SvgScene scene, ImageRect region, IRowSink sink, SvgLimits limits, double sx, double sy, Affine scale, int bandRows, List<int> hits, CancellationToken cancel)
+    {
         for (int y = 0; y < region.Height; y += bandRows)
         {
             cancel.ThrowIfCancellationRequested();
@@ -66,27 +80,15 @@ internal static class SceneRenderer
 
     private static void WriteBand(Canvas canvas, int width, int rows, int firstRow, IRowSink sink)
     {
-        int count = width * rows;
-        Rgba32[] pixels = ArrayPool<Rgba32>.Shared.Rent(count);
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(count * 4);
+        int length = width * rows * 4;
+        byte[] bytes = ArrayPool<byte>.Shared.Rent(length);
         try
         {
-            canvas.CopyTo(pixels.AsSpan(0, count), new ImageRect(0, 0, width, rows));
-            for (int i = 0; i < count; i++)
-            {
-                Rgba32 p = pixels[i];
-                int o = i * 4;
-                bytes[o] = p.R;
-                bytes[o + 1] = p.G;
-                bytes[o + 2] = p.B;
-                bytes[o + 3] = p.A;
-            }
-
-            sink.WriteRows(firstRow, bytes.AsSpan(0, count * 4), rows);
+            canvas.CopyToBytes(bytes.AsSpan(0, length), new ImageRect(0, 0, width, rows));
+            sink.WriteRows(firstRow, bytes.AsSpan(0, length), rows);
         }
         finally
         {
-            ArrayPool<Rgba32>.Shared.Return(pixels);
             ArrayPool<byte>.Shared.Return(bytes);
         }
     }
@@ -120,7 +122,13 @@ internal static class SceneRenderer
                 }
 
                 Affine ldev = Affine.Translate(-ox, -oy).Multiply(dev);
-                using (var offscreen = new Canvas(lw, lh, PixelFormat.Rgba8))
+
+                // The layer's tiles are read in place by the composite below and handed back to the pool right after, so a layer costs
+                // pooled memory instead of fresh arrays (a snapshot would keep its tiles until the garbage collector found them).
+                List<Canvas>? maskCanvases = layer.Mask is null ? null : [];
+                var offscreen = new Canvas(lw, lh, PixelFormat.Rgba8);
+                ImageBrush? brush = null;
+                try
                 {
                     if (layer.Filters is not null)
                     {
@@ -134,14 +142,27 @@ internal static class SceneRenderer
                         }
                     }
 
-                    Image snapshot = offscreen.Snapshot();
+                    Image content = offscreen.View();
                     if (layer.Mask is { } mask)
                     {
-                        snapshot = snapshot.ApplyMask(RenderMask(mask, lw, lh, ldev, qx0, qy0, qx1, qy1, depth + 1, limits), mask.MaskAlpha ? MaskChannel.Alpha : MaskChannel.Luminance);
+                        content = content.ApplyMask(RenderMask(mask, lw, lh, ldev, qx0, qy0, qx1, qy1, depth + 1, limits, maskCanvases!), mask.MaskAlpha ? MaskChannel.Alpha : MaskChannel.Luminance);
                     }
 
                     Path? clip = layer.ClipPath?.Transform(dev.ToMatrix3x2());
-                    canvas.Fill(Brush.FromImage(snapshot, offsetX: ox, offsetY: oy, tile: false), Path.Rectangle(ox, oy, lw, lh), opacity: layer.Opacity, blend: layer.Blend, composition: layer.Plus ? AlphaComposition.Plus : AlphaComposition.SrcOver, clip: clip);
+                    brush = new ImageBrush(content, null, ox, oy, null, tile: false, pooled: true);
+                    canvas.Fill(brush, Path.Rectangle(ox, oy, lw, lh), opacity: layer.Opacity, blend: layer.Blend, composition: layer.Plus ? AlphaComposition.Plus : AlphaComposition.SrcOver, clip: clip);
+                }
+                finally
+                {
+                    brush?.Release();
+                    offscreen.Dispose();
+                    if (maskCanvases is not null)
+                    {
+                        foreach (Canvas c in maskCanvases)
+                        {
+                            c.Dispose();
+                        }
+                    }
                 }
 
                 break;
@@ -165,22 +186,24 @@ internal static class SceneRenderer
     }
 
     // The mask's content as an image, narrowed by the mask it carries itself. Depth is bounded by the layer-depth limit.
-    private static Image RenderMask(RLayer mask, int width, int height, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits)
+    // The canvases the mask chain is drawn on are added to <owned>: the returned image reads them in place, so the caller disposes them after the composite.
+    private static Image RenderMask(RLayer mask, int width, int height, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits, List<Canvas> owned)
     {
         if (depth >= limits.MaxLayerDepth)
         {
             throw new ImageLimitException("Masks are nested too deep.");
         }
 
-        using var maskCanvas = new Canvas(width, height, PixelFormat.Rgba8);
+        var maskCanvas = new Canvas(width, height, PixelFormat.Rgba8);
+        owned.Add(maskCanvas);
         foreach (RNode child in mask.Children)
         {
             DrawNode(maskCanvas, child, dev, qx0, qy0, qx1, qy1, depth + 1, limits);
         }
 
-        Image content = maskCanvas.Snapshot();
+        Image content = maskCanvas.View();
         return mask.Mask is { } next
-            ? content.ApplyMask(RenderMask(next, width, height, dev, qx0, qy0, qx1, qy1, depth + 1, limits), next.MaskAlpha ? MaskChannel.Alpha : MaskChannel.Luminance)
+            ? content.ApplyMask(RenderMask(next, width, height, dev, qx0, qy0, qx1, qy1, depth + 1, limits, owned), next.MaskAlpha ? MaskChannel.Alpha : MaskChannel.Luminance)
             : content;
     }
 
@@ -202,7 +225,7 @@ internal static class SceneRenderer
             return;
         }
 
-        Path? clip = p.Clip?.Transform(d);
+        Path? clip = DeviceClip(p.Clip, d);
         IntersectionRule rule = p.EvenOdd ? IntersectionRule.EvenOdd : IntersectionRule.NonZero;
         if (p.StrokeFirst)
         {
@@ -216,6 +239,33 @@ internal static class SceneRenderer
         }
     }
 
+    // Shapes in one viewport share its clip: the device-space copy is made once for a run of them instead of once per shape.
+    [ThreadStatic]
+    private static Path? t_clipSource;
+    [ThreadStatic]
+    private static Matrix3x2 t_clipMatrix;
+    [ThreadStatic]
+    private static Path? t_clipDevice;
+
+    private static Path? DeviceClip(Path? clip, Matrix3x2 d)
+    {
+        if (clip is null)
+        {
+            return null;
+        }
+
+        if (ReferenceEquals(clip, t_clipSource) && t_clipMatrix == d)
+        {
+            return t_clipDevice;
+        }
+
+        Path device = clip.Transform(d);
+        t_clipSource = clip;
+        t_clipMatrix = d;
+        t_clipDevice = device;
+        return device;
+    }
+
     private static void Fill(Canvas canvas, RPath p, Affine dev, Matrix3x2 m, IntersectionRule rule, Path? clip)
     {
         if (!p.HasFill)
@@ -226,7 +276,7 @@ internal static class SceneRenderer
         Interlocked.Increment(ref _pathsDrawn);
         if (p.FillPaint is null)
         {
-            canvas.Fill(p.FillColor, p.Geometry, p.Antialias, rule, p.FillOpacity, transform: m, clip: clip);
+            canvas.Fill(p.FillBrush, p.Geometry, p.Antialias, rule, p.FillOpacity, transform: m, clip: clip);
         }
         else if (p.FillPaint.CreateBrush(dev) is { } brush)
         {
@@ -248,7 +298,7 @@ internal static class SceneRenderer
         Path outline = p.StrokeOutline(tolerance);
         if (p.StrokePaint is null)
         {
-            canvas.Fill(p.StrokeColor, outline, p.Antialias, IntersectionRule.NonZero, p.StrokeOpacity, transform: m, clip: clip);
+            canvas.Fill(p.StrokeBrush, outline, p.Antialias, IntersectionRule.NonZero, p.StrokeOpacity, transform: m, clip: clip);
         }
         else if (p.StrokePaint.CreateBrush(dev) is { } brush)
         {
