@@ -21,6 +21,9 @@ internal static class FilterRenderer
     /// <summary>Margins (summed over a filter's primitives) below this many pixels are cheaper to recompute per request than to share in blocks.</summary>
     private const double MinBlockReachPx = 32;
 
+    /// <summary>Filter regions smaller than this many pixels (about eight tiles) are filtered per request: the margin they would share is small, and a cold render pays more for the block bookkeeping than it saves.</summary>
+    private const long MinBlockRegionPixels = 128L * 1024;
+
     /// <summary>Largest filter region, in pixels, that is kept whole as one block when a primitive needs all of it (tiling, wrapping convolution).</summary>
     private const long MaxWholeBlockPixels = 16L * 1024 * 1024;
 
@@ -83,7 +86,7 @@ internal static class FilterRenderer
         var plan = new Plan(filters, layer, ctm, fs, sx, sy, regions, reachX, reachY);
         if (direct && !FilterBlockCache.Disabled && Math.Abs(fs.E) < PxLimit && Math.Abs(fs.F) < PxLimit)
         {
-            int block = totalReach >= MinBlockReachPx ? (double.IsInfinity(totalReach) ? 0 : totalReach > 160 ? 1024 : 512) : -1;
+            int block = totalReach >= MinBlockReachPx && (double.IsInfinity(totalReach) || regions[n - 1].Area >= MinBlockRegionPixels) ? (double.IsInfinity(totalReach) ? 0 : totalReach > 160 ? 1024 : 512) : -1;
             if (block == 0 && regions[n - 1].Area > MaxWholeBlockPixels)
             {
                 block = -1;

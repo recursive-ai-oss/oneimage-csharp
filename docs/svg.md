@@ -161,9 +161,21 @@ Files: `Render/SceneBuilder.FilterEffects.cs` (the primitives below into the `RF
 - **`feDisplacementMap`.** `scale` is multiplied by the grid scale; each pixel takes the source pixel at its position plus `scale × (channel − ½)`, nearest, and transparent beyond the work rectangle. The map is read as straight color in the primitive's space. The reach is half the scale.
 - **Lighting.** The surface is the alpha channel; the normal uses the specification's Sobel kernels in the interior and its edge and corner kernels on the filter region's border. Diffuse and specular follow the specification's formulas, with the light color in the primitive's color space; specular alpha is the largest color channel and the color stays as computed (it is ≤ alpha, so it reads as premultiplied). `surfaceScale` stays in pixel units of the grid while a light's position and height scale with it (heights by the mean scale), which is what the reference images show. A light's coordinates are user units even with `primitiveUnits=objectBoundingBox`. No light source, or a specular exponent outside 1..128, gives a transparent result; a negative constant gives opaque black; a spot light's non-positive `specularExponent` is read as 1; `limitingConeAngle` cuts hard (no smoothing). `kernelUnitLength`, when given, samples the surface at that distance (bilinear, border extended) instead of the pixel grid.
 - **`feConvolveMatrix` completions.** A kernel sum that is zero within rounding (0.1 × 8 − 0.8) divides by 1, not by the rounding residue. The remaining differences from the references are the two undefined-behavior tests (`bias=0.5`, `edgeMode=wrap` with a kernel wider than the target).
-- **Margins, blocks and cost.** Component transfer, tile, turbulence and the lighting kernels read at most their own pixel (lighting: one kernel unit); morphology reads its window, displacement half its scale. A filter whose margin is wide (32 pixels or more: a large blur, a large dilation) would make every 128-pixel tile of the output refilter several times its own area, so its output is computed in blocks of 512 or 1024 pixels on a grid anchored to the element, kept as 8-bit RGBA under one byte budget (96 MiB, least recently used evicted, given back when the scene is collected) and shared by every request and thread that touches them. A block is computed once, by the first request, and the others wait for it. Blocks are equal to the same pixels computed alone to within one level (tested, with concurrent readers and evictions). Rendering the same loaded image again therefore reads blocks instead of filtering again. Measured: 4096-pixel render of 400 shapes under a blur of σ 8: 1316 → 578 ms; σ 30: 9.8 s → 0.85 s (shared development host, load 7).
+- **Margins, blocks and cost.** Component transfer, tile, turbulence and the lighting kernels read at most their own pixel (lighting: one kernel unit); morphology reads its window, displacement half its scale. A filter whose margin is wide (32 pixels or more: a large blur, a large dilation) over a region of at least 128 K pixels would make every 128-pixel tile of the output refilter several times its own area, so its output is computed in blocks of 512 or 1024 pixels on a grid anchored to the element, kept as 8-bit RGBA under one byte budget (96 MiB, least recently used evicted, given back when the scene is collected) and shared by every request and thread that touches them. A block is computed once, by the first request, and the others wait for it. Blocks are equal to the same pixels computed alone to within one level (tested, with concurrent readers and evictions). Rendering the same loaded image again therefore reads blocks instead of filtering again. Measured: 4096-pixel render of 400 shapes under a blur of σ 8: 1316 → 578 ms; σ 30: 9.8 s → 0.85 s (shared development host, load 7).
 - **Limits.** Pixels of the filter region × cells of a convolution kernel are limited to 2³³ (typed `ImageLimitException` before any buffer exists); the kernel itself to 4096 cells (a larger or malformed one makes the primitive transparent). Everything else is bounded by `MaxFilterPixels` on what a request needs, and by constant-time or capped algorithms: morphology costs the same for any radius, turbulence octaves are capped, displacement and lighting reads are clamped to the work rectangle.
-- **Not matched.** `filter/subregion-and-primitiveUnits=objectBoundingBox-1` and `-2` (0.8%: with a `width` fraction on a blur the reference cuts at half of the region's far edge, not at half of its width; unexplained, not copied); the 6 `complex-transform` tests (edge pixels: the filters run on the element's axes, the references along the output's; `feTile` 9.7% because tiles resample); `feColorMatrix/type=matrix-with-non-normalized-values` (0.27%, borderline); two undefined-behavior convolution tests; 7 `filter-functions/color-adjust` tests whose pictures contain text.
+- **Not matched.** `filter/subregion-and-primitiveUnits=objectBoundingBox-1` and `-2` (0.8%: with a `width` fraction on a blur the reference cuts at half of the region's far edge, not at half of its width; unexplained, not copied); the 6 `complex-transform` tests (edge pixels: the filters run on the element's axes, the references along the output's; `feTile` 9.7% because tiles resample); `feColorMatrix/type=matrix-with-non-normalized-values` (0.27%, borderline); two undefined-behavior convolution tests. That makes 395 of 406 `filters` files (the 7 `color-adjust` tests with text pass since the text step).
+
+Benchmarks (`SvgFilterBenchmarks`; BenchmarkDotNet 0.15.8 short job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET SDK 10.0.402 / runtime 10.0.13, load average 3.0 before, 3.6 to 4.2 during and 4.1 after from other jobs; load + render unless noted, so nothing is read from cached blocks):
+
+| row | before blocks | now | allocated before | now |
+|---|---:|---:|---:|---:|
+| blur, sigma 30 units, 4096 px | 11.2 s | 762 ms | 388 MB | 74 MB |
+| blur, sigma 8 units, 4096 px | 1.69 s | 579 ms (error 440 ms) | | 74 MB |
+| icon with blur, 256 px | 1.43 ms | 1.24 ms (blocks on every filter: 2.7 ms) | | 318 KB |
+| turbulence + lighting, 1024 px | not drawn | 52.8 ms | | 6.9 MB |
+| Svg.Skia: blur 4096 px / turbulence + lighting 1024 px | | 218 ms / 55 ms | | |
+
+A filtered group is read in place and its tiles go back to the pool right after it is composited, like the other layers.
 
 ## Color
 
@@ -264,18 +276,18 @@ Behavior is specified from the SVG and CSS specifications and checked against th
 
 ### Results
 
-Committed subset, 1,748 files (42 excluded), run on the render-at-size path. "Before" is the skeleton, which could not draw.
+1,748 files (42 excluded), the full collection with the suite's fonts, run on the render-at-size path. "Before" is the skeleton, which could not draw.
 
 | category | rendered | pass before | pass now | rate now |
 |---|---:|---:|---:|---:|
 | shapes | 133 | 0 | 128 | 96.2% |
-| painting | 307 | 0 | 256 | 83.4% |
-| structure | 230 | 0 | 188 | 81.7% |
+| painting | 307 | 0 | 277 | 90.2% |
+| structure | 230 | 0 | 197 | 85.7% |
 | paint-servers | 154 | 0 | 146 | 94.8% |
-| masking | 93 | 0 | 87 | 93.5% |
-| filters | 406 | 0 | 388 | 95.6% |
-| text | 383 | 0 | 16 | 4.2% |
-| **all** | 1,706 | 0 | 1,209 | 70.9% |
+| masking | 93 | 0 | 91 | 97.8% |
+| filters | 406 | 0 | 395 | 97.3% |
+| text | 383 | 0 | 279 | 72.8% |
+| **all** | 1,706 | 0 | 1,513 | 88.7% |
 
 Masking: 87 of 93. The 6 failures: `clip/simple-case` (an `image` under a clip, 2.6% of pixels) and 5 that clip with text. All 46 `clipPath` tests that do not use text, the `clip-rule` test and all 40 `mask` tests pass.
 
@@ -416,7 +428,7 @@ Planned order. Each step is a coherent piece with its own observable claim, meas
 4. **Painting extras** (done, see [Markers and blending](#markers-and-blending-results)). Markers, `mix-blend-mode`, `isolation`, group opacity layers, `shape-rendering`, `image-rendering`, `visibility`, `display`. Claim: `painting` pass rate.
 5. **Clipping and masking** (done). `clipPath`, `mask`, viewport clipping; the layer-multiply op (`Image.ApplyMask`). Claim: `masking` pass rate (see [Results](#results)).
 6. **Filters, part one** (done). The filter graph, regions and subregions, linear-light float evaluation, and the primitives that map onto existing operations, `feDropShadow` and the CSS filter functions. Claim: the corresponding `filters` directories.
-7. **Filters, part two** (done). Component transfer, morphology, tile, convolution completions, turbulence, displacement, lighting, and shared output blocks for filters with wide margins. Claim: 388 of the 406 `filters` files, 97% of those that do not need text.
+7. **Filters, part two** (done). Component transfer, morphology, tile, convolution completions, turbulence, displacement, lighting, and shared output blocks for filters with wide margins. Claim: 395 of the 406 `filters` files (97.3%, with the suite's fonts; 298 before this step), no test of any other category changed.
 8. **Text** (done, see [Text results](#text-results)). `text`/`tspan`/`textPath`/`tref`, per-character positioning through the public cluster API in `OneImage.Text`, fonts from `SvgFontOptions`, fallback, decorations, bidirectional text, paint servers on text. Claim: `text` pass rate 72.8% (279 of 383); variable and color fonts wait on `OneImage.Text`.
 9. **Hardening and speed.** Fuzz targets for the document, CSS and renderer; hostile-input tests for every limit; benchmarks (24-megapixel and thumbnail renders, large maps, filter-heavy art) against the .NET SVG renderers and libvips/librsvg; the package readme, release notes and publishing setup. Claim: no fuzz findings after the stated run, and the benchmark table.
 
