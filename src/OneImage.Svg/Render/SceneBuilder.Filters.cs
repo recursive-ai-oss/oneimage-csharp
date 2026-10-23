@@ -358,7 +358,7 @@ internal sealed partial class SceneBuilder
                 }
 
                 double angle = 0;
-                if (a.Count == 1 && !TryAngle(a[0], out angle))
+                if (a.Count == 1 && !TryFilterAngle(a[0], out angle))
                 {
                     return null;
                 }
@@ -412,7 +412,7 @@ internal sealed partial class SceneBuilder
         return true;
     }
 
-    private static bool TryAngle(string token, out double degrees)
+    private static bool TryFilterAngle(string token, out double degrees)
     {
         degrees = 0;
         int len = SvgSize.NumberLength(token);
@@ -873,7 +873,7 @@ internal sealed partial class SceneBuilder
             }
 
             case "feBlend":
-                p = new FeBlend { In1 = in1, In2 = in2, Linear = linear, Mode = BlendMode(e.Attr("mode")), SubX = sx, SubY = sy, SubW = sw, SubH = sh, EmptySub = empty };
+                p = new FeBlend { In1 = in1, In2 = in2, Linear = linear, Mode = FilterBlendMode(e.Attr("mode")), SubX = sx, SubY = sy, SubW = sw, SubH = sh, EmptySub = empty };
                 break;
             case "feComposite":
             {
@@ -1012,7 +1012,7 @@ internal sealed partial class SceneBuilder
 
     private static double FractionOf(Length l) => l.Unit == LengthUnit.Percent ? l.Value / 100 : l.Value;
 
-    private static FeBlendMode BlendMode(string? v) => v?.Trim() switch
+    private static FeBlendMode FilterBlendMode(string? v) => v?.Trim() switch
     {
         "multiply" => FeBlendMode.Multiply,
         "screen" => FeBlendMode.Screen,
