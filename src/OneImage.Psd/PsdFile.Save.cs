@@ -231,6 +231,13 @@ public sealed partial class PsdFile
             e.Blocks.Add(Block("lspf", Be32(f)));
         }
 
+        // The effects block of an untouched style is written back with the rest of the layer's blocks. An edited or new style would need its own block,
+        // which is not written yet; saying so is better than writing the old effects beside the new model.
+        if (!ReferenceEquals(l.Style, info.SourceStyle) && (l.Style?.Any == true || info.SourceStyle?.Any == true))
+        {
+            throw new ImageOperationException($"The layer '{l.Name}' has a layer style that differs from the one read from the file; writing edited or new layer styles to PSD is not supported.");
+        }
+
         switch (l)
         {
             case GroupLayer g:

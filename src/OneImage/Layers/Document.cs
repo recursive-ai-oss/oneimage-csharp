@@ -467,7 +467,7 @@ public sealed class Document : IDisposable
             case PixelLayer p:
                 {
                     TileGrid grid = p.Pixels.SnapshotGrid();
-                    DiffGrids(p.LastGrid, grid, p.X, p.Y, 0, Invalidate);
+                    DiffGrids(p.LastGrid, grid, p.X, p.Y, p.Style?.Reach ?? 0, Invalidate);
                     if (!ReferenceEquals(p.LastGrid, grid) || p.LastNode == null)
                     {
                         p.LastNode = new GridSourceNode(grid);
@@ -489,7 +489,8 @@ public sealed class Document : IDisposable
                 break;
         }
 
-        return new LayerState(layer.Kind, layer.Visible, layer.EffectiveOpacity, layer.BlendMode, layer.ClipToBelow, layer.Bounds, node, (layer as PixelLayer)?.LastGrid, mask, (layer as GroupLayer)?.PassThrough ?? false, children, adjustment);
+        FxPlan? fx = layer.Kind is LayerKind.Pixel or LayerKind.Fill ? FxPlan.Create(layer.Style, layer.Opacity, layer.FillOpacity) : null;
+        return new LayerState(layer.Kind, layer.Visible, layer.EffectiveOpacity, layer.BlendMode, layer.ClipToBelow, layer.Bounds, node, (layer as PixelLayer)?.LastGrid, mask, (layer as GroupLayer)?.PassThrough ?? false, children, adjustment, fx);
     }
 
     private Tile MakeBackground()

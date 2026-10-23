@@ -36,4 +36,7 @@ public sealed class PsdLimits
 
     /// <summary>Gets the most items a descriptor, list or curve may hold. The default is 65,536.</summary>
     public int MaxDescriptorItems { get; init; } = 65_536;
+
+    /// <summary>Gets the most enabled effects one layer may draw; the ones past it are not drawn. The default is 32.</summary>
+    public int MaxEffectsPerLayer { get; init; } = 32;
 }

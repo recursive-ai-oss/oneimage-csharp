@@ -231,6 +231,27 @@ internal sealed class LayerLoader
         }
 
         layer.Locks = locks;
+        PsdBlock? fx = rl.Blocks.FirstOrDefault(static b => b.Key == "lmfx") ?? rl.Blocks.FirstOrDefault(static b => b.Key == "lfx2");
+        PsdBlock? legacyFx = rl.Blocks.FirstOrDefault(static b => b.Key == "lrFX");
+        if (fx != null && (legacyFx == null || EffectsCodec.Visible(legacyFx.Data.Span)))
+        {
+            EffectsCodec.Result r = EffectsCodec.Read(fx.Data.Span, _psd, new ColorConverter(_doc.ColorProfile, _s.Header.Mode is PsdColorMode.Cmyk or PsdColorMode.Lab ? _s.IccProfile : null), shapeFromMask: rl.Blocks.Any(static b => b.Key is "vmsk" or "vsms"), EffectsCodec.GlobalAngle(_s.Resources));
+            layer.Style = r.Style;
+            info.SourceStyle = r.Style;
+            info.EffectsNotDrawn = r.Skipped;
+            info.EffectsApproximated = r.Approximated;
+            if (r.Style != null && rl.Blocks.FirstOrDefault(static b => b.Key == "vstk") is { } vstk && FillDescriptors.ParseDescriptor(vstk.Data.Span, _psd)?.Get("strokeEnabled") is true)
+            {
+                // Photoshop draws the effects around the shape including its own stroke, whose outline is not rebuilt here.
+                info.EffectsApproximated++;
+            }
+            if (r.Style != null && (layer is GroupLayer or AdjustmentLayer))
+            {
+                // The model keeps the style, but groups and adjustment layers do not draw one.
+                info.EffectsNotDrawn += r.Style.Effects.Count;
+            }
+        }
+
         PsdBlock? vector = rl.Blocks.FirstOrDefault(static b => b.Key is "vmsk" or "vsms");
         if (rl.Mask != null || vector != null)
         {
@@ -555,6 +576,9 @@ internal sealed class LayerLoader
 
     // A layer's mask is the raster mask channel, the vector mask rasterized, or both multiplied. A raster mask whose flags say it was
     // rendered from other data already contains the vector mask (that is how this library writes one), so the path is not applied again.
+    // How far past the canvas a shape layer's outline is rasterized for its effects.
+    private const int MaxEffectOverscan = 256;
+
     private void ReadMask(Layer layer, RawLayer rl, PsdBlock? vector)
     {
         RawMask? m = rl.Mask;
@@ -596,6 +620,12 @@ internal sealed class LayerLoader
         if (path != null)
         {
             area = m == null || !hasPixels ? _doc.Bounds : UnionOf(rect, _doc.Bounds);
+            if (layer.Style is { Footprint: > 0 } style)
+            {
+                // The outline of a shape that runs off the canvas is still the edge its effects follow, so the path is rasterized a little past the
+                // canvas (bounded: the pixels outside are never shown).
+                area = UnionOf(area, Layer.Widen(_doc.Bounds, Math.Min(style.Footprint, MaxEffectOverscan)));
+            }
             if (area.X != 0 || area.Y != 0)
             {
                 path = VectorMask.Parse(vector!.Data.Span, _doc.Width, _doc.Height, area.X, area.Y, out _, out _);

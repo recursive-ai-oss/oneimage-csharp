@@ -222,12 +222,14 @@ public class CorpusReport
                 into.Add("blend:" + i.SourceBlendKey);
             }
 
-            foreach (PsdBlock b in i.Blocks)
+            if (i.EffectsNotDrawn > 0 || (i.Blocks.Any(static b => b.Key == "lrFX") && !i.Blocks.Any(static b => b.Key is "lfx2" or "lmfx")))
             {
-                if (b.Key is "lfx2" or "lrFX")
-                {
-                    into.Add("effects");
-                }
+                into.Add("effects");
+            }
+
+            if (i.EffectsApproximated > 0)
+            {
+                into.Add("effects-approx");
             }
 
             if (l is GroupLayer sub)

@@ -111,4 +111,18 @@ public sealed class PsdLayerInfo
     internal int SourceFlags { get; set; } = 8;
 
     internal bool WasEmpty { get; set; }
+
+    /// <summary>
+    /// The style read from the layer's effects block, so a save can tell an untouched style (the block is written back as it was) from an edited one.
+    /// </summary>
+    internal LayerStyle? SourceStyle { get; set; }
+
+    /// <summary>
+    /// How many enabled effects of the layer are not drawn (gradient or pattern overlays and strokes, bevel and emboss, gradient glows, effects past
+    /// the per-layer limit). They stay in the file and are written back untouched.
+    /// </summary>
+    public int EffectsNotDrawn { get; internal set; }
+
+    /// <summary>How many drawn effects leave out a detail (the random grain of a shadow or glow).</summary>
+    public int EffectsApproximated { get; internal set; }
 }

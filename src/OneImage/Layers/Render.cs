@@ -66,7 +66,8 @@ internal sealed class LayerState(
     MaskState? mask,
     bool passThrough,
     LayerState[] children,
-    Adjustment? adjustment)
+    Adjustment? adjustment,
+    FxPlan? fx = null)
 {
     public LayerKind Kind { get; } = kind;
 
@@ -93,6 +94,9 @@ internal sealed class LayerState(
     public LayerState[] Children { get; } = children;
 
     public Adjustment? Adjustment { get; } = adjustment;
+
+    /// <summary>The layer's enabled effects, split by whether they are drawn below or above its pixels, or null when there are none to draw.</summary>
+    public FxPlan? Fx { get; } = fx;
 }
 
 /// <summary>The graph node behind <see cref="DocumentSnapshot.Render"/>: computes a tile by walking the layers, through the document's tile cache.</summary>

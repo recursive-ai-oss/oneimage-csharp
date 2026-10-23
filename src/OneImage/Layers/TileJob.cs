@@ -28,7 +28,7 @@ internal sealed class HeldTileNode : Node
 /// given (releasing it, also when it fails) and returns a tile the caller owns; tiles are never modified once produced, so a result may be
 /// the very tile that came in.
 /// </summary>
-internal sealed class TileJob
+internal sealed partial class TileJob
 {
     private readonly DocumentSnapshot _doc;
     private readonly ImageRect _rect;
@@ -76,9 +76,31 @@ internal sealed class TileJob
                 }
             }
 
-            if (l.Visible && l.Opacity > 0f)
+            if (l.Visible && (l.Opacity > 0f || l.Fx is { Opacity: > 0f }))
             {
-                back = j == i + 1 ? Apply(l, back) : ApplyClipRun(layers, i, j, back);
+                // Effects below the layer's pixels, the pixels (with whatever is clipped to them), then the effects above. A layer whose fill opacity is
+                // zero still draws its effects.
+                if (l.Fx is { Above.Length: > 0 } && j == i + 1 && l.Kind is LayerKind.Pixel or LayerKind.Fill)
+                {
+                    back = ApplyStyled(l, back);
+                }
+                else
+                {
+                    if (l.Fx != null)
+                    {
+                        back = ApplyFx(l, l.Fx.Below, back);
+                    }
+
+                    if (l.Opacity > 0f)
+                    {
+                        back = j == i + 1 ? Apply(l, back) : ApplyClipRun(layers, i, j, back);
+                    }
+
+                    if (l.Fx != null)
+                    {
+                        back = ApplyFx(l, l.Fx.Above, back);
+                    }
+                }
             }
 
             i = j;
@@ -275,7 +297,7 @@ internal sealed class TileJob
     /// </summary>
     private Tile DrawClipped(LayerState c, Tile surface)
     {
-        if (!c.Visible || c.Opacity <= 0f)
+        if (!c.Visible || (c.Opacity <= 0f && c.Fx is not { Opacity: > 0f }))
         {
             return surface;
         }
@@ -284,29 +306,18 @@ internal sealed class TileJob
         {
             case LayerKind.Pixel or LayerKind.Fill:
                 {
-                    Tile? content;
-                    try
+                    // The effects of a clipped layer are clipped to the base like its pixels.
+                    if (c.Fx != null)
                     {
-                        if (!Touches(c))
-                        {
-                            return surface;
-                        }
-
-                        content = c.Mask == null ? null : MaskedContent(c);
-                        if (c.Mask != null && content == null)
-                        {
-                            return surface;
-                        }
-                    }
-                    catch
-                    {
-                        surface.Release();
-                        throw;
+                        surface = ApplyFx(c, c.Fx.Below, surface, AlphaComposition.SrcAtop);
                     }
 
-                    return content == null
-                        ? Over(surface, c.Node!, c.Bounds.X, c.Bounds.Y, c.Opacity, c.Blend, AlphaComposition.SrcAtop)
-                        : OverHeld(surface, content, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
+                    if (c.Opacity > 0f)
+                    {
+                        surface = DrawClippedContent(c, surface);
+                    }
+
+                    return c.Fx != null ? ApplyFx(c, c.Fx.Above, surface, AlphaComposition.SrcAtop) : surface;
                 }
 
             case LayerKind.Group:
@@ -314,6 +325,33 @@ internal sealed class TileJob
             default:
                 return ApplyAdjustment(c, surface);
         }
+    }
+
+    private Tile DrawClippedContent(LayerState c, Tile surface)
+    {
+        Tile? content;
+        try
+        {
+            if (!Touches(c))
+            {
+                return surface;
+            }
+
+            content = c.Mask == null ? null : MaskedContent(c);
+            if (c.Mask != null && content == null)
+            {
+                return surface;
+            }
+        }
+        catch
+        {
+            surface.Release();
+            throw;
+        }
+
+        return content == null
+            ? Over(surface, c.Node!, c.Bounds.X, c.Bounds.Y, c.Opacity, c.Blend, AlphaComposition.SrcAtop)
+            : OverHeld(surface, content, c.Opacity, c.Blend, AlphaComposition.SrcAtop);
     }
 
     /// <summary>An isolated group clipped to the base: its layers are composited on their own, and the result is drawn onto the surface with the group's blend mode, opacity and mask.</summary>
@@ -633,15 +671,17 @@ internal sealed class TileJob
     /// Reads the mask coverage for this tile into a rented 8-bit array (row stride = tile width): the mask where its canvas lies, its outside value elsewhere.
     /// The caller returns the array to <see cref="ArrayPool{T}"/>.
     /// </summary>
-    private byte[] Coverage(MaskState mask, out bool allZero, out bool allFull)
+    private byte[] Coverage(MaskState mask, out bool allZero, out bool allFull) => Coverage(mask, _rect, out allZero, out allFull);
+
+    private byte[] Coverage(MaskState mask, ImageRect rect, out bool allZero, out bool allFull)
     {
-        int w = _rect.Width;
-        int h = _rect.Height;
+        int w = rect.Width;
+        int h = rect.Height;
         byte[] cov = ArrayPool<byte>.Shared.Rent(w * h);
         try
         {
             cov.AsSpan(0, w * h).Fill(mask.Outside);
-            ImageRect hit = mask.Area.Intersect(_rect);
+            ImageRect hit = mask.Area.Intersect(rect);
             if (!hit.IsEmpty)
             {
                 byte[] scratch = ArrayPool<byte>.Shared.Rent(hit.Width * hit.Height);
@@ -650,7 +690,7 @@ internal sealed class TileJob
                     Render.ReadRegion(mask.Node, new ImageRect(hit.X - mask.Area.X, hit.Y - mask.Area.Y, hit.Width, hit.Height), scratch, hit.Width, PixelFormat.Gray8, _context);
                     for (int r = 0; r < hit.Height; r++)
                     {
-                        scratch.AsSpan(r * hit.Width, hit.Width).CopyTo(cov.AsSpan((((hit.Y - _rect.Y) + r) * w) + (hit.X - _rect.X)));
+                        scratch.AsSpan(r * hit.Width, hit.Width).CopyTo(cov.AsSpan((((hit.Y - rect.Y) + r) * w) + (hit.X - rect.X)));
                     }
                 }
                 finally

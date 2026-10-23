@@ -245,6 +245,20 @@ public sealed class GroupLayer : Layer, IDisposable
         }
     }
 
+    internal override int ChildReach
+    {
+        get
+        {
+            int reach = 0;
+            foreach (Layer c in _children)
+            {
+                reach = Math.Max(reach, c.Reach);
+            }
+
+            return reach;
+        }
+    }
+
     /// <inheritdoc/>
     public override ImageRect Bounds
     {
@@ -410,7 +424,7 @@ public sealed class GroupLayer : Layer, IDisposable
             Changed(Bounds);
             if (edited != null)
             {
-                Changed(edited.Bounds);
+                Document.Invalidate(Widen(edited.Bounds, edited.Reach));
             }
 
             return;
@@ -418,12 +432,12 @@ public sealed class GroupLayer : Layer, IDisposable
 
         if (edited != null)
         {
-            Changed(edited.Bounds);
+            Document.Invalidate(Widen(edited.Bounds, edited.Reach));
         }
 
         for (int k = from; k <= Math.Min(to, _children.Count - 1); k++)
         {
-            Changed(_children[k].Bounds);
+            Document.Invalidate(Widen(_children[k].Bounds, _children[k].Reach));
         }
     }
 

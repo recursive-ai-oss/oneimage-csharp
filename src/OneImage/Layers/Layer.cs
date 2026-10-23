@@ -71,6 +71,7 @@ public abstract class Layer
     private BlendMode _blend;
     private bool _clip;
     private LayerMask? _mask;
+    private LayerStyle? _style;
 
     internal Layer(Document document, LayerKind kind, string name)
     {
@@ -162,6 +163,30 @@ public abstract class Layer
     /// <summary>Gets or sets the lock flags (plain data). The default is <see cref="LayerLocks.None"/>.</summary>
     public LayerLocks Locks { get; set; }
 
+    /// <summary>
+    /// Gets or sets the layer's effects (drop shadow, glow, stroke, overlay, satin), or null for none. The effects are drawn from the layer's shape when
+    /// the document is composited; see <see cref="LayerStyle"/> for the order and which layers draw them. Replacing the style recomputes the tiles the old and
+    /// the new effects reach.
+    /// </summary>
+    public LayerStyle? Style
+    {
+        get => _style;
+        set
+        {
+            if (ReferenceEquals(_style, value))
+            {
+                return;
+            }
+
+            int reach = Math.Max(_style?.Reach ?? 0, value?.Reach ?? 0);
+            _style = value;
+            if (IsAttached)
+            {
+                Document.Invalidate(Widen(Bounds, Math.Max(reach, ChildReach)));
+            }
+        }
+    }
+
     /// <summary>Gets the layer's mask, or <see langword="null"/>.</summary>
     public LayerMask? Mask => _mask;
 
@@ -232,6 +257,7 @@ public abstract class Layer
         };
         DescribeSelf(p);
         _mask?.Describe(p);
+        _style?.Describe(p);
         return new LayerDescription(KindName(Kind), p, DescribeChildren());
     }
 
@@ -248,9 +274,17 @@ public abstract class Layer
     {
         if (IsAttached)
         {
-            Document.Invalidate(area);
+            Document.Invalidate(Widen(area, Reach));
         }
     }
+
+    /// <summary>How far, in pixels, this layer's effects (and, for a group, its children's) reach beyond its bounds.</summary>
+    internal int Reach => Math.Max(_style?.Reach ?? 0, ChildReach);
+
+    internal virtual int ChildReach => 0;
+
+    internal static ImageRect Widen(ImageRect r, int margin) =>
+        margin == 0 ? r : new ImageRect(r.X - margin, r.Y - margin, r.Width + (2 * margin), r.Height + (2 * margin));
 
     internal bool IsAttached
     {
