@@ -47,10 +47,15 @@ internal static class JpegDecoderCore
         // (streaming); with two, the entropy thread also transforms. Progressive and multi-scan images transform after
         // the last scan, and overlap only the delivery with the transform.
         int stages = StageOverride >= 0 ? StageOverride : (long)f.Width * f.Height < OverlapMinPixels || Environment.ProcessorCount < 2 ? 0 : Environment.ProcessorCount >= 3 && streaming ? 2 : 1;
-        using var store = new JpegCoefficientStore(f, streaming, reader, limits, streaming && stages > 0 ? 2 : 1);
+        // Baseline files with restart intervals decode their intervals on several threads into a deeper coefficient ring.
+        JpegParallelPlan par = default;
+        bool parallel = streaming && JpegScanDecoder.TryPlan(f, scan, tables.RestartInterval, out par);
+
+        using var store = new JpegCoefficientStore(f, streaming, reader, limits, parallel ? par.Sets : streaming && stages > 0 ? 2 : 1);
         var decoder = new JpegScanDecoder(reader, f, tables, store) { DcOnlyComponents = dcOnly.Contains(true) ? dcOnly : null };
         using StagedTransform<T>? staged = stages > 0 ? new StagedTransform<T>(pipe, store, separateTransform: stages == 2 && streaming) : null;
-        Func<int, bool>? onRow = staged is not null && streaming ? staged.Post : streaming ? row => pipe.AddMcuRow(row, store) : null;
+        Func<int, bool>? onRow = staged is not null && streaming ? row => staged.Post(row) : streaming ? row => pipe.AddMcuRow(row, store) : null;
+        int rowsPosted = 0;
         bool more = true;
         while (more)
         {
@@ -64,7 +69,20 @@ internal static class JpegDecoderCore
             {
                 try
                 {
-                    decoder.Decode(scan, onRow, ct);
+                    if (parallel)
+                    {
+                        // The helper stages get the rows without making this thread wait for them: the decoder waits for transformed rows itself before reusing a ring slot.
+                        Func<int, bool> post = staged is not null ? row => staged.Post(row, lag: int.MaxValue / 2) : row =>
+                        {
+                            rowsPosted = row + 1;
+                            return pipe.AddMcuRow(row, store);
+                        };
+                        decoder.DecodeParallel(scan, par, post, staged is not null ? () => staged.Transformed : () => rowsPosted, staged is not null ? staged.WaitTransformed : _ => true, ct);
+                    }
+                    else
+                    {
+                        decoder.Decode(scan, onRow, ct);
+                    }
                 }
                 catch (Exception ex) when (staged is not null && streaming && ex is not OperationCanceledException)
                 {
@@ -198,7 +216,9 @@ internal static class JpegDecoderCore
 
         /// <summary>Called by the decoding thread once MCU row <paramref name="row"/> is complete (its coefficients are in the store).</summary>
         /// <returns><see langword="false"/> when decoding should stop (everything wanted was delivered, or a stage failed).</returns>
-        public bool Post(int row)
+        /// <param name="row">The completed row.</param>
+        /// <param name="lag">How many rows the transform stage may trail behind; the default of 1 suits a two-row coefficient ring.</param>
+        public bool Post(int row, int lag = 1)
         {
             if (_separate)
             {
@@ -208,7 +228,7 @@ internal static class JpegDecoderCore
                     Monitor.PulseAll(_gate);
 
                     // The next row goes into the coefficient slots this row's predecessor used, so that one must be transformed first.
-                    while (_transformed < row && !_stop)
+                    while (_transformed < row + 1 - lag && !_stop)
                     {
                         Monitor.Wait(_gate);
                     }
@@ -237,6 +257,33 @@ internal static class JpegDecoderCore
             {
                 _transformed = row + 1;
                 Monitor.PulseAll(_gate);
+                return !_stop;
+            }
+        }
+
+        /// <summary>Gets the number of leading rows the transform stage has finished.</summary>
+        public int Transformed
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _transformed;
+                }
+            }
+        }
+
+        /// <summary>Blocks until <paramref name="count"/> leading rows are transformed.</summary>
+        /// <returns><see langword="false"/> when the stages stopped first.</returns>
+        public bool WaitTransformed(int count)
+        {
+            lock (_gate)
+            {
+                while (_transformed < count && !_stop)
+                {
+                    Monitor.Wait(_gate);
+                }
+
                 return !_stop;
             }
         }

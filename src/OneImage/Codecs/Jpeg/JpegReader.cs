@@ -18,11 +18,37 @@ internal sealed partial class JpegReader : IDisposable
     private int _end;
     private bool _eof;
     private long _totalRead;
+    private bool _ownsBuffer = true;
 
     public JpegReader(Stream stream)
     {
         _stream = stream;
         _buf = ArrayPool<byte>.Shared.Rent(BufferSize);
+    }
+
+    private JpegReader()
+    {
+        _stream = Stream.Null;
+        _buf = [];
+        _eof = true;
+        _ownsBuffer = false;
+    }
+
+    /// <summary>Creates a reader with no stream, to be pointed at in-memory entropy-coded data with <see cref="Attach"/>.</summary>
+    public static JpegReader CreateDetached() => new();
+
+    /// <summary>
+    /// Makes the reader serve <paramref name="length"/> bytes of <paramref name="data"/> from <paramref name="start"/> as if they were the
+    /// whole rest of the file: past them it behaves exactly as at the end of a file (zero padding, no further reads).
+    /// </summary>
+    public void Attach(byte[] data, int start, int length)
+    {
+        _buf = data;
+        _pos = start;
+        _end = start + length;
+        _eof = true;
+        _marker = 0;
+        ResetBits();
     }
 
     /// <summary>Gets the number of bytes pulled from the stream so far.</summary>
@@ -32,7 +58,7 @@ internal sealed partial class JpegReader : IDisposable
     {
         byte[] b = _buf;
         _buf = [];
-        if (b.Length > 0)
+        if (b.Length > 0 && _ownsBuffer)
         {
             ArrayPool<byte>.Shared.Return(b);
         }
@@ -231,6 +257,101 @@ internal sealed partial class JpegReader : IDisposable
             // Leave the marker unconsumed for NextMarker.
             return;
         }
+    }
+
+    /// <summary>
+    /// Copies the raw entropy-coded bytes of the next restart intervals, byte stuffing untouched, up to and including the
+    /// marker that ends the <paramref name="intervals"/>-th one. Every marker ends exactly one interval, which is also how the
+    /// sequential decoder walks the data, so a worker decoding the copy sees what the sequential decoder would see.
+    /// Copying stops after a marker that is not a restart marker, and at the end of the data.
+    /// </summary>
+    /// <param name="intervals">How many markers to copy through.</param>
+    /// <param name="dst">The destination; replaced by a larger pooled array when it is too small.</param>
+    /// <param name="len">The number of bytes in <paramref name="dst"/>; advanced.</param>
+    /// <param name="ended">Set when the data ended or a non-restart marker was copied, so no more intervals follow.</param>
+    /// <returns>The number of markers copied.</returns>
+    public int CopyEntropyIntervals(int intervals, ref byte[] dst, ref int len, out bool ended)
+    {
+        ended = false;
+        int done = 0;
+        Span<byte> one = stackalloc byte[1];
+        while (done < intervals)
+        {
+            if (_pos >= _end && !Refill())
+            {
+                ended = true;
+                return done;
+            }
+
+            ReadOnlySpan<byte> avail = _buf.AsSpan(_pos, _end - _pos);
+            int i = avail.IndexOf((byte)0xFF);
+            if (i < 0)
+            {
+                Append(ref dst, ref len, avail);
+                _pos = _end;
+                continue;
+            }
+
+            Append(ref dst, ref len, avail[..i]);
+            _pos += i;
+
+            // A run of 0xFF fill bytes followed by 0 is a stuffed data byte; followed by anything else it is a marker.
+            int c;
+            one[0] = 0xFF;
+            Append(ref dst, ref len, one);
+            _pos++;
+            do
+            {
+                c = TryReadByte();
+                if (c < 0)
+                {
+                    ended = true;
+                    return done;
+                }
+
+                one[0] = (byte)c;
+                Append(ref dst, ref len, one);
+            }
+            while (c == 0xFF);
+
+            if (c == 0)
+            {
+                continue;
+            }
+
+            done++;
+            if (c is < 0xD0 or > 0xD7)
+            {
+                ended = true;
+                return done;
+            }
+        }
+
+        return done;
+    }
+
+    private static void Append(ref byte[] dst, ref int len, ReadOnlySpan<byte> src)
+    {
+        if (src.Length > dst.Length - len)
+        {
+            long need = (long)len + src.Length;
+            if (need > Array.MaxLength)
+            {
+                throw new ImageLimitException("JPEG restart interval data is too large.");
+            }
+
+            byte[] bigger = ArrayPool<byte>.Shared.Rent((int)Math.Max(need, Math.Min((long)dst.Length * 2, Array.MaxLength)));
+            dst.AsSpan(0, len).CopyTo(bigger);
+            if (dst.Length > 0)
+            {
+                ArrayPool<byte>.Shared.Return(dst);
+            }
+
+            dst = bigger;
+        }
+
+        src.CopyTo(dst.AsSpan(len));
+        len += src.Length;
     }
 
     /// <summary>Reads a segment body: the 16-bit length (which counts itself) followed by that many bytes minus two.</summary>

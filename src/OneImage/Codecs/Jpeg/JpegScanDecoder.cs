@@ -109,7 +109,7 @@ internal sealed class JpegCoefficientStore : IDisposable
 }
 
 /// <summary>Decodes the entropy-coded data of one scan into coefficient blocks (T.81 F.2 and G.1.2).</summary>
-internal sealed class JpegScanDecoder
+internal sealed partial class JpegScanDecoder
 {
     private enum Mode
     {
@@ -157,34 +157,7 @@ internal sealed class JpegScanDecoder
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     public bool Decode(JpegScan scan, Func<int, bool>? mcuRowDone, CancellationToken ct)
     {
-        Mode mode = SelectMode(scan);
-        JpegComponent[] comps = scan.Components;
-        JpegHuffmanTable?[] dcT = new JpegHuffmanTable?[comps.Length];
-        JpegHuffmanTable?[] acT = new JpegHuffmanTable?[comps.Length];
-        for (int i = 0; i < comps.Length; i++)
-        {
-            comps[i].DcPred = 0;
-            if (mode < Mode.ArithBaseline)
-            {
-                bool needDc = mode is Mode.Baseline or Mode.DcFirst;
-                bool needAc = mode is Mode.Baseline or Mode.AcFirst or Mode.AcRefine;
-                if (needDc)
-                {
-                    dcT[i] = _t.Dc[comps[i].DcTable] ?? throw new ImageFormatException("JPEG scan uses an undefined DC Huffman table.");
-                }
-
-                if (needAc)
-                {
-                    acT[i] = _t.Ac[comps[i].AcTable] ?? throw new ImageFormatException("JPEG scan uses an undefined AC Huffman table.");
-                }
-
-                if (mode is Mode.Baseline or Mode.AcFirst or Mode.AcRefine && acT[i] is { } acTable && (long)_f.Width * _f.Height >= LookMinPixels && !(DcOnlyComponents is { } d && d[comps[i].Index]))
-                {
-                    // Build the lookahead table up front; for small images it costs more than it saves.
-                    _ = acTable.Look;
-                }
-            }
-        }
+        Mode mode = PrepareTables(scan, out JpegComponent[] comps, out JpegHuffmanTable?[] dcT, out JpegHuffmanTable?[] acT);
 
         JpegArithmeticDecoder? arith = null;
         if (mode >= Mode.ArithBaseline)
@@ -258,6 +231,41 @@ internal sealed class JpegScanDecoder
         }
 
         return true;
+    }
+
+    /// <summary>Selects the scan's mode, resets the DC predictors and resolves its Huffman tables (building the AC lookahead tables for big images).</summary>
+    private Mode PrepareTables(JpegScan scan, out JpegComponent[] comps, out JpegHuffmanTable?[] dcT, out JpegHuffmanTable?[] acT)
+    {
+        Mode mode = SelectMode(scan);
+        comps = scan.Components;
+        dcT = new JpegHuffmanTable?[comps.Length];
+        acT = new JpegHuffmanTable?[comps.Length];
+        for (int i = 0; i < comps.Length; i++)
+        {
+            comps[i].DcPred = 0;
+            if (mode < Mode.ArithBaseline)
+            {
+                bool needDc = mode is Mode.Baseline or Mode.DcFirst;
+                bool needAc = mode is Mode.Baseline or Mode.AcFirst or Mode.AcRefine;
+                if (needDc)
+                {
+                    dcT[i] = _t.Dc[comps[i].DcTable] ?? throw new ImageFormatException("JPEG scan uses an undefined DC Huffman table.");
+                }
+
+                if (needAc)
+                {
+                    acT[i] = _t.Ac[comps[i].AcTable] ?? throw new ImageFormatException("JPEG scan uses an undefined AC Huffman table.");
+                }
+
+                if (mode is Mode.Baseline or Mode.AcFirst or Mode.AcRefine && acT[i] is { } acTable && (long)_f.Width * _f.Height >= LookMinPixels && !(DcOnlyComponents is { } d && d[comps[i].Index]))
+                {
+                    // Build the lookahead table up front; for small images it costs more than it saves.
+                    _ = acTable.Look;
+                }
+            }
+        }
+
+        return mode;
     }
 
     private Mode SelectMode(JpegScan s)
