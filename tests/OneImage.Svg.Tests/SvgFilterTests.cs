@@ -230,7 +230,18 @@ public class SvgFilterTests
         SvgScene scene = SceneBuilder.Build(SvgDocument.Build(xml), SvgLimits.Default, CancellationToken.None);
         const int Size = 600;
         var full = new Capture(Size, Size);
-        SceneRenderer.Render(scene, Size, Size, new ImageRect(0, 0, Size, Size), full, new SvgLimits(), CancellationToken.None);
+
+        // The whole render is computed without shared blocks, the regions with them.
+        FilterBlockCache.Disabled = true;
+        try
+        {
+            SceneRenderer.Render(scene, Size, Size, new ImageRect(0, 0, Size, Size), full, new SvgLimits(), CancellationToken.None);
+        }
+        finally
+        {
+            FilterBlockCache.Disabled = false;
+        }
+
         Assert.Contains(full.Pixels, p => p.A is > 0 and < 255);
 
         foreach (ImageRect region in new[] { new ImageRect(0, 0, 128, 128), new ImageRect(97, 61, 203, 150), new ImageRect(300, 300, 250, 250), new ImageRect(511, 17, 89, 301) })
@@ -326,7 +337,7 @@ public class SvgFilterTests
         Assert.True(max <= 1, $"region differs by {max}");
     }
 
-    private sealed class Capture : IRowSink
+    internal sealed class Capture : IRowSink
     {
         public Capture(int width, int height)
         {

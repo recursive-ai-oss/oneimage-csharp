@@ -70,10 +70,23 @@ internal abstract class FePrimitive
     public bool EmptySub { get; init; }
 
     /// <summary>
+    /// Gets the rectangle <c>feTile</c> takes as this result's tile: the explicit subregion, or the union of the tiles of the results this
+    /// primitive reads (the specification's default subregion); the filter region when it reads a standard input. Unlike
+    /// <see cref="SubX"/> it does not clip the result.
+    /// </summary>
+    public (double X, double Y, double W, double H) Tile { get; set; }
+
+    /// <summary>
     /// How far, in pixels, the primitive reads beyond the pixels it writes, in x and y, when one user unit is <paramref name="scaleX"/> by
     /// <paramref name="scaleY"/> pixels. Infinity means the primitive reads the whole region (a wrapping convolution).
     /// </summary>
     public virtual (double X, double Y) ReachPx(double scaleX, double scaleY) => (0, 0);
+
+    /// <summary>
+    /// <see cref="ReachPx"/> given the filter region in pixels, for primitives whose reach can be known to be pointless there (an erosion
+    /// wider than the region leaves nothing, whatever it reads).
+    /// </summary>
+    public virtual (double X, double Y) ReachIn(double scaleX, double scaleY, PxRect region) => ReachPx(scaleX, scaleY);
 
     /// <summary>The inputs that are results of earlier primitives.</summary>
     public virtual IEnumerable<int> Inputs()
@@ -211,4 +224,196 @@ internal sealed class RFilter
     public required (double X, double Y, double W, double H) Region { get; init; }
 
     public required FePrimitive[] Primitives { get; init; }
+}
+
+/// <summary>One <c>feFuncR/G/B/A</c> transfer function, on straight color in 0..1.</summary>
+internal sealed class FeTransfer
+{
+    public enum Kind
+    {
+        Identity,
+        Table,
+        Discrete,
+        Linear,
+        Gamma,
+    }
+
+    public Kind Type { get; init; }
+
+    public double[] Table { get; init; } = [];
+
+    public double Slope { get; init; } = 1;
+
+    public double Intercept { get; init; }
+
+    public double Amplitude { get; init; } = 1;
+
+    public double Exponent { get; init; } = 1;
+
+    public double Offset { get; init; }
+
+    /// <summary>Applies the function and clamps to 0..1.</summary>
+    public float Apply(float c)
+    {
+        double v;
+        switch (Type)
+        {
+            case Kind.Table when Table.Length > 0:
+            {
+                int n = Table.Length - 1;
+                if (c >= 1 || n == 0)
+                {
+                    v = Table[n];
+                }
+                else
+                {
+                    double f = Math.Max(c, 0) * n;
+                    int k = (int)f;
+                    v = Table[k] + ((f - k) * (Table[k + 1] - Table[k]));
+                }
+
+                break;
+            }
+
+            case Kind.Discrete when Table.Length > 0:
+            {
+                int n = Table.Length;
+                v = Table[Math.Clamp((int)(Math.Max(c, 0) * n), 0, n - 1)];
+                break;
+            }
+
+            case Kind.Linear:
+                v = (Slope * c) + Intercept;
+                break;
+            case Kind.Gamma:
+                v = (Amplitude * Math.Pow(Math.Max(c, 0), Exponent)) + Offset;
+                break;
+            default:
+                return c;
+        }
+
+        return double.IsNaN(v) ? 0 : (float)Math.Clamp(v, 0, 1);
+    }
+}
+
+internal sealed class FeComponentTransfer : FePrimitive
+{
+    /// <summary>Gets the functions for red, green, blue and alpha.</summary>
+    public required FeTransfer[] Funcs { get; init; }
+}
+
+internal sealed class FeMorphology : FePrimitive
+{
+    public bool Dilate { get; init; }
+
+    public double RadiusX { get; init; }
+
+    public double RadiusY { get; init; }
+
+    /// <summary>The window radius in whole pixels (the scaled radius rounded to nearest; below one half there is no window on that axis).</summary>
+    public static int WindowPx(double radiusPx) => double.IsFinite(radiusPx) ? (int)Math.Min(Math.Floor(radiusPx + 0.5), 1 << 30) : 1 << 30;
+
+    public override (double X, double Y) ReachPx(double scaleX, double scaleY) => (WindowPx(RadiusX * scaleX), WindowPx(RadiusY * scaleY));
+
+    public override (double X, double Y) ReachIn(double scaleX, double scaleY, PxRect region)
+    {
+        (double rx, double ry) = ReachPx(scaleX, scaleY);
+        if (!Dilate && ((rx > 0 && (2 * rx) + 1 > region.W) || (ry > 0 && (2 * ry) + 1 > region.H)))
+        {
+            // The window leaves the region everywhere, so every pixel sees transparent black and the result is empty without reading anything.
+            return (0, 0);
+        }
+
+        return (rx, ry);
+    }
+}
+
+/// <summary>Repeats the subregion of its input over its own subregion.</summary>
+internal sealed class FeTile : FePrimitive
+{
+    public override (double X, double Y) ReachPx(double scaleX, double scaleY) => (double.PositiveInfinity, double.PositiveInfinity);
+}
+
+internal sealed class FeTurbulence : FePrimitive
+{
+    public double BaseX { get; init; }
+
+    public double BaseY { get; init; }
+
+    public int Octaves { get; init; } = 1;
+
+    public int Seed { get; init; }
+
+    public bool Stitch { get; init; }
+
+    public bool Fractal { get; init; }
+
+    public override IEnumerable<int> Inputs() => [];
+}
+
+internal sealed class FeDisplacement : FePrimitive
+{
+    public double Scale { get; init; }
+
+    /// <summary>Gets the channel (0 red .. 3 alpha) read for x and for y.</summary>
+    public int XChannel { get; init; } = 3;
+
+    public int YChannel { get; init; } = 3;
+
+    public override IEnumerable<int> Inputs() => [In1, In2];
+
+    public override (double X, double Y) ReachPx(double scaleX, double scaleY) => (Math.Ceiling(Math.Abs(Scale * scaleX) / 2) + 1, Math.Ceiling(Math.Abs(Scale * scaleY) / 2) + 1);
+}
+
+internal enum LightKind
+{
+    Distant,
+    Point,
+    Spot,
+}
+
+/// <summary>A lighting primitive (<c>feDiffuseLighting</c> or <c>feSpecularLighting</c>) with its light source, in user units.</summary>
+internal sealed class FeLighting : FePrimitive
+{
+    public bool Specular { get; init; }
+
+    public double SurfaceScale { get; init; } = 1;
+
+    /// <summary>Gets <c>diffuseConstant</c> or <c>specularConstant</c>.</summary>
+    public double Constant { get; init; } = 1;
+
+    public double Exponent { get; init; } = 1;
+
+    /// <summary>Gets the normal-estimation distances in user units, or 0 for one pixel.</summary>
+    public double UnitX { get; init; }
+
+    public double UnitY { get; init; }
+
+    public Rgba32 Color { get; init; }
+
+    public LightKind Kind { get; init; }
+
+    public double Azimuth { get; init; }
+
+    public double Elevation { get; init; }
+
+    public double X { get; init; }
+
+    public double Y { get; init; }
+
+    public double Z { get; init; }
+
+    public double PointsAtX { get; init; }
+
+    public double PointsAtY { get; init; }
+
+    public double PointsAtZ { get; init; }
+
+    public double SpotExponent { get; init; } = 1;
+
+    /// <summary>Gets the cone half-angle in degrees, or NaN for no cone.</summary>
+    public double ConeAngle { get; init; } = double.NaN;
+
+    public override (double X, double Y) ReachPx(double scaleX, double scaleY) =>
+        (Math.Ceiling(UnitX > 0 ? Math.Min(UnitX * scaleX, 1 << 20) : 1) + 1, Math.Ceiling(UnitY > 0 ? Math.Min(UnitY * scaleY, 1 << 20) : 1) + 1);
 }

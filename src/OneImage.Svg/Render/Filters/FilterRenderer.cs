@@ -14,6 +14,16 @@ internal static class FilterRenderer
 {
     private const double PxLimit = 1e9;
 
+    // Pixels of the filter region times kernel cells that one convolution may take over a whole render (a minute or so of work), so a huge
+    // kernel on a big region fails typed instead of grinding through every tile.
+    private const long MaxConvolveWork = 1L << 33;
+
+    /// <summary>Margins (summed over a filter's primitives) below this many pixels are cheaper to recompute per request than to share in blocks.</summary>
+    private const double MinBlockReachPx = 32;
+
+    /// <summary>Largest filter region, in pixels, that is kept whole as one block when a primitive needs all of it (tiling, wrapping convolution).</summary>
+    private const long MaxWholeBlockPixels = 16L * 1024 * 1024;
+
     /// <summary>Draws the filtered content of <paramref name="layer"/> into <paramref name="target"/>, whose pixel grid <paramref name="ldev"/> maps scene space to.</summary>
     public static void Draw(Canvas target, RLayer layer, Affine ldev, int depth, SvgLimits limits, CancellationToken cancel)
     {
@@ -49,24 +59,136 @@ internal static class FilterRenderer
             needed = ToPx(x0 - 2, y0 - 2, x1 + 2, y1 + 2);
         }
 
-        // From the last filter back to the first: what each one has to produce, and so what it has to read.
+        // How far each filter reads beyond what it writes, and its region.
         int n = filters.Length;
-        var work = new PxRect[n];
         var regions = new PxRect[n];
+        var reachX = new double[n];
+        var reachY = new double[n];
+        double totalReach = 0;
+        for (int i = 0; i < n; i++)
+        {
+            (double rx, double ry, double rw, double rh) = filters[i].Region;
+            (double x0, double y0, double x1, double y1) = fs.TransformRect(rx, ry, rx + rw, ry + rh);
+            regions[i] = ToPx(x0, y0, x1, y1);
+            foreach (FePrimitive p in filters[i].Primitives)
+            {
+                (double px, double py) = p.ReachIn(sx, sy, regions[i]);
+                reachX[i] += px;
+                reachY[i] += py;
+            }
+
+            totalReach += Math.Max(reachX[i], reachY[i]);
+        }
+
+        var plan = new Plan(filters, layer, ctm, fs, sx, sy, regions, reachX, reachY);
+        if (direct && !FilterBlockCache.Disabled && Math.Abs(fs.E) < PxLimit && Math.Abs(fs.F) < PxLimit)
+        {
+            int block = totalReach >= MinBlockReachPx ? (double.IsInfinity(totalReach) ? 0 : totalReach > 160 ? 1024 : 512) : -1;
+            if (block == 0 && regions[n - 1].Area > MaxWholeBlockPixels)
+            {
+                block = -1;
+            }
+
+            if (block >= 0)
+            {
+                DrawBlocks(target, plan, needed, block, depth, limits, cancel);
+                return;
+            }
+        }
+
+        using FilterBuffer? result = Pipeline(plan, needed, depth, limits, cancel);
+        if (result is not null)
+        {
+            Output(target, result, direct, rest);
+        }
+    }
+
+    private sealed record Plan(RFilter[] Filters, RLayer Layer, Affine Ctm, Affine Fs, double Sx, double Sy, PxRect[] Regions, double[] ReachX, double[] ReachY);
+
+    private static long Quantize(double v) => (long)Math.Round(v * 1e6);
+
+    // Draws the part of the output in `needed` from blocks of the filter's output on a grid anchored to the element (so any render of the
+    // element, whatever its offset, finds the same blocks). Size 0 means the whole filter region as one block.
+    private static void DrawBlocks(Canvas target, Plan plan, PxRect needed, int size, int depth, SvgLimits limits, CancellationToken cancel)
+    {
+        Affine fs = plan.Fs;
+        int ax = (int)Math.Floor(fs.E);
+        int ay = (int)Math.Floor(fs.F);
+        PxRect region = plan.Regions[^1];
+        var anchoredRegion = new PxRect(region.X - ax, region.Y - ay, region.W, region.H);
+        var anchoredNeeded = new PxRect(needed.X - ax, needed.Y - ay, needed.W, needed.H);
+        PxRect cover = anchoredNeeded.Intersect(anchoredRegion);
+        if (cover.IsEmpty)
+        {
+            return;
+        }
+
+        long fx = Quantize(fs.E - Math.Floor(fs.E));
+        long fy = Quantize(fs.F - Math.Floor(fs.F));
+        long kx = Quantize(fs.A);
+        long ky = Quantize(fs.D);
+        int s = size == 0 ? 0 : size;
+        long bx0 = s == 0 ? 0 : Math.DivRem(cover.X, s, out long rx) - (rx < 0 ? 1 : 0);
+        long bx1 = s == 0 ? 0 : Math.DivRem(cover.Right - 1, s, out long rx1) - (rx1 < 0 ? 1 : 0);
+        long by0 = s == 0 ? 0 : Math.DivRem(cover.Y, s, out long ry) - (ry < 0 ? 1 : 0);
+        long by1 = s == 0 ? 0 : Math.DivRem(cover.Bottom - 1, s, out long ry1) - (ry1 < 0 ? 1 : 0);
+        for (long by = by0; by <= by1; by++)
+        {
+            for (long bx = bx0; bx <= bx1; bx++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                PxRect blockRect = s == 0 ? anchoredRegion : new PxRect((int)(bx * s), (int)(by * s), s, s).Intersect(anchoredRegion);
+                if (blockRect.IsEmpty)
+                {
+                    continue;
+                }
+
+                var key = new FilterBlockKey(bx, by, s, kx, ky, fx, fy);
+                using FilterBlockCache.Lease lease = FilterBlockCache.Get(plan.Layer, key, () => ComputeBlock(plan, blockRect, ax, ay, depth, limits, cancel));
+                if (lease.Pixels is { } px)
+                {
+                    PxRect r = lease.Rect;
+                    PlaceDirect(target, px, new PxRect(r.X + ax, r.Y + ay, r.W, r.H));
+                }
+            }
+        }
+    }
+
+    // The filter's output for one block (given in anchored coordinates), cut to the block.
+    private static (Rgba32[]? Pixels, PxRect Rect) ComputeBlock(Plan plan, PxRect blockRect, int ax, int ay, int depth, SvgLimits limits, CancellationToken cancel)
+    {
+        var local = new PxRect(blockRect.X + ax, blockRect.Y + ay, blockRect.W, blockRect.H);
+        using FilterBuffer? buf = Pipeline(plan, local, depth, limits, cancel);
+        if (buf is null)
+        {
+            return (null, default);
+        }
+
+        PxRect crop = buf.Rect.Intersect(local);
+        if (crop.IsEmpty)
+        {
+            return (null, default);
+        }
+
+        Rgba32[] px = System.Buffers.ArrayPool<Rgba32>.Shared.Rent((int)crop.Area);
+        buf.ToRgba(px.AsSpan(0, (int)crop.Area), crop);
+        return (px, new PxRect(crop.X - ax, crop.Y - ay, crop.W, crop.H));
+    }
+
+    // Runs the filters over what is needed of the last one's output; null when nothing of the region is needed. The buffer's rectangle
+    // covers at least the needed part of the region (it may extend past it by the last filter's own margin).
+    private static FilterBuffer? Pipeline(Plan plan, PxRect needed, int depth, SvgLimits limits, CancellationToken cancel)
+    {
+        RFilter[] filters = plan.Filters;
+        int n = filters.Length;
+        PxRect[] regions = plan.Regions;
+        var work = new PxRect[n];
+
+        // From the last filter back to the first: what each one has to produce, and so what it has to read.
         PxRect need = needed;
         for (int i = n - 1; i >= 0; i--)
         {
-            RFilter f = filters[i];
-            (double rx, double ry, double rw, double rh) = f.Region;
-            (double x0, double y0, double x1, double y1) = fs.TransformRect(rx, ry, rx + rw, ry + rh);
-            regions[i] = ToPx(x0, y0, x1, y1);
-            double mx = 0, my = 0;
-            foreach (FePrimitive p in f.Primitives)
-            {
-                (double px, double py) = p.ReachPx(sx, sy);
-                mx += px;
-                my += py;
-            }
+            double mx = plan.ReachX[i], my = plan.ReachY[i];
 
             PxRect wk;
             if (double.IsInfinity(mx) || double.IsInfinity(my))
@@ -82,7 +204,7 @@ internal static class FilterRenderer
 
             if (wk.IsEmpty)
             {
-                return;
+                return null;
             }
 
             if (wk.Area > limits.MaxFilterPixels)
@@ -95,6 +217,8 @@ internal static class FilterRenderer
         }
 
         cancel.ThrowIfCancellationRequested();
+        Affine fs = plan.Fs;
+        Affine ctm = plan.Ctm;
 
         // The element's content on the first filter's pixels.
         FilterBuffer? current;
@@ -104,7 +228,7 @@ internal static class FilterRenderer
             Affine dev0 = Affine.Translate(-wk0.X, -wk0.Y).Multiply(fs).Multiply(toScene);
             using var canvas = new Canvas(wk0.W, wk0.H, PixelFormat.Rgba8);
             (double qx0, double qy0, double qx1, double qy1) = RPatternPaint.Invert(dev0).TransformRect(-1, -1, wk0.W + 1, wk0.H + 1);
-            foreach (RNode child in layer.Children)
+            foreach (RNode child in plan.Layer.Children)
             {
                 SceneRenderer.DrawNode(canvas, child, dev0, qx0, qy0, qx1, qy1, depth + 1, limits, cancel);
             }
@@ -130,17 +254,19 @@ internal static class FilterRenderer
                     prev.Dispose();
                 }
 
-                var ctx = new Context(filters[i], fs, ctm, regions[i], work[i], sx, sy, depth, limits, cancel);
+                var ctx = new Context(filters[i], fs, ctm, regions[i], work[i], plan.Sx, plan.Sy, depth, limits, cancel);
                 FilterBuffer result = Evaluate(ctx, current);
                 current.Dispose();
                 current = result;
             }
 
-            Output(target, current, direct, rest);
+            FilterBuffer done = current;
+            current = null;
+            return done;
         }
         finally
         {
-            current.Dispose();
+            current?.Dispose();
         }
     }
 
@@ -167,27 +293,7 @@ internal static class FilterRenderer
             result.ToRgba(px.AsSpan(0, r.W * r.H));
             if (direct)
             {
-                PxRect dst = r.Intersect(new PxRect(0, 0, target.Width, target.Height));
-                if (dst.IsEmpty)
-                {
-                    return;
-                }
-
-                Rgba32[] part = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(dst.W * dst.H);
-                try
-                {
-                    for (int y = 0; y < dst.H; y++)
-                    {
-                        Array.Copy(px, (((dst.Y - r.Y + y) * r.W) + (dst.X - r.X)), part, y * dst.W, dst.W);
-                    }
-
-                    target.CopyFrom<Rgba32>(part.AsSpan(0, dst.W * dst.H), new ImageRect(dst.X, dst.Y, dst.W, dst.H));
-                }
-                finally
-                {
-                    System.Buffers.ArrayPool<Rgba32>.Shared.Return(part);
-                }
-
+                PlaceDirect(target, px, r);
                 return;
             }
 
@@ -205,6 +311,31 @@ internal static class FilterRenderer
         finally
         {
             System.Buffers.ArrayPool<Rgba32>.Shared.Return(px);
+        }
+    }
+
+    // Copies the part of straight 8-bit pixels of rectangle r (in the target's own pixels) that lies inside the target.
+    private static void PlaceDirect(Canvas target, Rgba32[] px, PxRect r)
+    {
+        PxRect dst = r.Intersect(new PxRect(0, 0, target.Width, target.Height));
+        if (dst.IsEmpty)
+        {
+            return;
+        }
+
+        Rgba32[] part = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(dst.W * dst.H);
+        try
+        {
+            for (int y = 0; y < dst.H; y++)
+            {
+                Array.Copy(px, (((dst.Y - r.Y + y) * r.W) + (dst.X - r.X)), part, y * dst.W, dst.W);
+            }
+
+            target.CopyFrom<Rgba32>(part.AsSpan(0, dst.W * dst.H), new ImageRect(dst.X, dst.Y, dst.W, dst.H));
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<Rgba32>.Shared.Return(part);
         }
     }
 
@@ -335,6 +466,19 @@ internal static class FilterRenderer
         return ToPx(x0, y0, x1, y1).Intersect(c.Region);
     }
 
+    // The tile feTile repeats: the input's tile rectangle in pixels.
+    private static PxRect TileRect(Context c, FePrimitive p)
+    {
+        (double x, double y, double w, double h) = p.Tile;
+        if (!(w > 0) || !(h > 0))
+        {
+            return new PxRect(0, 0, 0, 0);
+        }
+
+        (double x0, double y0, double x1, double y1) = c.Fs.TransformRect(x, y, x + w, y + h);
+        return ToPx(x0, y0, x1, y1).Intersect(c.Region);
+    }
+
     private static FilterBuffer Run(Context c, FePrimitive p, FilterBuffer source, FilterBuffer?[] results)
     {
         PxRect rect = c.Work;
@@ -413,6 +557,11 @@ internal static class FilterRenderer
 
                 case FeConvolve conv:
                 {
+                    if (c.Region.Area * conv.OrderX * conv.OrderY > MaxConvolveWork)
+                    {
+                        throw new ImageLimitException($"A convolution of a {c.Region.Area:N0}-pixel region by {conv.OrderX * conv.OrderY} kernel cells is more work than the limit allows.");
+                    }
+
                     in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
                     result = new FilterBuffer(rect, p.Linear);
                     FilterOps.Convolve(in1.Data, result.Data, w, h, rect.X, rect.Y, c.Region, conv);
@@ -429,6 +578,63 @@ internal static class FilterRenderer
                 case FeImage image:
                 {
                     result = Picture(c, image, rect, sub);
+                    break;
+                }
+
+                case FeComponentTransfer ct:
+                {
+                    in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
+                    result = new FilterBuffer(rect, p.Linear);
+                    FilterEffects.ComponentTransfer(in1.Data, result.Data, count, ct.Funcs);
+                    break;
+                }
+
+                case FeMorphology morph:
+                {
+                    in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
+                    result = new FilterBuffer(rect, p.Linear);
+                    FilterEffects.Morphology(in1.Data, result.Data, w, h, FeMorphology.WindowPx(morph.RadiusX * c.Sx), FeMorphology.WindowPx(morph.RadiusY * c.Sy), morph.Dilate);
+                    break;
+                }
+
+                case FeTile:
+                {
+                    in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
+                    result = new FilterBuffer(rect, p.Linear);
+                    PxRect tile = p.In1 >= 0 ? TileRect(c, c.Filter.Primitives[p.In1]) : c.Region;
+                    FilterEffects.Tile(in1.Data, result.Data, rect, tile, sub);
+                    break;
+                }
+
+                case FeTurbulence turb:
+                {
+                    result = new FilterBuffer(rect, p.Linear);
+                    if (!sub.IsEmpty)
+                    {
+                        // The stitching tile is the subregion scaled to pixels (the points themselves are in user units), as renderers do. It
+                        // is measured from the user-space origin, not the render tile, so every tile of a render stitches alike.
+                        double tx0 = p.SubX * c.Sx, ty0 = p.SubY * c.Sy, tw = p.SubW * c.Sx, th = p.SubH * c.Sy;
+                        FilterEffects.Turbulence(result.Data, rect, c.Fs.A, c.Fs.D, c.Fs.E, c.Fs.F, turb, tx0, ty0, tw, th);
+                    }
+
+                    break;
+                }
+
+                case FeDisplacement disp:
+                {
+                    in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
+                    in2 = Input(c, p.In2, p.Linear, source, results, out tmp2);
+                    result = new FilterBuffer(rect, p.Linear);
+                    FilterEffects.Displace(in1.Data, in2.Data, result.Data, rect, disp.Scale * c.Sx, disp.Scale * c.Sy, disp.XChannel, disp.YChannel);
+                    break;
+                }
+
+                case FeLighting light:
+                {
+                    in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
+                    result = new FilterBuffer(rect, p.Linear);
+                    FilterEffects.LightSetup setup = LightSetup(c, light);
+                    FilterEffects.Lighting(in1.Data, result.Data, rect, c.Region, setup);
                     break;
                 }
 
@@ -452,6 +658,57 @@ internal static class FilterRenderer
 
         result.ClearOutside(sub);
         return result;
+    }
+
+    // The light in pixel units of the filter grid: positions through the grid transform, heights by the mean scale. The surface height
+    // (surfaceScale) stays in pixel units of its own, as renderers do.
+    private static FilterEffects.LightSetup LightSetup(Context c, FeLighting l)
+    {
+        double sz = (c.Sx + c.Sy) / 2;
+        (double lx, double ly) = c.Fs.Apply(l.X, l.Y);
+        double lz = l.Z * sz;
+        double sxv = 0, syv = 0, szv = 0;
+        double cosCone = -2;
+        if (l.Kind == LightKind.Distant)
+        {
+            double az = l.Azimuth * Math.PI / 180;
+            double el = l.Elevation * Math.PI / 180;
+            lx = Math.Cos(az) * Math.Cos(el);
+            ly = Math.Sin(az) * Math.Cos(el);
+            lz = Math.Sin(el);
+        }
+        else if (l.Kind == LightKind.Spot)
+        {
+            (double px, double py) = c.Fs.Apply(l.PointsAtX, l.PointsAtY);
+            sxv = px - lx;
+            syv = py - ly;
+            szv = (l.PointsAtZ * sz) - lz;
+            double n = Math.Sqrt((sxv * sxv) + (syv * syv) + (szv * szv));
+            if (n > 0)
+            {
+                sxv /= n;
+                syv /= n;
+                szv /= n;
+            }
+
+            if (!double.IsNaN(l.ConeAngle))
+            {
+                cosCone = Math.Cos(Math.Abs(l.ConeAngle) * Math.PI / 180);
+            }
+        }
+
+        float r = l.Color.R / 255f, g = l.Color.G / 255f, b = l.Color.B / 255f;
+        if (l.Linear)
+        {
+            r = FilterColor.SrgbToLinear(r);
+            g = FilterColor.SrgbToLinear(g);
+            b = FilterColor.SrgbToLinear(b);
+        }
+
+        bool unit = l.UnitX > 0 && l.UnitY > 0;
+        return new FilterEffects.LightSetup(
+            l.Specular, l.SurfaceScale, l.Constant, l.Exponent, Math.Max(l.UnitX * c.Sx, 1e-3), Math.Max(l.UnitY * c.Sy, 1e-3), unit,
+            l.Kind, lx, ly, lz, sxv, syv, szv, l.SpotExponent, cosCone, r, g, b);
     }
 
     // Offsets move whole pixels: the scaled distance is cut toward zero (fractions are dropped, not rounded).

@@ -614,6 +614,22 @@ foreach (bool lossless in new[] { true, false })
         Console.Error.WriteLine("svg filter smoke failed");
         return 1;
     }
+
+    // Filters, part two: noise as a height map under a point light, morphology, tiling, displacement, component transfer, and a blur wide
+    // enough to be computed in shared blocks.
+    byte[] effectsDoc = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='20' height='20'>"
+        + "<filter id='lit' x='0' y='0' width='1' height='1'><feTurbulence type='fractalNoise' baseFrequency='0.3' numOctaves='2' result='n'/><feDiffuseLighting in='n' surfaceScale='3' result='d'><fePointLight x='5' y='5' z='6'/></feDiffuseLighting>"
+        + "<feSpecularLighting in='n' specularExponent='8' result='s'><feSpotLight x='10' y='2' z='8' pointsAtX='8' pointsAtY='8' limitingConeAngle='50'/></feSpecularLighting><feMerge><feMergeNode in='d'/><feMergeNode in='s'/></feMerge></filter>"
+        + "<filter id='mix' x='0' y='0' width='1' height='1'><feMorphology operator='dilate' radius='1'/><feComponentTransfer><feFuncR type='table' tableValues='1 0'/></feComponentTransfer><feFlood flood-color='navy' x='1' y='1' width='2' height='2' result='c'/><feTile in='c' result='t'/><feDisplacementMap in='SourceGraphic' in2='t' scale='2' xChannelSelector='R' yChannelSelector='B'/></filter>"
+        + "<filter id='wide' x='-1' y='-1' width='3' height='3'><feGaussianBlur stdDeviation='8'/></filter>"
+        + "<rect x='1' y='1' width='8' height='8' filter='url(#lit)'/><rect x='11' y='1' width='8' height='8' fill='tomato' filter='url(#mix)'/><rect x='6' y='12' width='8' height='6' fill='teal' filter='url(#wide)'/></svg>");
+    Rgba32[] effectPixels = Image.Load(effectsDoc, new LoadOptions { Configuration = svgConfig }).Resize(width: 40).ToArray<Rgba32>();
+    if (effectPixels[(10 * 40) + 10].A != 255 || effectPixels[(30 * 40) + 20].A == 0)
+    {
+        Console.Error.WriteLine("svg filter effects smoke failed");
+        return 1;
+    }
 }
 
 // SVG text: fonts added from files, a text element with tspans, text along a path and text as a clip path, through the Svg and Text packages.

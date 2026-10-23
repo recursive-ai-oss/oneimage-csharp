@@ -189,33 +189,39 @@ internal sealed class FilterBuffer : IDisposable
     }
 
     /// <summary>Writes the pixels as straight 8-bit sRGB (rounded once) into <paramref name="dest"/>, a rectangle of the buffer's size.</summary>
-    public void ToRgba(Span<Rgba32> dest)
+    public void ToRgba(Span<Rgba32> dest) => ToRgba(dest, Rect);
+
+    /// <summary>Converts the part <paramref name="crop"/> of the buffer (which must lie inside it) to straight 8-bit RGBA, row after row.</summary>
+    public void ToRgba(Span<Rgba32> dest, PxRect crop)
     {
         float[] s = Data;
-        int n = Rect.W * Rect.H;
-        for (int i = 0; i < n; i++)
+        int o = 0;
+        for (int y = crop.Y; y < crop.Bottom; y++)
         {
-            int p = i * 4;
-            float a = s[p + 3];
-            if (!(a > 0))
+            int p = (((y - Rect.Y) * Rect.W) + (crop.X - Rect.X)) * 4;
+            for (int x = 0; x < crop.W; x++, p += 4)
             {
-                dest[i] = default;
-                continue;
-            }
+                float a = s[p + 3];
+                if (!(a > 0))
+                {
+                    dest[o++] = default;
+                    continue;
+                }
 
-            a = Math.Min(a, 1f);
-            float inv = 1f / a;
-            float r = Math.Min(s[p] * inv, 1f);
-            float g = Math.Min(s[p + 1] * inv, 1f);
-            float b = Math.Min(s[p + 2] * inv, 1f);
-            if (Linear)
-            {
-                r = FilterColor.LinearToSrgb(r);
-                g = FilterColor.LinearToSrgb(g);
-                b = FilterColor.LinearToSrgb(b);
-            }
+                a = Math.Min(a, 1f);
+                float inv = 1f / a;
+                float r = Math.Min(s[p] * inv, 1f);
+                float g = Math.Min(s[p + 1] * inv, 1f);
+                float b = Math.Min(s[p + 2] * inv, 1f);
+                if (Linear)
+                {
+                    r = FilterColor.LinearToSrgb(r);
+                    g = FilterColor.LinearToSrgb(g);
+                    b = FilterColor.LinearToSrgb(b);
+                }
 
-            dest[i] = new Rgba32(Byte(r), Byte(g), Byte(b), Byte(a));
+                dest[o++] = new Rgba32(Byte(r), Byte(g), Byte(b), Byte(a));
+            }
         }
     }
 

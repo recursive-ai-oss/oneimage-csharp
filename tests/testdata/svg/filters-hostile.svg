@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Values that must stay cheap: huge radii and counts, a huge region, many octaves, a long kernel, a huge displacement. -->
+  <filter id="m1" x="-1e7" y="-1e7" width="2e7" height="2e7"><feMorphology radius="1e9"/></filter>
+  <filter id="m2" x="0" y="0" width="1" height="1"><feMorphology operator="dilate" radius="1e30 5"/></filter>
+  <filter id="t1" x="0" y="0" width="1" height="1"><feTurbulence baseFrequency="1e9 1e-9" numOctaves="2147483647" seed="-1e18" stitchTiles="stitch"/></filter>
+  <filter id="c1" x="0" y="0" width="1" height="1"><feConvolveMatrix order="64 64" kernelMatrix="1" edgeMode="wrap"/></filter>
+  <filter id="d1" x="0" y="0" width="1" height="1"><feTurbulence baseFrequency="0.1" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="1e15"/></filter>
+  <filter id="l1" x="0" y="0" width="1" height="1"><feDiffuseLighting surfaceScale="1e30" kernelUnitLength="1e-30 1e30"><fePointLight x="1e30" y="-1e30" z="1e30"/></feDiffuseLighting></filter>
+  <filter id="tile" x="-1e6" y="-1e6" width="2e6" height="2e6"><feFlood x="0" y="0" width="1e-3" height="1e-3"/><feTile/></filter>
+  <rect x="5" y="5" width="20" height="20" fill="blue" filter="url(#m1)"/>
+  <rect x="30" y="5" width="20" height="20" fill="red" filter="url(#m2)"/>
+  <rect x="55" y="5" width="20" height="20" fill="green" filter="url(#t1)"/>
+  <rect x="5" y="30" width="20" height="20" fill="blue" filter="url(#c1)"/>
+  <rect x="30" y="30" width="20" height="20" fill="red" filter="url(#d1)"/>
+  <rect x="55" y="30" width="20" height="20" fill="green" filter="url(#l1)"/>
+  <rect x="80" y="30" width="15" height="15" fill="gray" filter="url(#tile)"/>
+</svg>

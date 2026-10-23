@@ -50,8 +50,6 @@ internal sealed partial class SceneBuilder
     private static readonly HashSet<string> PrimitiveNames = new(StringComparer.Ordinal)
     {
         "feBlend", "feColorMatrix", "feComposite", "feConvolveMatrix", "feDropShadow", "feFlood", "feGaussianBlur", "feImage", "feMerge", "feOffset",
-
-        // Primitives that are recognized but not drawn yet: they pass their input through unchanged.
         "feComponentTransfer", "feMorphology", "feTile", "feTurbulence", "feDisplacementMap", "feDiffuseLighting", "feSpecularLighting",
     };
 
@@ -691,7 +689,7 @@ internal sealed partial class SceneBuilder
                 }
 
                 Count();
-                FePrimitive p = BuildPrimitive(child, prims.Count, names, primObj, box, (rx, ry, rw, rh), deco);
+                FePrimitive p = BuildPrimitive(child, prims.Count, names, primObj, box, (rx, ry, rw, rh), deco, prims);
                 prims.Add(p);
                 if (child.Attr("result") is { Length: > 0 } rn)
                 {
@@ -802,7 +800,7 @@ internal sealed partial class SceneBuilder
         return n is { Length: 1 } ? n[0] : fallback;
     }
 
-    private FePrimitive BuildPrimitive(SvgElement e, int index, Dictionary<string, int> names, bool primObj, Box? box, (double X, double Y, double W, double H) region, Deco deco)
+    private FePrimitive BuildPrimitive(SvgElement e, int index, Dictionary<string, int> names, bool primObj, Box? box, (double X, double Y, double W, double H) region, Deco deco, List<FePrimitive> prior)
     {
         bool linear = LinearInterpolation(e);
         int in1 = ResolveInput(e.Attr("in"), index, names);
@@ -812,7 +810,7 @@ internal sealed partial class SceneBuilder
 
         // Subregion: each of x, y, width, height that is missing takes the filter region's.
         SvgStyle est = DefinedStyle(e);
-        (double sx, double sy, double sw, double sh, bool empty) = Subregion(e, primObj, box, region, est, deco);
+        (double sx, double sy, double sw, double sh, bool empty) = Subregion(e, primObj, box, region, region, est, deco);
 
         FePrimitive p;
         switch (e.Name)
@@ -916,10 +914,13 @@ internal sealed partial class SceneBuilder
                 p = ImageOf(e, linear, sx, sy, sw, sh, empty, region, deco, box);
                 break;
             default:
-                p = new FeColorMatrix { In1 = in1, Linear = linear, Matrix = IdentityMatrix, SubX = sx, SubY = sy, SubW = sw, SubH = sh, EmptySub = empty };
+                p = BuildEffectPrimitive(e, in1, in2, linear, primObj, box, sx, sy, sw, sh, empty)
+                    ?? new FeColorMatrix { In1 = in1, Linear = linear, Matrix = IdentityMatrix, SubX = sx, SubY = sy, SubW = sw, SubH = sh, EmptySub = empty };
                 break;
         }
 
+        (double tx, double ty, double tw, double th, bool tEmpty) = Subregion(e, primObj, box, region, DefaultSubregion(e, in1, in2, index, names, prior, region), est, deco);
+        p.Tile = tEmpty ? (0, 0, 0, 0) : (tx, ty, tw, th);
         return p;
     }
 
@@ -941,9 +942,60 @@ internal sealed partial class SceneBuilder
         return x < 0 || y < 0 ? (0, 0) : (x, y);
     }
 
-    private (double X, double Y, double W, double H, bool Empty) Subregion(SvgElement e, bool primObj, Box? box, (double X, double Y, double W, double H) region, in SvgStyle st, Deco deco)
+    // The subregion a primitive gets for the values it does not set: the union of the subregions of the results it reads, or the filter
+    // region when it reads a standard input or nothing (and for feTile, which fills the whole region).
+    private static (double X, double Y, double W, double H) DefaultSubregion(SvgElement e, int in1, int in2, int index, Dictionary<string, int> names, List<FePrimitive> prior, (double X, double Y, double W, double H) region)
     {
-        double x = region.X, y = region.Y, w = region.W, h = region.H;
+        var refs = new List<int>();
+        switch (e.Name)
+        {
+            case "feFlood" or "feImage" or "feTurbulence" or "feTile":
+                return region;
+            case "feMerge":
+                foreach (SvgElement node in e.Children)
+                {
+                    if (node.Name == "feMergeNode")
+                    {
+                        refs.Add(ResolveInput(node.Attr("in"), index, names));
+                    }
+                }
+
+                break;
+            case "feBlend" or "feComposite" or "feDisplacementMap":
+                refs.Add(in1);
+                refs.Add(in2);
+                break;
+            default:
+                refs.Add(in1);
+                break;
+        }
+
+        if (refs.Count == 0 || refs.Exists(r => r < 0 || r >= prior.Count))
+        {
+            return region;
+        }
+
+        double x0 = double.PositiveInfinity, y0 = double.PositiveInfinity, x1 = double.NegativeInfinity, y1 = double.NegativeInfinity;
+        foreach (int r in refs)
+        {
+            (double qx, double qy, double qw, double qh) = prior[r].Tile;
+            if (!(qw > 0) || !(qh > 0))
+            {
+                continue;
+            }
+
+            x0 = Math.Min(x0, qx);
+            y0 = Math.Min(y0, qy);
+            x1 = Math.Max(x1, qx + qw);
+            y1 = Math.Max(y1, qy + qh);
+        }
+
+        return x1 > x0 && y1 > y0 ? (x0, y0, x1 - x0, y1 - y0) : region;
+    }
+
+    private (double X, double Y, double W, double H, bool Empty) Subregion(SvgElement e, bool primObj, Box? box, (double X, double Y, double W, double H) region, (double X, double Y, double W, double H) def, in SvgStyle st, Deco deco)
+    {
+        double x = def.X, y = def.Y, w = def.W, h = def.H;
         bool empty = false;
         if (primObj)
         {
@@ -1089,8 +1141,9 @@ internal sealed partial class SceneBuilder
 
         if (divisor == 0)
         {
+            // A sum that is zero up to rounding (0.1 eight times minus 0.8) counts as zero.
             divisor = kernel.Sum();
-            if (divisor == 0)
+            if (Math.Abs(divisor) < 1e-9)
             {
                 divisor = 1;
             }

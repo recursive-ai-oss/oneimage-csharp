@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <!-- Component transfer, morphology, tile, turbulence, displacement and lighting, one of each. -->
+  <defs>
+    <radialGradient id="rg" r="0.5"><stop offset="0.5" stop-color="white"/><stop offset="1" stop-color="black" stop-opacity="0"/></radialGradient>
+    <filter id="ct"><feComponentTransfer><feFuncR type="table" tableValues="1 0.2"/><feFuncG type="discrete" tableValues="0 0.5 1"/><feFuncB type="gamma" amplitude="1.2" exponent="0.6" offset="0.05"/><feFuncA type="linear" slope="0.9" intercept="0.1"/></feComponentTransfer></filter>
+    <filter id="er"><feMorphology operator="erode" radius="2 1"/></filter>
+    <filter id="di"><feMorphology operator="dilate" radius="3"/></filter>
+    <filter id="tile" x="0" y="0" width="1" height="1"><feFlood flood-color="navy" x="4" y="4" width="8" height="6"/><feOffset dx="2" dy="2"/><feTile/></filter>
+    <filter id="turb" x="0" y="0" width="1" height="1"><feTurbulence type="turbulence" baseFrequency="0.05 0.08" numOctaves="3" seed="3"/></filter>
+    <filter id="fract" x="0" y="0" width="1" height="1"><feTurbulence type="fractalNoise" baseFrequency="0.07" numOctaves="2" stitchTiles="stitch"/></filter>
+    <filter id="disp" x="-0.1" y="-0.1" width="1.2" height="1.2"><feTurbulence baseFrequency="0.06" numOctaves="2" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="10" xChannelSelector="R" yChannelSelector="G"/></filter>
+    <filter id="diffuse" color-interpolation-filters="sRGB"><feDiffuseLighting surfaceScale="4" diffuseConstant="1.1" lighting-color="seagreen"><feDistantLight azimuth="45" elevation="50"/></feDiffuseLighting></filter>
+    <filter id="spec" color-interpolation-filters="sRGB"><feSpecularLighting in="SourceAlpha" specularExponent="12" surfaceScale="3" kernelUnitLength="1.5" lighting-color="gold"><fePointLight x="40" y="130" z="25"/></feSpecularLighting></filter>
+    <filter id="spot" color-interpolation-filters="sRGB"><feDiffuseLighting><feSpotLight x="200" y="140" z="30" pointsAtX="180" pointsAtY="100" pointsAtZ="0" specularExponent="2" limitingConeAngle="40"/></feDiffuseLighting></filter>
+  </defs>
+  <rect x="8" y="8" width="40" height="30" fill="#aabbcc" opacity="0.8" filter="url(#ct)"/>
+  <rect x="56" y="8" width="40" height="30" fill="crimson" filter="url(#er)"/>
+  <circle cx="125" cy="23" r="12" fill="orange" filter="url(#di)"/>
+  <rect x="150" y="8" width="40" height="30" filter="url(#tile)"/>
+  <rect x="198" y="8" width="34" height="30" filter="url(#turb)"/>
+  <rect x="8" y="50" width="50" height="40" filter="url(#fract)"/>
+  <g transform="translate(86 52) rotate(12)"><rect width="50" height="36" fill="url(#rg)" filter="url(#disp)"/></g>
+  <rect x="150" y="50" width="50" height="40" fill="url(#rg)" filter="url(#diffuse)"/>
+  <rect x="8" y="100" width="60" height="50" fill="url(#rg)" filter="url(#spec)"/>
+  <rect x="150" y="100" width="70" height="50" fill="url(#rg)" filter="url(#spot)"/>
+</svg>
