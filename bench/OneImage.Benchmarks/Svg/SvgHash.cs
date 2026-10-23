@@ -31,6 +31,14 @@ internal static class SvgHash
         }
 
         docs.Add(("text-page", Encoding.UTF8.GetBytes(SvgTextBenchmarks.Document()), 800));
+        docs.Add(("filters-effects.svg", File.ReadAllBytes(Path.Combine(dir, "filters-effects.svg")), 500));
+        docs.Add(("filter-blur8", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.BlurDocument()), 1024));
+        docs.Add(("filter-blur30", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.BlurDocument(30)), 2048));
+        docs.Add(("filter-blur1.5", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.BlurDocument(1.5)), 1024));
+        docs.Add(("filter-blur-small-h", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.BlurDocument(0.9)), 333));
+        docs.Add(("filter-shadow", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.ShadowDocument()), 1024));
+        docs.Add(("filter-lit", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.LitDocument()), 1024));
+        docs.Add(("filter-icon", Encoding.UTF8.GetBytes(SvgFilterBenchmarks.IconDocument()), 256));
         foreach ((string name, byte[] data, int width) in docs)
         {
             Image image = Image.Load(data, options).Resize(width: width);

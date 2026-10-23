@@ -1,299 +1,212 @@
 using System.Buffers;
+using OneImage.Kernels;
 
 namespace OneImage.Svg.Render;
 
 /// <summary>
-/// Gaussian blur of premultiplied float RGBA rows, the way the filter specification defines <c>feGaussianBlur</c>: for a standard deviation of
+/// Gaussian blur of premultiplied float RGBA, the way the filter specification defines <c>feGaussianBlur</c>: for a standard deviation of
 /// 2 pixels or more, three successive box blurs of a size derived from it (with the two-box-plus-one arrangement for even sizes); below
 /// that, a true Gaussian kernel. Everything outside the buffer is transparent. Each axis is handled alone, and a deviation of zero or less
 /// leaves that axis as it is.
 /// </summary>
+/// <remarks>
+/// The sums run in double precision with the same operations in the same order as <see cref="FilterBlurReference"/> (the scalar reference), and
+/// every pass rounds to float, so the result is bit for bit the reference's. What differs is the layout: lines (rows, or columns read in place with
+/// a stride) go through all three boxes in line-sized scratch, so a full-size buffer is read and written once per axis instead of once per box;
+/// four lines run together; lines that are entirely zero are skipped (their blur is zero); large buffers are cut into bands that run in parallel.
+/// The blur is in place, so no second full-size buffer is needed. Without AVX the scalar reference runs.
+/// </remarks>
 internal static class FilterBlur
 {
-    // Larger deviations are clamped; the effect is already a flat wash by then and the sizes stay inside int range.
-    private const double MaxSigma = 1e6;
+    /// <summary>Pixels (width x height) from which the bands of a pass run in parallel.</summary>
+    private const long ParallelPixels = 1L << 17;
+
+    /// <summary>Largest number of threads one blur uses (the engine's default per-call degree).</summary>
+    private static readonly int Degree = Math.Max(1, Math.Min(4, Environment.ProcessorCount));
+
+    /// <summary>Tests set this to run the scalar reference in place of the vector code.</summary>
+    internal static bool ForceScalar { get; set; }
 
     /// <summary>The box size for a deviation (filter effects specification, <c>feGaussianBlur</c>): floor(σ · 3 · √(2π) / 4 + 0.5).</summary>
-    internal static int BoxSize(double sigma) => (int)Math.Floor((Math.Min(sigma, MaxSigma) * 3 * Math.Sqrt(2 * Math.PI) / 4) + 0.5);
+    internal static int BoxSize(double sigma) => FilterBlurReference.BoxSize(sigma);
 
     /// <summary>How many pixels beyond a pixel the blur of that deviation (in pixels) reads.</summary>
-    public static int ReachPx(double sigma)
+    public static int ReachPx(double sigma) => FilterBlurReference.ReachPx(sigma);
+
+    /// <summary>Blurs <paramref name="data"/> (<paramref name="w"/> x <paramref name="h"/> RGBA floats) in place with the given deviations in pixels.</summary>
+    public static void Apply(float[] data, int w, int h, double sigmaX, double sigmaY)
     {
-        if (!(sigma > 0))
+        if (w <= 0 || h <= 0 || (!(sigmaX > 0) && !(sigmaY > 0)))
         {
-            return 0;
+            return;
         }
 
-        if (sigma < 2)
+        // Scratch for four lines is 16 floats per pixel of the longer side; sizes beyond int range use the reference.
+        if (ForceScalar || !BlurKernel.IsSupported || (long)Math.Max(w, h) * 16 > int.MaxValue)
         {
-            return (int)Math.Ceiling(sigma * 3);
+            ApplyReference(data, w, h, sigmaX, sigmaY);
+            return;
         }
 
-        int d = BoxSize(sigma);
-        return 3 * ((d / 2) + 1);
-    }
-
-    /// <summary>
-    /// Blurs <paramref name="a"/> (<paramref name="w"/> x <paramref name="h"/> RGBA floats) with the given deviations in pixels.
-    /// <paramref name="b"/> is scratch of the same size. Returns the array that holds the result (<paramref name="a"/> or <paramref name="b"/>).
-    /// </summary>
-    public static float[] Apply(float[] a, float[] b, int w, int h, double sigmaX, double sigmaY)
-    {
-        float[] src = a;
-        float[] dst = b;
         if (sigmaX > 0)
         {
-            Axis(ref src, ref dst, w, h, sigmaX, horizontal: true);
+            Horizontal(data, w, h, sigmaX);
         }
 
         if (sigmaY > 0)
         {
-            Axis(ref src, ref dst, w, h, sigmaY, horizontal: false);
+            Vertical(data, w, h, sigmaY);
         }
-
-        return src;
     }
 
-    private static void Axis(ref float[] src, ref float[] dst, int w, int h, double sigma, bool horizontal)
+    private static void ApplyReference(float[] data, int w, int h, double sigmaX, double sigmaY)
+    {
+        int n = w * h * 4;
+        float[] scratch = ArrayPool<float>.Shared.Rent(n);
+        try
+        {
+            float[] res = FilterBlurReference.Apply(data, scratch, w, h, sigmaX, sigmaY);
+            if (!ReferenceEquals(res, data))
+            {
+                Array.Copy(res, data, n);
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(scratch);
+        }
+    }
+
+    // The boxes of one axis: (size, cells to the left of the pixel) for the three passes; null boxes and a kernel when the deviation is below 2.
+    private static void Plan(double sigma, out double[]? kernel, out (int Size, int Left) b0, out (int Size, int Left) b1, out (int Size, int Left) b2)
     {
         if (sigma < 2)
         {
-            double[] kernel = Kernel(sigma);
-            if (horizontal)
-            {
-                GaussH(src, dst, w, h, kernel);
-            }
-            else
-            {
-                GaussV(src, dst, w, h, kernel);
-            }
-
-            (src, dst) = (dst, src);
+            kernel = FilterBlurReference.Kernel(sigma);
+            b0 = b1 = b2 = default;
             return;
         }
 
-        int d = BoxSize(sigma);
-        if (d < 1)
-        {
-            d = 1;
-        }
-
-        Span<(int Size, int Left)> boxes = stackalloc (int, int)[3];
+        kernel = null;
+        int d = Math.Max(FilterBlurReference.BoxSize(sigma), 1);
         if ((d & 1) == 1)
         {
-            boxes[0] = (d, d / 2);
-            boxes[1] = (d, d / 2);
-            boxes[2] = (d, d / 2);
+            b0 = b1 = b2 = (d, d / 2);
         }
         else
         {
             // Even size: one box centered between the pixel and its left neighbour, one between it and its right neighbour, then an odd box of d + 1.
-            boxes[0] = (d, d / 2);
-            boxes[1] = (d, (d / 2) - 1);
-            boxes[2] = (d + 1, d / 2);
-        }
-
-        foreach ((int size, int left) in boxes)
-        {
-            if (horizontal)
-            {
-                BoxH(src, dst, w, h, size, left);
-            }
-            else
-            {
-                BoxV(src, dst, w, h, size, left);
-            }
-
-            (src, dst) = (dst, src);
+            b0 = (d, d / 2);
+            b1 = (d, (d / 2) - 1);
+            b2 = (d + 1, d / 2);
         }
     }
 
-    private static double[] Kernel(double sigma)
+    private static void ForBands(int count, bool parallel, Action<int> body)
     {
-        int r = Math.Max((int)Math.Ceiling(sigma * 3), 1);
-        var k = new double[(2 * r) + 1];
-        double sum = 0;
-        for (int i = -r; i <= r; i++)
+        if (!parallel || count < 2)
         {
-            double v = Math.Exp(-(i * (double)i) / (2 * sigma * sigma));
-            k[i + r] = v;
-            sum += v;
+            for (int i = 0; i < count; i++)
+            {
+                body(i);
+            }
+
+            return;
         }
 
-        for (int i = 0; i < k.Length; i++)
-        {
-            k[i] /= sum;
-        }
-
-        return k;
+        Parallel.For(0, count, new ParallelOptions { MaxDegreeOfParallelism = Degree }, body);
     }
 
-    private static void GaussH(float[] src, float[] dst, int w, int h, double[] kernel)
+    private static void Horizontal(float[] data, int w, int h, double sigma)
     {
-        int r = kernel.Length / 2;
-        for (int y = 0; y < h; y++)
+        Plan(sigma, out double[]? kernel, out var b0, out var b1, out var b2);
+        int rowLen = w * 4;
+        bool parallel = (long)w * h >= ParallelPixels;
+
+        // Bands of rows, a multiple of four so the kernels get full groups of four independent rows.
+        int bands = parallel ? Math.Min((h + 3) / 4, Degree * 4) : 1;
+        int groupsPerBand = (((h + 3) / 4) + bands - 1) / bands;
+        ForBands(bands, parallel, band =>
         {
-            int row = y * w * 4;
-            for (int x = 0; x < w; x++)
+            int y0 = band * groupsPerBand * 4;
+            int y1 = Math.Min(h, y0 + (groupsPerBand * 4));
+            float[] ra = ArrayPool<float>.Shared.Rent(4 * rowLen);
+            float[] rb = ArrayPool<float>.Shared.Rent(4 * rowLen);
+            try
             {
-                double s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-                int k0 = Math.Max(-r, -x);
-                int k1 = Math.Min(r, w - 1 - x);
-                for (int k = k0; k <= k1; k++)
+                for (int y = y0; y < y1; y += 4)
                 {
-                    double wk = kernel[k + r];
-                    int o = row + ((x + k) * 4);
-                    s0 += wk * src[o];
-                    s1 += wk * src[o + 1];
-                    s2 += wk * src[o + 2];
-                    s3 += wk * src[o + 3];
-                }
+                    int lines = Math.Min(4, y1 - y);
+                    int o = y * rowLen;
+                    if (!BlurKernel.AnyNonZero(data, o, rowLen, 4, lines, w))
+                    {
+                        continue;
+                    }
 
-                int p = row + (x * 4);
-                dst[p] = (float)s0;
-                dst[p + 1] = (float)s1;
-                dst[p + 2] = (float)s2;
-                dst[p + 3] = (float)s3;
+                    if (kernel is not null)
+                    {
+                        BlurKernel.Gauss(data, o, rowLen, 4, rb, 0, rowLen, 4, lines, w, kernel);
+                        BlurKernel.Copy(rb, 0, rowLen, 4, data, o, rowLen, 4, lines, w);
+                        continue;
+                    }
+
+                    BlurKernel.Box(data, o, rowLen, 4, rb, 0, rowLen, 4, lines, w, b0.Size, b0.Left);
+                    BlurKernel.Box(rb, 0, rowLen, 4, ra, 0, rowLen, 4, lines, w, b1.Size, b1.Left);
+                    BlurKernel.Box(ra, 0, rowLen, 4, data, o, rowLen, 4, lines, w, b2.Size, b2.Left);
+                }
             }
-        }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(ra);
+                ArrayPool<float>.Shared.Return(rb);
+            }
+        });
     }
 
-    private static void GaussV(float[] src, float[] dst, int w, int h, double[] kernel)
+    private static void Vertical(float[] data, int w, int h, double sigma)
     {
-        int r = kernel.Length / 2;
+        Plan(sigma, out double[]? kernel, out var b0, out var b1, out var b2);
         int stride = w * 4;
-        double[] acc = ArrayPool<double>.Shared.Rent(stride);
-        try
+        int lineLen = h * 4;
+
+        // Four neighbouring pixel columns at a time (one cache line per row) go through all three boxes in scratch of 4 x h pixels, read
+        // from and written back to the buffer in place; a band of 16 columns is one unit of parallel work.
+        const int BandPixels = 16;
+        int bandCount = (w + BandPixels - 1) / BandPixels;
+        bool parallel = (long)w * h >= ParallelPixels;
+        ForBands(bandCount, parallel, band =>
         {
-            for (int y = 0; y < h; y++)
+            float[] ra = ArrayPool<float>.Shared.Rent(4 * lineLen);
+            float[] rb = ArrayPool<float>.Shared.Rent(4 * lineLen);
+            try
             {
-                Array.Clear(acc, 0, stride);
-                int k0 = Math.Max(-r, -y);
-                int k1 = Math.Min(r, h - 1 - y);
-                for (int k = k0; k <= k1; k++)
+                int xEnd = Math.Min(w, (band + 1) * BandPixels);
+                for (int x = band * BandPixels; x < xEnd; x += 4)
                 {
-                    double wk = kernel[k + r];
-                    int o = (y + k) * stride;
-                    for (int i = 0; i < stride; i++)
+                    int lines = Math.Min(4, xEnd - x);
+                    int o = x * 4;
+                    if (!BlurKernel.AnyNonZero(data, o, 4, stride, lines, h))
                     {
-                        acc[i] += wk * src[o + i];
+                        continue;
                     }
-                }
 
-                int p = y * stride;
-                for (int i = 0; i < stride; i++)
-                {
-                    dst[p + i] = (float)acc[i];
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<double>.Shared.Return(acc);
-        }
-    }
-
-    // out[i] = mean of src[i - left .. i - left + size - 1], zero outside. A running sum in double keeps the result independent of where the
-    // buffer starts to well below one level.
-    private static void BoxH(float[] src, float[] dst, int w, int h, int size, int left)
-    {
-        int hi = size - 1 - left;
-        double inv = 1.0 / size;
-        for (int y = 0; y < h; y++)
-        {
-            int row = y * w * 4;
-            double s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-            int init = Math.Min(w - 1, hi);
-            for (int k = 0; k <= init; k++)
-            {
-                int o = row + (k * 4);
-                s0 += src[o];
-                s1 += src[o + 1];
-                s2 += src[o + 2];
-                s3 += src[o + 3];
-            }
-
-            for (int i = 0; i < w; i++)
-            {
-                int p = row + (i * 4);
-                dst[p] = (float)(s0 * inv);
-                dst[p + 1] = (float)(s1 * inv);
-                dst[p + 2] = (float)(s2 * inv);
-                dst[p + 3] = (float)(s3 * inv);
-                int add = i + 1 + hi;
-                if (add < w)
-                {
-                    int o = row + (add * 4);
-                    s0 += src[o];
-                    s1 += src[o + 1];
-                    s2 += src[o + 2];
-                    s3 += src[o + 3];
-                }
-
-                int rem = i - left;
-                if (rem >= 0)
-                {
-                    int o = row + (rem * 4);
-                    s0 -= src[o];
-                    s1 -= src[o + 1];
-                    s2 -= src[o + 2];
-                    s3 -= src[o + 3];
-                }
-            }
-        }
-    }
-
-    private static void BoxV(float[] src, float[] dst, int w, int h, int size, int left)
-    {
-        int hi = size - 1 - left;
-        double inv = 1.0 / size;
-        int stride = w * 4;
-        double[] acc = ArrayPool<double>.Shared.Rent(stride);
-        try
-        {
-            Array.Clear(acc, 0, stride);
-            int init = Math.Min(h - 1, hi);
-            for (int k = 0; k <= init; k++)
-            {
-                int o = k * stride;
-                for (int i = 0; i < stride; i++)
-                {
-                    acc[i] += src[o + i];
-                }
-            }
-
-            for (int y = 0; y < h; y++)
-            {
-                int p = y * stride;
-                for (int i = 0; i < stride; i++)
-                {
-                    dst[p + i] = (float)(acc[i] * inv);
-                }
-
-                int add = y + 1 + hi;
-                if (add < h)
-                {
-                    int o = add * stride;
-                    for (int i = 0; i < stride; i++)
+                    if (kernel is not null)
                     {
-                        acc[i] += src[o + i];
+                        BlurKernel.Gauss(data, o, 4, stride, rb, 0, lineLen, 4, lines, h, kernel);
+                        BlurKernel.Copy(rb, 0, lineLen, 4, data, o, 4, stride, lines, h);
+                        continue;
                     }
-                }
 
-                int rem = y - left;
-                if (rem >= 0)
-                {
-                    int o = rem * stride;
-                    for (int i = 0; i < stride; i++)
-                    {
-                        acc[i] -= src[o + i];
-                    }
+                    BlurKernel.Box(data, o, 4, stride, rb, 0, lineLen, 4, lines, h, b0.Size, b0.Left);
+                    BlurKernel.Box(rb, 0, lineLen, 4, ra, 0, lineLen, 4, lines, h, b1.Size, b1.Left);
+                    BlurKernel.Box(ra, 0, lineLen, 4, data, o, 4, stride, lines, h, b2.Size, b2.Left);
                 }
             }
-        }
-        finally
-        {
-            ArrayPool<double>.Shared.Return(acc);
-        }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(ra);
+                ArrayPool<float>.Shared.Return(rb);
+            }
+        });
     }
 }

@@ -142,7 +142,7 @@ The filter region (`x`, `y`, `width`, `height` in `objectBoundingBox` or `userSp
 
 ### Filters, part one
 
-Files: `Render/SceneBuilder.Filters.cs` (the `filter` property and filter elements into `RFilter` stages), `Render/Filters/` (`FilterRenderer` plans and runs a layer's filters, `FilterOps` and `FilterBlur` are the float kernels, `FilterBuffer` holds premultiplied float32 in sRGB or linear light). Plain safe C#; the kernels use no intrinsics yet.
+Files: `Render/SceneBuilder.Filters.cs` (the `filter` property and filter elements into `RFilter` stages), `Render/Filters/` (`FilterRenderer` plans and runs a layer's filters, `FilterOps` and `FilterBlur` are the float kernels, `FilterBuffer` holds premultiplied float32 in sRGB or linear light). The blur and the color conversions between 8-bit, sRGB float and linear float run on AVX kernels (see [Filter speed](#filter-speed)); everything else is plain safe C#.
 
 - **Evaluation.** The layer's content is drawn into a pixel grid, converted to premultiplied float once, run through the primitives (each converts its inputs to its own color space, from tables with interpolation) and rounded to 8 bits once at the end. Blur follows the specification's three-box approximation from a standard deviation of 2 pixels, and a true kernel below that; edges are transparent. Offsets move whole pixels (the scaled distance is cut toward zero, as the reference renderer does).
 - **Regions.** The region the output needs, grown by the sum of the primitives' reach and cut to the filter region, is all that is computed, so a region render equals the same pixels of a whole render (tested: at most one level). A filter chain is planned from its last stage back, each stage producing what the next reads. A wrapping convolution reads the whole filter region.
@@ -176,6 +176,29 @@ Benchmarks (`SvgFilterBenchmarks`; BenchmarkDotNet 0.15.8 short job, `[MemoryDia
 | Svg.Skia: blur 4096 px / turbulence + lighting 1024 px | | 218 ms / 55 ms | | |
 
 A filtered group is read in place and its tiles go back to the pool right after it is composited, like the other layers.
+
+### Filter speed
+
+The blur and the pixel conversions are vector code with scalar references, and the result is bit for bit what the scalar code gives (rendered documents hash the same whole and in regions, and the resvg collection scores the same file by file).
+
+- **Blur** (`Render/Filters/FilterBlur.cs`, kernels in core `Kernels/BlurKernel.cs`). The sums are doubles with the same operations in the same order as the scalar reference `FilterBlurReference`, and each box rounds to float, so nothing changes numerically. What changed is the layout and the instruction mix: a line (a row, or a column read in place with a stride) goes through all three boxes in line-sized scratch instead of three trips over the whole buffer; the four channels of a pixel are one 256-bit vector of doubles; four lines run together, because the add-then-subtract of one running sum is a latency chain; lines that are entirely zero are skipped (their blur is zero); and buffers of 128 K pixels or more are cut into row groups or column bands that run in parallel at the per-call degree. The blur is in place, so the second full-size float buffer is gone. Single-threaded, a 176 x 176 tile takes 0.6 ns per pixel per box horizontally and 0.8 vertically (scalar: 6.3 and 5.3). Without AVX the scalar reference runs.
+- **Conversions** (`Kernels/FilterColorKernel.cs`, AVX2). Two pixels per step: 8-bit to premultiplied float, sRGB to linear and back with the 4096-step table (gathers) and the scalar code's clamps, and premultiplied float to 8-bit. A pair holding a NaN where the scalar `Math.Min`/`Math.Clamp` rules differ from the vector ones goes through the scalar code. A source layer stays 8-bit until a primitive reads it, so a linear-light primitive reads it straight into linear float (one rounding sequence, the same as expanding to sRGB float and converting). Only the part of the result that lands in the target is converted back to 8 bits. Measured on one thread: 8-bit to linear 3.9 ns per pixel (scalar 9.5), sRGB to linear 3.4 (7.1), linear to 8-bit 5.5 (12.2).
+- **Not changed.** The 128-pixel tiles still refilter their margin when the margin is under 32 pixels (block output is quantized to 8 bits and equal only to within a level, so it cannot replace tile output byte for byte); drawing the layer's content into the work area is the largest remaining cost of the 1024 px rows.
+
+Measured with `SvgFilterBenchmarks` (BenchmarkDotNet 0.15.8 short job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET SDK 10.0.402 / runtime 10.0.13; load average 1.4 before and 2.8 after the final run; the "before" run was at 4.7 to 5.3, other jobs on the worker). Before and after use the same benchmark: the OneImage rows copy into a pixel buffer kept between iterations, because the earlier rows allocated and filled a fresh 4 MB `ToArray` result per iteration, which was the source of their full (Gen2) collections. No filter row has a Gen2 collection now. "Before" is the commit this section was written on top of.
+
+| row (load + render unless noted) | before | now | Svg.Skia (render) |
+|---|---:|---:|---:|
+| blur, sigma 8 units, 1024 px (loaded document, render only) | 33.5 ms (error 45) | 10.7 ms | 11.9 ms |
+| blur, sigma 8 units, 1024 px | 30.1 ms | 10.8 ms | |
+| drop shadow, 1024 px | 44.1 ms | 17.8 ms | 58.4 ms |
+| drop shadow, 1024 px (loaded document, render only) | 4.8 ms | 3.9 ms | |
+| icon with blur, 256 px | 1.18 ms | 0.45 ms | 0.49 ms |
+| blur, sigma 8 units, 4096 px | 491 ms | 156 ms | 210 ms |
+| blur, sigma 30 units, 4096 px | 678 ms (error 98) | 206 ms (error 62) | 210 ms |
+| turbulence + lighting, 1024 px | 51.5 ms | 50.1 ms | 53.2 ms |
+
+Allocation per iteration: 1024 px blur 2.0 MB (was 2.1), 4096 px blur 7.1 MB (was 6.8), turbulence + lighting unchanged. The sigma 30 row's spread is wide (other jobs on the worker); it sits at Svg.Skia's figure, not clearly under it.
 
 ## Color
 

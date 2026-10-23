@@ -115,13 +115,30 @@ public class SvgFilterBenchmarks
         return bitmap.GetPixel(width / 2, height / 2).Alpha;
     }
 
-    private Rgba32 Render(string text, int width) => Image.Load(Encoding.UTF8.GetBytes(text), _options).Resize(width: width).ToArray<Rgba32>()[0];
+    // Pixels are copied into a buffer that is kept between iterations, so a row measures the render and not the allocation (and the full
+    // collection) of a fresh multi-megabyte result array every time.
+    private Rgba32[] _out = [];
+
+    private Rgba32 Into(Image image, int width)
+    {
+        Image r = image.Resize(width: width);
+        int n = r.Width * r.Height;
+        if (_out.Length < n)
+        {
+            _out = new Rgba32[n];
+        }
+
+        r.CopyPixelsTo<Rgba32>(_out.AsSpan(0, n), new ImageRect(0, 0, r.Width, r.Height));
+        return _out[0];
+    }
+
+    private Rgba32 Render(string text, int width) => Into(Image.Load(Encoding.UTF8.GetBytes(text), _options), width);
 
     [Benchmark(Description = "blur sigma 8 -> 1024, OneImage: load + render")]
     public Rgba32 BlurLoadRender() => Render(_blurText, 1024);
 
     [Benchmark(Description = "blur sigma 8 -> 1024, OneImage: render")]
-    public Rgba32 BlurRender() => _blurLoaded.Resize(width: 1024).ToArray<Rgba32>()[0];
+    public Rgba32 BlurRender() => Into(_blurLoaded, 1024);
 
     [Benchmark(Description = "blur sigma 8 -> 1024, Svg.Skia: render")]
     public int BlurSkiaRender() => Draw(_blurPicture, 1024);
@@ -130,7 +147,7 @@ public class SvgFilterBenchmarks
     public Rgba32 ShadowLoadRender() => Render(_shadowText, 1024);
 
     [Benchmark(Description = "drop shadow -> 1024, OneImage: render")]
-    public Rgba32 ShadowRender() => _shadowLoaded.Resize(width: 1024).ToArray<Rgba32>()[0];
+    public Rgba32 ShadowRender() => Into(_shadowLoaded, 1024);
 
     [Benchmark(Description = "drop shadow -> 1024, Svg.Skia: render")]
     public int ShadowSkiaRender() => Draw(_shadowPicture, 1024);
@@ -139,7 +156,7 @@ public class SvgFilterBenchmarks
     public Rgba32 IconLoadRender() => Render(_iconText, 256);
 
     [Benchmark(Description = "icon with blur -> 256, OneImage: render")]
-    public Rgba32 IconRender() => _iconLoaded.Resize(width: 256).ToArray<Rgba32>()[0];
+    public Rgba32 IconRender() => Into(_iconLoaded, 256);
 
     [Benchmark(Description = "icon with blur -> 256, Svg.Skia: render")]
     public int IconSkiaRender() => Draw(_iconPicture, 256);
@@ -160,7 +177,7 @@ public class SvgFilterBenchmarks
     public Rgba32 LitLoadRender() => Render(_litText, 1024);
 
     [Benchmark(Description = "turbulence + lighting -> 1024, OneImage: render")]
-    public Rgba32 LitRender() => _litLoaded.Resize(width: 1024).ToArray<Rgba32>()[0];
+    public Rgba32 LitRender() => Into(_litLoaded, 1024);
 
     [Benchmark(Description = "turbulence + lighting -> 1024, Svg.Skia: render")]
     public int LitSkiaRender() => Draw(_litPicture, 1024);

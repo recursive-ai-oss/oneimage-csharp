@@ -7,6 +7,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Changed
 
 - Resize costs less CPU, with identical output: a box pre-reduce of 8-bit RGB/RGBA now converts and averages in one pass instead of writing a float row first, the horizontal pass computes four output pixels at a time and the vertical pass four vectors at a time (both hide add latency; every sum keeps its tap order). On a decoded 24 MP image at the default degree, 24 MP to 400 px takes 8.8 ms (was 11.5) and a 3x reduction 25.3 ms (was 30.0).
+- `RecursiveAI.OneImage.Svg`: filter speed. Gaussian blur and the 8-bit/float/linear-light conversions of filters run on AVX kernels with scalar references and byte-identical output (a 1024 px blur of 400 shapes 10.7 ms against 33.5, a 4096 px blur 156 ms against 491, a drop shadow 17.8 ms against 44.1); the blur works in place without a second buffer, skips empty lines and runs in parallel bands.
 
 ## [1.3.0] - 2026-10-22
 

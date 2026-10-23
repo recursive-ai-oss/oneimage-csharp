@@ -279,26 +279,47 @@ internal static class FilterRenderer
         try
         {
             canvas.CopyTo(px.AsSpan(0, rect.W * rect.H), new ImageRect(0, 0, rect.W, rect.H));
-            return FilterBuffer.FromRgba(px, rect, linear: false);
         }
-        finally
+        catch
         {
             System.Buffers.ArrayPool<Rgba32>.Shared.Return(px);
+            throw;
         }
+
+        // The buffer owns the array; it becomes float only where a primitive reads it.
+        return FilterBuffer.FromBytes(px, rect);
     }
 
     private static void Output(Canvas target, FilterBuffer result, bool direct, Affine rest)
     {
         PxRect r = result.Rect;
+        if (direct)
+        {
+            // Only the part that lands in the target is converted to 8 bits.
+            PxRect visible = r.Intersect(new PxRect(0, 0, target.Width, target.Height));
+            if (visible.IsEmpty)
+            {
+                return;
+            }
+
+            Rgba32[] vis = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(visible.W * visible.H);
+            try
+            {
+                result.ToRgba(vis.AsSpan(0, visible.W * visible.H), visible);
+                PlaceDirect(target, vis, visible);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<Rgba32>.Shared.Return(vis);
+            }
+
+            return;
+        }
+
         Rgba32[] px = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(r.W * r.H);
         try
         {
             result.ToRgba(px.AsSpan(0, r.W * r.H));
-            if (direct)
-            {
-                PlaceDirect(target, px, r);
-                return;
-            }
 
             Image picture = Image.FromPixels<Rgba32>(px.AsSpan(0, r.W * r.H), r.W, r.H);
             Affine m = rest.Multiply(Affine.Translate(r.X, r.Y));
@@ -497,7 +518,9 @@ internal static class FilterRenderer
                 case FeBlur blur:
                 {
                     in1 = Input(c, p.In1, p.Linear, source, results, out tmp1);
-                    result = Blur(in1, rect, p.Linear, blur.SigmaX * c.Sx, blur.SigmaY * c.Sy);
+                    // A converted copy that nothing else holds is blurred where it is and becomes the result.
+                    result = Blur(in1, rect, p.Linear, blur.SigmaX * c.Sx, blur.SigmaY * c.Sy, inPlace: tmp1);
+                    tmp1 = false;
                     break;
                 }
 
@@ -717,24 +740,16 @@ internal static class FilterRenderer
     // Offsets move whole pixels: the scaled distance is cut toward zero (fractions are dropped, not rounded).
     private static long RoundPx(double v) => (long)Math.Truncate(Math.Clamp(v, -PxLimit, PxLimit));
 
-    private static FilterBuffer Blur(FilterBuffer input, PxRect rect, bool linear, double sx, double sy)
+    private static FilterBuffer Blur(FilterBuffer input, PxRect rect, bool linear, double sx, double sy, bool inPlace = false)
     {
-        var a = new FilterBuffer(rect, linear);
-        Array.Copy(input.Data, a.Data, rect.W * rect.H * 4);
-        if (!(sx > 0) && !(sy > 0))
+        FilterBuffer a = input;
+        if (!inPlace)
         {
-            return a;
+            a = new FilterBuffer(rect, linear, clear: false);
+            Array.Copy(input.Data, a.Data, rect.W * rect.H * 4);
         }
 
-        var b = new FilterBuffer(rect, linear);
-        float[] res = FilterBlur.Apply(a.Data, b.Data, rect.W, rect.H, sx, sy);
-        if (ReferenceEquals(res, b.Data))
-        {
-            a.Dispose();
-            return b;
-        }
-
-        b.Dispose();
+        FilterBlur.Apply(a.Data, rect.W, rect.H, sx, sy);
         return a;
     }
 
@@ -775,8 +790,7 @@ internal static class FilterRenderer
         int count = rect.W * rect.H;
         var alpha = new FilterBuffer(rect, input.Linear);
         FilterOps.AlphaOnly(input.Data, alpha.Data, count);
-        FilterBuffer blurred = Blur(alpha, rect, input.Linear, s.SigmaX * c.Sx, s.SigmaY * c.Sy);
-        alpha.Dispose();
+        FilterBuffer blurred = Blur(alpha, rect, input.Linear, s.SigmaX * c.Sx, s.SigmaY * c.Sy, inPlace: true);
         var moved = new FilterBuffer(rect, input.Linear);
         FilterOps.Offset(blurred.Data, moved.Data, rect.W, rect.H, RoundPx(s.Dx * c.Sx), RoundPx(s.Dy * c.Sy));
         blurred.Dispose();
