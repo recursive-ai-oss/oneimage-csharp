@@ -71,8 +71,9 @@ TASKS="thumb-jpeg thumb-webp png-to-webp jpeg-decode jpeg-decode-rgba jpeg-encod
 [ -z "$TASKSEL" ] || TASKS="$TASKSEL"
 LIBS="oneimage imagesharp skia netvips magick"
 PEAKTSV="$WORK/peak.tsv"
+# Created even with --skip-peak: the report reads it, and an empty file just means no peak columns.
+: > "$PEAKTSV"
 if [ $PEAK = 1 ]; then
-  : > "$PEAKTSV"
   for t in $TASKS; do
     for l in $LIBS; do
       # Repeated in separate processes: the report shows the median and the spread (max - min).

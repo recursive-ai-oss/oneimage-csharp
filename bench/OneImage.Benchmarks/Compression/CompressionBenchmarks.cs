@@ -180,6 +180,7 @@ public class LzwBenchmarks
     private byte[] _gif = null!;
     private byte[] _tiff = null!;
     private byte[] _buffer = null!;
+    private byte[] _whole = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -188,10 +189,18 @@ public class LzwBenchmarks
         _gif = LzwEncoder.Compress(_data, LzwVariant.Gif, 8);
         _tiff = LzwEncoder.Compress(_data, LzwVariant.Tiff);
         _buffer = new byte[64 * 1024];
+        _whole = new byte[_data.Length];
     }
 
     [Benchmark(Description = "LZW decode TIFF, 10 MB")]
     public long DecodeTiff() => Decode(_tiff, LzwVariant.Tiff);
+
+    [Benchmark(Description = "LZW decode TIFF whole block, 10 MB")]
+    public long DecodeTiffBlock()
+    {
+        var dec = new LzwDecoder(LzwVariant.Tiff, 8);
+        return dec.DecodeBlock(_tiff, _whole);
+    }
 
     [Benchmark(Description = "LZW decode GIF, 10 MB")]
     public long DecodeGif() => Decode(_gif, LzwVariant.Gif);

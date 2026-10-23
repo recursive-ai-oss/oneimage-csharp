@@ -756,4 +756,131 @@ public class LzwTests
             }
         }
     }
+
+    // The incremental decoder, driven the way a whole-block read does: the full input, an output of exactly 'size' bytes.
+    private static (byte[]? Data, string Outcome) Incremental(byte[] comp, int size, double ratio)
+    {
+        try
+        {
+            var dec = new LzwDecoder(LzwVariant.Tiff, 8, size + 8192L, ratio);
+            byte[] raw = new byte[size];
+            int ip = 0;
+            int op = 0;
+            while (op < raw.Length)
+            {
+                InflateStatus s = dec.Decode(comp.AsSpan(ip), raw.AsSpan(op), out int c, out int w);
+                ip += c;
+                op += w;
+                if (op >= raw.Length)
+                {
+                    break;
+                }
+
+                if (s == InflateStatus.Done || (s == InflateStatus.NeedInput && ip >= comp.Length) || (c == 0 && w == 0))
+                {
+                    return (null, "short");
+                }
+            }
+
+            return (raw, "ok");
+        }
+        catch (ImageLimitException)
+        {
+            return (null, "limit");
+        }
+        catch (ImageFormatException)
+        {
+            return (null, "format");
+        }
+    }
+
+    private static (byte[]? Data, string Outcome) Block(byte[] comp, int size, double ratio)
+    {
+        try
+        {
+            var dec = new LzwDecoder(LzwVariant.Tiff, 8, size + 8192L, ratio);
+            byte[] raw = new byte[size];
+            return dec.DecodeBlock(comp, raw) < size ? (null, "short") : (raw, "ok");
+        }
+        catch (ImageLimitException)
+        {
+            return (null, "limit");
+        }
+        catch (ImageFormatException)
+        {
+            return (null, "format");
+        }
+    }
+
+    [Theory]
+    [InlineData(1, 1, true)]
+    [InlineData(7, 2, true)]
+    [InlineData(300, 3, false)]
+    [InlineData(5000, 4, true)]
+    [InlineData(100000, 5, false)]
+    [InlineData(100000, 6, true)]
+    [InlineData(400000, 7, true)]
+    public void DecodeBlockRoundTripsAndMatchesIncrementalAtEveryOutputSize(int n, int seed, bool smooth)
+    {
+        byte[] data = Symbols(n, smooth ? 3 : 8, seed, smooth);
+        byte[] comp = LzwEncoder.Compress(data, LzwVariant.Tiff);
+        Assert.Equal(data, Block(comp, data.Length, 0).Data);
+
+        // Outputs that end inside a string, near the end and well before it: the same prefix either way.
+        foreach (int size in new[] { 1, 2, 15, 16, 17, 31, 40, data.Length / 3, data.Length - 17, data.Length - 1 })
+        {
+            if (size < 1 || size > data.Length)
+            {
+                continue;
+            }
+
+            var (g, _) = Block(comp, size, 0);
+            Assert.NotNull(g);
+            Assert.Equal(data.AsSpan(0, size).ToArray(), g);
+        }
+
+        // Asking for more than the stream holds reports a short block.
+        Assert.Null(Block(comp, data.Length + 1, 0).Data);
+    }
+
+    [Fact]
+    public void DecodeBlockAgreesWithIncrementalOnCorruptStreams()
+    {
+        var rnd = new Random(77);
+        for (int round = 0; round < 3000; round++)
+        {
+            int n = rnd.Next(1, 6000);
+            byte[] data = Symbols(n, rnd.Next(2) == 0 ? 2 : 8, rnd.Next(), rnd.Next(2) == 0);
+            byte[] comp = LzwEncoder.Compress(data, LzwVariant.Tiff);
+            int edits = rnd.Next(0, 4);
+            for (int e = 0; e < edits; e++)
+            {
+                comp[rnd.Next(comp.Length)] ^= (byte)(1 << rnd.Next(8));
+            }
+
+            if (rnd.Next(4) == 0)
+            {
+                comp = comp.AsSpan(0, rnd.Next(comp.Length + 1)).ToArray();
+            }
+
+            int size = rnd.Next(4) == 0 ? rnd.Next(1, n + 1) : n;
+            double ratio = rnd.Next(5) == 0 ? 3 : 0;
+            var a = Incremental(comp, size, ratio);
+            var b = Block(comp, size, ratio);
+            if (a.Outcome == "format" && b.Outcome == "ok")
+            {
+                // The incremental decoder also reads the code after the last byte of a full output and rejects it when it is
+                // malformed; the block decoder stops once the output is full, as libtiff does.
+                Assert.Equal(size, b.Data!.Length);
+            }
+            else if (a.Data is null || b.Data is null)
+            {
+                Assert.True(a.Outcome == b.Outcome, $"round {round}: incremental {a.Outcome}, block {b.Outcome}");
+            }
+            else
+            {
+                Assert.Equal(a.Data, b.Data);
+            }
+        }
+    }
 }

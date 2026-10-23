@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.Intrinsics;
 
 namespace OneImage.Kernels;
 
@@ -85,10 +86,118 @@ internal static class TiffKernels
         }
     }
 
+    // Lane j takes lane j - n of the source (zero for the first n lanes): a byte shift toward higher lanes. Indices of 255 select zero.
+    private static Vector128<byte> ShiftLanes(int n)
+    {
+        Span<byte> idx = stackalloc byte[16];
+        for (int j = 0; j < 16; j++)
+        {
+            idx[j] = j < n ? (byte)255 : (byte)(j - n);
+        }
+
+        return Vector128.Create<byte>(idx);
+    }
+
+    // Lane j takes lane (first + j % channels): the last whole pixel of a chunk repeated across the vector.
+    private static Vector128<byte> RepeatPixel(int first, int channels)
+    {
+        Span<byte> idx = stackalloc byte[16];
+        for (int j = 0; j < 16; j++)
+        {
+            idx[j] = (byte)(first + (j % channels));
+        }
+
+        return Vector128.Create<byte>(idx);
+    }
+
+    private static readonly Vector128<byte> s_shift1 = ShiftLanes(1);
+    private static readonly Vector128<byte> s_shift2 = ShiftLanes(2);
+    private static readonly Vector128<byte> s_shift3 = ShiftLanes(3);
+    private static readonly Vector128<byte> s_shift4 = ShiftLanes(4);
+    private static readonly Vector128<byte> s_shift6 = ShiftLanes(6);
+    private static readonly Vector128<byte> s_shift8 = ShiftLanes(8);
+    private static readonly Vector128<byte> s_last1 = RepeatPixel(15, 1);
+    private static readonly Vector128<byte> s_last3 = RepeatPixel(9, 3);
+    private static readonly Vector128<byte> s_last4 = RepeatPixel(12, 4);
+    private static readonly Vector128<byte> s_first3 = RepeatPixel(0, 3);
+
+    /// <summary>
+    /// Vector form of the running sum for 1, 3 and 4 channels: a log-step prefix sum inside each chunk, then the previous chunk's
+    /// last pixel added to every pixel. Returns the index where the scalar loop must continue (everything before it is final);
+    /// <paramref name="channels"/> when there is nothing to do.
+    /// </summary>
+    internal static int RunningSum8Vector(Span<byte> row, int channels)
+    {
+        int len = row.Length;
+        if (!Vector128.IsHardwareAccelerated || len < channels + 16 || channels is not (1 or 3 or 4))
+        {
+            return channels;
+        }
+
+        int i = channels;
+        if (channels == 4)
+        {
+            Vector128<byte> carry = Vector128.Create(BinaryPrimitives.ReadUInt32LittleEndian(row)).AsByte();
+            for (; i + 16 <= len; i += 16)
+            {
+                Vector128<byte> v = Vector128.Create<byte>(row.Slice(i, 16));
+                v += Vector128.Shuffle(v, s_shift4);
+                v += Vector128.Shuffle(v, s_shift8);
+                v += carry;
+                v.CopyTo(row.Slice(i, 16));
+                carry = Vector128.Shuffle(v, s_last4);
+            }
+        }
+        else if (channels == 1)
+        {
+            Vector128<byte> carry = Vector128.Create(row[0]);
+            for (; i + 16 <= len; i += 16)
+            {
+                Vector128<byte> v = Vector128.Create<byte>(row.Slice(i, 16));
+                v += Vector128.Shuffle(v, s_shift1);
+                v += Vector128.Shuffle(v, s_shift2);
+                v += Vector128.Shuffle(v, s_shift4);
+                v += Vector128.Shuffle(v, s_shift8);
+                v += carry;
+                v.CopyTo(row.Slice(i, 16));
+                carry = Vector128.Shuffle(v, s_last1);
+            }
+        }
+        else
+        {
+            // Four pixels (12 bytes) per step out of a 16-byte load; the last 4 lanes belong to the next step and are not stored.
+            Vector128<byte> carry = Vector128.Shuffle(Vector128.Create<byte>(row.Slice(0, 16)), s_first3);
+            for (; i + 16 <= len; i += 12)
+            {
+                Vector128<byte> v = Vector128.Create<byte>(row.Slice(i, 16));
+                v += Vector128.Shuffle(v, s_shift3);
+                v += Vector128.Shuffle(v, s_shift6);
+                v += carry;
+                Span<byte> dst = row.Slice(i, 12);
+                BinaryPrimitives.WriteUInt64LittleEndian(dst, v.AsUInt64().GetElement(0));
+                BinaryPrimitives.WriteUInt32LittleEndian(dst.Slice(8), v.AsUInt32().GetElement(2));
+                carry = Vector128.Shuffle(v, s_last3);
+            }
+        }
+
+        return i;
+    }
+
     // Each sample depends on the one a pixel to its left. Reading that one back from memory makes every step wait for the store
     // just before it; carrying the previous pixel in locals turns the chain into plain register adds.
     internal static void RunningSum8(Span<byte> row, int channels)
     {
+        int done = RunningSum8Vector(row, channels);
+        if (done > channels)
+        {
+            for (int j = done; j < row.Length; j++)
+            {
+                row[j] = (byte)(row[j] + row[j - channels]);
+            }
+
+            return;
+        }
+
         switch (channels)
         {
             case 1:

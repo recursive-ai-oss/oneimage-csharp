@@ -13,7 +13,7 @@ public sealed class TiffPredictorKernelTests
     public void RunningSumMatchesTheDefinition(int channels)
     {
         var rnd = new Random(channels);
-        foreach (int length in new[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 33, 100, 1001 })
+        foreach (int length in new[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 18, 19, 20, 21, 27, 28, 29, 31, 33, 34, 35, 36, 63, 64, 65, 100, 1001, 6000 })
         {
             byte[] a = new byte[length];
             rnd.NextBytes(a);

@@ -43,6 +43,63 @@ internal static class CompressionTargets
             var decoder = new LzwDecoder(tiff ? LzwVariant.Tiff : LzwVariant.Gif, minSize, OutputCap, (mode & 16) != 0 ? 50 : 0);
             Drain(input, output, (input, o) => { var s = decoder.Decode(input, o, out int c, out int w); return (s, c, w); });
         });
+        if (tiff)
+        {
+            BlockAgainstIncremental(input, mode);
+        }
+    }
+
+    // The whole-block TIFF decoder must produce the incremental decoder's bytes whenever the incremental one succeeds. (It may also
+    // succeed where the incremental one rejects a malformed code that follows a full output.)
+    private static void BlockAgainstIncremental(byte[] input, int mode)
+    {
+        int size = 1 + ((((mode >> 5) * 389) + (input.Length * 31)) % 2500);
+        byte[]? want = null;
+        try
+        {
+            var inc = new LzwDecoder(LzwVariant.Tiff, 8, size + 8192L, 0);
+            byte[] raw = new byte[size];
+            int ip = 0;
+            int op = 0;
+            while (op < size)
+            {
+                InflateStatus s = inc.Decode(input.AsSpan(ip), raw.AsSpan(op), out int c, out int w);
+                ip += c;
+                op += w;
+                if (op >= size)
+                {
+                    want = raw;
+                    break;
+                }
+
+                if (s == InflateStatus.Done || (s == InflateStatus.NeedInput && ip >= input.Length) || (c == 0 && w == 0))
+                {
+                    break;
+                }
+            }
+        }
+        catch (ImageException)
+        {
+        }
+
+        byte[]? got = null;
+        try
+        {
+            var blk = new LzwDecoder(LzwVariant.Tiff, 8, size + 8192L, 0);
+            byte[] raw = new byte[size];
+            if (blk.DecodeBlock(input, raw) == size)
+            {
+                got = raw;
+            }
+        }
+        catch (ImageException)
+        {
+        }
+
+        if (want is not null && (got is null || !want.AsSpan().SequenceEqual(got)))
+        {
+            throw new InvalidOperationException("whole-block LZW decode differs from the incremental decoder");
+        }
     }
 
     private static void Drain(ReadOnlySpan<byte> input, byte[] output, Func<ReadOnlySpan<byte>, byte[], (InflateStatus, int, int)> step)

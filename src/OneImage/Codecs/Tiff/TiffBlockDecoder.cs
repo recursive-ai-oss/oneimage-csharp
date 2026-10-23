@@ -147,7 +147,19 @@ internal static class TiffBlockDecoder
                 bool oldStyle = input.Length >= 2 && input[0] == 0 && (input[1] & 1) == 1;
                 LzwVariant variant = oldStyle ? LzwVariant.Gif : LzwVariant.Tiff;
                 LzwDecoder d = CodecCache.RentLzwDecoder(variant, 8, raw.Length + 8192L, limits.MaxExpansionRatio);
-                Pump(input, raw, (i, o, out c, out w) => d.Decode(i, o, out c, out w));
+                if (variant == LzwVariant.Tiff)
+                {
+                    // The whole block is in hand, so the decoder can copy strings from earlier output instead of walking its table.
+                    if (d.DecodeBlock(input, raw) < raw.Length)
+                    {
+                        throw new ImageFormatException("A compressed TIFF strip or tile ended before all of its data was decoded.");
+                    }
+                }
+                else
+                {
+                    Pump(input, raw, (i, o, out c, out w) => d.Decode(i, o, out c, out w));
+                }
+
                 CodecCache.Return(d, variant);
                 break;
             }
