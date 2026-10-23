@@ -28,9 +28,17 @@ internal sealed class VP8Encoder
     private readonly CancellationToken _token;
     private readonly int _degree;
 
-    private readonly byte[] _srcY;
-    private readonly byte[] _srcU;
-    private readonly byte[] _srcV;
+    // Frames up to this many luma samples (4 MiB, about 4 MP) rent their buffers from the shared array pool: a small or medium
+    // encode then reuses the planes, coded levels and output chunks of the one before instead of allocating fresh large-object-heap
+    // arrays each time. Bigger frames allocate as before, so a 24 MP encode leaves nothing behind in the pool.
+    private const int PooledLumaLimit = 1 << 22;
+    private readonly bool _pooled;
+
+    // The source planes. Every byte the encoder reads is written by AddRows first, so rented arrays need no clearing. They go
+    // back when the macroblocks are coded.
+    private byte[] _srcY;
+    private byte[] _srcU;
+    private byte[] _srcV;
     // Reconstruction is kept only as far as prediction needs it: the last pixel line of every finished macroblock row (the
     // row below predicts from it) and, in each worker, the row being coded (the left neighbors). Whole reconstructed planes
     // are never held.
@@ -88,9 +96,10 @@ internal sealed class VP8Encoder
         _ys = _mbw * 16;
         _uvs = _mbw * 8;
         int ySize = _ys * _mbh * 16;
-        _srcY = new byte[ySize];
-        _srcU = new byte[ySize / 4];
-        _srcV = new byte[ySize / 4];
+        _pooled = ySize <= PooledLumaLimit;
+        _srcY = Plane(ySize);
+        _srcU = Plane(ySize / 4);
+        _srcV = Plane(ySize / 4);
         _topY = new byte[_mbh][];
         _topU = new byte[_mbh][];
         _topV = new byte[_mbh][];
@@ -106,6 +115,8 @@ internal sealed class VP8Encoder
         _nzTop = new byte[_mbw * 9];
     }
 
+    private byte[] Plane(int size) => _pooled ? System.Buffers.ArrayPool<byte>.Shared.Rent(size) : new byte[size];
+
     /// <summary>Encodes straight RGBA (8 bits per channel) into a VP8 chunk payload.</summary>
     /// <param name="rgba">The pixels.</param>
     /// <param name="width">Image width, 1 to 16383.</param>
@@ -117,8 +128,15 @@ internal sealed class VP8Encoder
     public static byte[] Encode(byte[] rgba, int width, int height, int quality, int effort, CancellationToken token, int degree = 1)
     {
         VP8Encoder e = Create(width, height, quality, effort, token, degree);
-        e.AddRows(rgba, 4, 0, height);
-        return e.Finish();
+        try
+        {
+            e.AddRows(rgba, 4, 0, height);
+            return e.Finish();
+        }
+        finally
+        {
+            e.Release();
+        }
     }
 
     /// <summary>
@@ -210,10 +228,56 @@ internal sealed class VP8Encoder
 
     private byte[] Run()
     {
-        Analyze();
-        SetupSegments();
-        EncodeMacroblocks();
-        return WriteStream();
+        try
+        {
+            Analyze();
+            SetupSegments();
+            EncodeMacroblocks();
+            // Nothing reads the source again; give it back before the token stream is built.
+            ReleasePlanes();
+            return WriteStream();
+        }
+        finally
+        {
+            Release();
+        }
+    }
+
+    private void ReleaseRowLevels(int mby)
+    {
+        byte[]? rl = _rowLevels[mby];
+        if (rl != null)
+        {
+            _rowLevels[mby] = null;
+            if (_pooled)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rl);
+            }
+        }
+    }
+
+    private void ReleasePlanes()
+    {
+        byte[] y = _srcY;
+        byte[] u = _srcU;
+        byte[] v = _srcV;
+        _srcY = _srcU = _srcV = [];
+        if (_pooled && y.Length != 0)
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(y);
+            System.Buffers.ArrayPool<byte>.Shared.Return(u);
+            System.Buffers.ArrayPool<byte>.Shared.Return(v);
+        }
+    }
+
+    /// <summary>Gives every rented buffer (source planes, coded levels) back to the pool. Safe to call more than once; the encoder cannot run afterwards.</summary>
+    public void Release()
+    {
+        ReleasePlanes();
+        for (int i = 0; i < _rowLevels.Length; i++)
+        {
+            ReleaseRowLevels(i);
+        }
     }
 
     // Texture analysis: a complexity score per macroblock, clustered into segments (spectral noise shaping).
@@ -655,7 +719,12 @@ internal sealed class VP8Encoder
                 Volatile.Write(ref _rowProgress[mby], mbx + 1);
             }
 
-            _rowLevels[mby] = s.RowLevels.AsSpan(0, s.RowLevelsLength).ToArray();
+            if (s.RowLevelsLength > 0)
+            {
+                byte[] kept = _pooled ? System.Buffers.ArrayPool<byte>.Shared.Rent(s.RowLevelsLength) : GC.AllocateUninitializedArray<byte>(s.RowLevelsLength);
+                s.RowLevels.AsSpan(0, s.RowLevelsLength).CopyTo(kept);
+                _rowLevels[mby] = kept;
+            }
         });
         _scratches = scratch;
         foreach (Scratch? s in scratch)
@@ -1329,7 +1398,7 @@ internal sealed class VP8Encoder
             frameLevel = head.FilterStrength;
         }
 
-        var bw = new VP8BoolWriter(n * 4);
+        var bw = new VP8BoolWriter(n * 4, _pooled);
         bw.PutBit(0, 128);
         bw.PutBit(0, 128);
         if (useSegments)
@@ -1508,10 +1577,11 @@ internal sealed class VP8Encoder
         int part0Length = bw.Finish();
         if (part0Length >= 1 << 19)
         {
+            bw.Release();
             throw new ImageOperationException("The image is too large for a single VP8 mode partition.");
         }
 
-        var tw = new VP8BoolWriter(n * 16);
+        var tw = new VP8BoolWriter(n * 16, _pooled);
         var sink = new WriterSink(probs, tw);
         ScanTokens(ref sink, useSkip);
         int part1Length = tw.Finish();
@@ -1528,6 +1598,8 @@ internal sealed class VP8Encoder
         BinaryPrimitives.WriteUInt16LittleEndian(frame.AsSpan(8), (ushort)_h);
         bw.CopyTo(frame.AsSpan(10, part0Length));
         tw.CopyTo(frame.AsSpan(10 + part0Length, part1Length));
+        bw.Release();
+        tw.Release();
         return frame;
     }
 
@@ -1623,8 +1695,8 @@ internal sealed class VP8Encoder
                 ScanMacroblock(ref sink, levels, i4, top, left);
             }
 
-            // Nothing reads this row again; let the collector have it while later rows are still being written.
-            _rowLevels[mby] = null;
+            // Nothing reads this row again; give it back while later rows are still being written.
+            ReleaseRowLevels(mby);
         }
     }
 

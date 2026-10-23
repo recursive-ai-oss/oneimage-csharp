@@ -894,6 +894,9 @@ internal static class VP8LEncoder
         // How far back a match may start.
         private const int Window = (1 << 20) - 120;
 
+        // Images up to this many pixels hash into a map sized to them instead of the 2^18-entry table.
+        private const int SmallHashPixels = 1 << 14;
+
         // The hash chains (for each pixel, the previous pixel with the same hash) are built a few bands at a time and only
         // the last Window entries are kept, so their memory does not grow with the image. Entries are the same as if one
         // chain covered the whole image, so the matches do not change.
@@ -906,8 +909,29 @@ internal static class VP8LEncoder
             }
 
             const int HashBits = 18;
-            int[] head = new int[1 << HashBits];
-            Array.Fill(head, -1);
+            // The hash table maps each 18-bit hash to the latest pixel with it. A full table is 1 MiB, which the small images that
+            // make up most of a file's work (predictor and color-transform maps, palettes) must not pay on every call, so they use
+            // an exact stand-in with the same answers: an open-addressing map sized to the pixel count. Larger images rent the table
+            // from the pool instead of allocating it.
+            bool small = n <= SmallHashPixels;
+            int[] head = [];
+            int[] keys = [];
+            int[] vals = [];
+            int mask = 0;
+            if (small)
+            {
+                int cap = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(16, 2 * n));
+                keys = System.Buffers.ArrayPool<int>.Shared.Rent(cap);
+                vals = System.Buffers.ArrayPool<int>.Shared.Rent(cap);
+                mask = cap - 1;
+                Array.Fill(keys, -1, 0, cap);
+            }
+            else
+            {
+                head = System.Buffers.ArrayPool<int>.Shared.Rent(1 << HashBits);
+                Array.Fill(head, -1, 0, 1 << HashBits);
+            }
+
             int bands = (n + BandPixels - 1) / BandPixels;
             int degree = Math.Min(_o.Degree, bands);
             int waveBands = Math.Max(8, 2 * degree);
@@ -930,8 +954,23 @@ internal static class VP8LEncoder
                     for (int i = ws; i < Math.Min(we, n - 1); i++)
                     {
                         uint hv = ((px[i] * 0x1e35a7bdu) ^ (px[i + 1] * 0x9e3779b1u)) >> (32 - HashBits);
-                        chain[i - chainBase] = head[hv];
-                        head[hv] = i;
+                        if (small)
+                        {
+                            int slot = (int)hv & mask;
+                            while (keys[slot] != -1 && keys[slot] != (int)hv)
+                            {
+                                slot = (slot + 1) & mask;
+                            }
+
+                            chain[i - chainBase] = keys[slot] == -1 ? -1 : vals[slot];
+                            keys[slot] = (int)hv;
+                            vals[slot] = i;
+                        }
+                        else
+                        {
+                            chain[i - chainBase] = head[hv];
+                            head[hv] = i;
+                        }
                     }
 
                     if (we == n)
@@ -978,6 +1017,15 @@ internal static class VP8LEncoder
             finally
             {
                 System.Buffers.ArrayPool<int>.Shared.Return(chain);
+                if (small)
+                {
+                    System.Buffers.ArrayPool<int>.Shared.Return(keys);
+                    System.Buffers.ArrayPool<int>.Shared.Return(vals);
+                }
+                else
+                {
+                    System.Buffers.ArrayPool<int>.Shared.Return(head);
+                }
             }
         }
 

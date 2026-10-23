@@ -296,51 +296,63 @@ internal sealed class WebPEncoderImpl : IImageEncoder
         int bpp = fr.Format.BytesPerPixel;
         int degree = fr.Degree;
         VP8Encoder enc = VP8Encoder.Create(w, h, options.Quality, options.Effort, token, degree);
-        byte[] strip = new byte[checked(w * bpp * 16)];
         byte[]? alphaPlane = null;
-        for (int y = 0; y < h; y += 16)
+        Task<byte[]>? alphaTask = null;
+        bool hasAlpha;
+        byte[] data;
+        // The encoder's rented source planes go back to the pool even when reading or cancellation fails midway.
+        try
         {
-            token.ThrowIfCancellationRequested();
-            int n = Math.Min(16, h - y);
-            fr.ReadRows(y, n, strip);
-            enc.AddRows(strip, bpp, y, n);
-            if (bpp != 4)
+            byte[] strip = new byte[checked(w * bpp * 16)];
+            for (int y = 0; y < h; y += 16)
             {
-                continue;
-            }
-
-            ReadOnlySpan<byte> px = strip.AsSpan(0, w * n * 4);
-            if (alphaPlane == null)
-            {
-                bool opaque = true;
-                for (int i = 3; i < px.Length; i += 4)
-                {
-                    if (px[i] != 255)
-                    {
-                        opaque = false;
-                        break;
-                    }
-                }
-
-                if (opaque)
+                token.ThrowIfCancellationRequested();
+                int n = Math.Min(16, h - y);
+                fr.ReadRows(y, n, strip);
+                enc.AddRows(strip, bpp, y, n);
+                if (bpp != 4)
                 {
                     continue;
                 }
 
-                alphaPlane = new byte[checked(w * h)];
-                alphaPlane.AsSpan(0, y * w).Fill(255);
+                ReadOnlySpan<byte> px = strip.AsSpan(0, w * n * 4);
+                if (alphaPlane == null)
+                {
+                    bool opaque = true;
+                    for (int i = 3; i < px.Length; i += 4)
+                    {
+                        if (px[i] != 255)
+                        {
+                            opaque = false;
+                            break;
+                        }
+                    }
+
+                    if (opaque)
+                    {
+                        continue;
+                    }
+
+                    alphaPlane = new byte[checked(w * h)];
+                    alphaPlane.AsSpan(0, y * w).Fill(255);
+                }
+
+                Span<byte> dst = alphaPlane.AsSpan(y * w, w * n);
+                for (int i = 0; i < dst.Length; i++)
+                {
+                    dst[i] = px[(i * 4) + 3];
+                }
             }
 
-            Span<byte> dst = alphaPlane.AsSpan(y * w, w * n);
-            for (int i = 0; i < dst.Length; i++)
-            {
-                dst[i] = px[(i * 4) + 3];
-            }
+            hasAlpha = alphaPlane != null;
+            alphaTask = hasAlpha && degree > 1 ? Task.Run(() => EncodeAlpha(alphaPlane!, w, h, options.Effort, degree, token), token) : null;
+            data = enc.Finish();
+        }
+        finally
+        {
+            enc.Release();
         }
 
-        bool hasAlpha = alphaPlane != null;
-        Task<byte[]>? alphaTask = hasAlpha && degree > 1 ? Task.Run(() => EncodeAlpha(alphaPlane!, w, h, options.Effort, degree, token), token) : null;
-        byte[] data = enc.Finish();
         byte[]? alpha = null;
         if (hasAlpha)
         {

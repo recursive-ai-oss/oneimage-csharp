@@ -47,7 +47,14 @@ internal static class GatePeak
             return 0;
         }
 
-        op();
+        // One warm-up is the gate's method. GATE_WARMUPS=N runs N instead, for checking how much of a row's peak is the one-time
+        // code generation of the runtime's tiered JIT (hot methods are recompiled after 30 calls) rather than the operation itself.
+        int warmups = int.TryParse(Environment.GetEnvironmentVariable("GATE_WARMUPS"), out int wu) && wu > 0 ? wu : 1;
+        for (int i = 0; i < warmups; i++)
+        {
+            op();
+        }
+
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         GC.WaitForPendingFinalizers();
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
