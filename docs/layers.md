@@ -142,16 +142,18 @@ Console.WriteLine(doc.SpillStatistics);   // tiles written/read, resident and fi
 
 ## Measured
 
-Ryzen 9 7950X3D (16 cores, 32 threads), .NET 10.0.13, on a shared machine with other jobs running (load 4-12 during the runs); documents of full-size 24 MP Rgba8 layers at 50% opacity, Normal blend. "Default" is the library per-call thread limit (4); "32" raises it for the call. The ImageSharp 3.1.12 rows clone a 24 MP image and chain DrawImage calls, using every core. "AVX2 only" rows run with `DOTNET_EnableAVX512=0`. Figures in brackets are the previous release.
+Ryzen 9 7950X3D (16 cores, 32 threads), .NET 10.0.13, on a shared machine with other jobs running (load 4-12 during the runs); documents of full-size 24 MP Rgba8 layers at 50% opacity, Normal blend. "Default" is the library per-call thread limit (4); "32" raises it for the call. The ImageSharp 3.1.12 rows clone a 24 MP image and chain DrawImage calls, using every core. "AVX2 only" rows run with `DOTNET_EnableAVX512=0`.
 
 | Task | OneImage, default | OneImage, 32 threads | ImageSharp |
 |---|---|---|---|
-| Flatten 10 layers, every tile recomputed | 77 ms (113), 0.25 MB allocated (9.6) | 34 ms (49) | 72 ms |
-| Flatten 50 layers, every tile recomputed | 361 ms (541), 0.25 MB allocated (47) | 129 ms (196) | 297 ms |
-| Flatten 10 layers, AVX2 only | 115 ms (806) | 40 ms (153) | 91 ms |
-| Flatten 50 layers, AVX2 only | 544 ms (4,403) | 157 ms (746) | 340 ms |
-| Stroke on one of 20 layers, re-render, 512 x 512 viewport | 0.48 ms (0.67) | | |
-| Same, whole image into a caller buffer (24 MP copy-out dominates) | 8.0 ms (7.6) | | |
-| Same document, all 1504 tiles recomputed | 358 ms (438) | | |
+| Flatten 10 layers, every tile recomputed | 77 ms, 0.25 MB allocated | 34 ms | 72 ms |
+| Flatten 50 layers, every tile recomputed | 361 ms, 0.25 MB allocated | 129 ms | 297 ms |
+| Flatten 10 layers, AVX2 only | 115 ms | 40 ms | 91 ms |
+| Flatten 50 layers, AVX2 only | 544 ms | 157 ms | 340 ms |
+| Stroke on one of 20 layers, re-render, 512 x 512 viewport | 0.48 ms | | |
+| Same, whole image into a caller buffer (24 MP copy-out dominates) | 8.0 ms | | |
+| Same document, all 1504 tiles recomputed | 358 ms | | |
 
-After a stroke, 2 of the 1504 tiles are recomputed and the other 1502 come from the cache. A 100-layer 24 MP document (9.6 GB of pixels) renders in 1.4 s with a 256 MiB spill budget (4.1 s before) at about 540 MB peak resident (510 before); 151,862 tiles are written and 150,368 read back, and the process makes no forced collection.
+After a stroke, 2 of the 1504 tiles are recomputed and the other 1502 come from the cache. A 100-layer 24 MP document (9.6 GB of pixels) renders in 1.4 s with a 256 MiB spill budget at about 540 MB peak resident; 151,862 tiles are written and 150,368 read back, and the process makes no forced collection.
+
+At the default degree, flattening 10 layers (77 ms) is slower than ImageSharp's 72 ms on all cores; it is published as an exception in [performance.md](performance.md#layer-flatten-exception).

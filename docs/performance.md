@@ -5,7 +5,9 @@ set except one that is a tie, and one where ImageSharp does less work
 (CMYK, below). It is not faster than every native wrapper, and on peak
 memory it has one exception and several ties. Drawing and clipping
 against ImageSharp.Drawing have one exception of their own
-([below](#drawing-and-clipping-exceptions)). This page prints all of
+([below](#drawing-and-clipping-exceptions)), and flattening a layered
+document at the default thread limit has another
+([below](#layer-flatten-exception)). This page prints all of
 it: the table, the ties, the losses and the method.
 
 Every number here comes from the reports in
@@ -207,6 +209,34 @@ brushes are faster with less allocation on every row; see
   reads a private copy of the tile table, swaps fresh pooled tiles in and
   returns the replaced and cached tiles to the pool afterwards. Time is
   unchanged (12.9 ms against 13.4 ms before).
+
+## Layer flatten exception
+
+Flattening a layered document (`OneImage.Layers`, see [layers.md](layers.md))
+is compared with ImageSharp 3.1.12 cloning a 24 MP image and chaining
+`DrawImage` calls. Full-size 24 MP Rgba8 layers at 50% opacity, Normal blend,
+every tile recomputed; Ryzen 9 7950X3D (16 cores, 32 threads), .NET 10.0.13,
+on a shared machine with other jobs running (load 4-12 during the runs).
+
+| Row | OneImage, default (4 threads) | OneImage, degree raised to 32 | ImageSharp, all cores | Allocated (OneImage) |
+|---|--:|--:|--:|---|
+| flatten 10 layers | 77 ms | 34 ms | 72 ms | 0.25 MB |
+| flatten 50 layers | 361 ms | 129 ms | 297 ms | 0.25 MB |
+| flatten 10 layers, AVX2 only | 115 ms | 40 ms | 91 ms | |
+| flatten 50 layers, AVX2 only | 544 ms | 157 ms | 340 ms | |
+
+- **Flatten of 10 layers at 24 MP is slower than ImageSharp at the default
+  thread limit: 77 ms against 72 ms (1.07×), an exception.** It is not
+  published as a tie. The 50-layer and AVX2-only rows are slower in the same
+  way.
+- **The comparison is not on equal cores.** OneImage's default per-call degree
+  is 4 threads, so a server is not oversubscribed by one call; ImageSharp's
+  `DrawImage` chain uses every core. With the degree raised to 32 for the
+  call, OneImage takes 34 ms, 2.1× faster than ImageSharp's 72 ms. The
+  default stays at 4.
+- A cold flatten allocates 0.25 MB. The raw figures and the method (the
+  benchmark is in `bench/OneImage.Benchmarks`) are in
+  [layers.md](layers.md#measured).
 
 ## AVX-512 (information)
 

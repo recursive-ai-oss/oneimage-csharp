@@ -255,7 +255,7 @@ public sealed partial class PsdFile
             case AdjustmentLayer al:
                 {
                     e.BlendKey = BlendKey(l, info);
-                    // An adjustment kept only as a placeholder was made for CMYK, Lab or indexed pixels; its parameters mean nothing in the
+                    // An adjustment kept only as a placeholder was made for CMYK or Lab pixels (or could not be read); its parameters mean nothing in the
                     // RGB document written here, so an identity levels adjustment takes its place in the stack.
                     bool foreignSpace = info.Kind == PsdLayerKind.UnsupportedAdjustment && SourceColorMode is not (PsdColorMode.Rgb or PsdColorMode.Grayscale);
                     PsdBlock? block = !foreignSpace && ReferenceEquals(info.SourceAdjustment, al.Adjustment) && info.SourceAdjustmentBlock != null

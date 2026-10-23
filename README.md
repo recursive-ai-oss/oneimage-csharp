@@ -108,6 +108,12 @@ errors appear, how sources are held, limits and threading.
   group, fill and adjustment layers, masks, clipping, blend modes, render on
   demand with incremental re-rendering, and an optional disk-spill store) is in
   the core package.
+- **Photoshop files:** [OneImage.Psd](docs/psd.md) (`RecursiveAI.OneImage.Psd`)
+  reads PSD and PSB as an image format (the merged composite) and loads the
+  layer tree into a [layers](docs/layers.md) document, edits and writes it
+  back. Text, smart objects, layer effects and gradient or pattern fills are
+  kept as their stored pixels plus untouched blocks, and multichannel
+  documents are refused; the page lists what is modelled and the known gaps.
 - **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
   registers SVG and `.svgz` as an image format that is drawn at the size you
   ask for; it depends on the core package and OneImage.Text.

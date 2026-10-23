@@ -14,6 +14,16 @@ file.Document.Render().Save("flattened.png");
 file.Save("edited.psd");                       // PSB when the document is wider or taller than 30,000 px
 ```
 
+## What is covered
+
+**Multichannel documents are refused** with a typed error, both as a merged image and through `PsdFile.Load`. Every other color mode (bitmap, gray, duotone, indexed, RGB, CMYK, Lab) loads.
+
+**Modelled, and round-tripped through `PsdFile.Save`:** pixel layers with their offsets, groups (pass-through or isolated), the blend modes the layer model has, opacity, fill opacity, visibility, clipping to the layer below, lock flags, raster masks (area, default value, density, feather, disabled flag), vector masks (rasterized to a raster mask), solid color fill layers, and the adjustment layers levels, curves, hue/saturation, brightness/contrast, exposure, invert, threshold and posterize. These render with the library's own engine.
+
+**Kept only as their stored pixels plus untouched data blocks:** text layers, smart objects, layer effects and styles (`lfx2`, `lrFX`), gradient and pattern fills (including shape layers filled with them) and vector strokes. They render from the raster Photoshop stored with the layer, are not redrawn and cannot be edited here, and their blocks are written back unchanged. Dissolve and the darker/lighter color blend modes are also kept as keys but render as Normal, Darken and Lighten.
+
+**Known fidelity gaps** against Photoshop: posterize rounds to nearest instead of to buckets; curves use a different spline; brightness/contrast scaling is approximate; hard mix and vivid light differ slightly; vector-mask path operations (combine, subtract, intersect) use the non-zero rule only; levels, curves, hue/saturation, brightness/contrast and exposure layers in CMYK and Lab documents are kept but not applied; the base layer's fill opacity in a clipping group applies to the whole group. Figures are in [Fidelity of the layer render](#fidelity-of-the-layer-render).
+
 ## Reading the merged image
 
 The merged image is read in the file's own depth: gray, RGB and indexed at 8, 16 and 32 bits (indexed and bitmap deliver 8-bit RGB and gray), bitmap, duotone as gray, CMYK and Lab converted to RGB through the color engine (8-bit, Lab 16-bit stays 16-bit). Raw, run-length, ZIP and ZIP-with-prediction channels are read, 8, 16 and 32 bits. Multichannel documents are refused with a typed error.
@@ -35,7 +45,7 @@ The merged image is read in the file's own depth: gray, RGB and indexed at 8, 16
 | Raster mask | `LayerMask` | Area, default (outside) value, density, feather, disabled flag. Mask parameters are read in either position Photoshop uses. |
 | Vector mask (`vmsk`/`vsms`) | A raster mask | The path is rasterized with the non-zero rule at the layer's size. With both kinds, the two are multiplied. The written mask carries the flag that says it already includes the path. |
 | Solid color fill (`SoCo`) | `FillLayer` | Written as a document-size layer plus `SoCo`. |
-| Levels, curves, hue/saturation, brightness/contrast, exposure, invert, threshold, posterize | `AdjustmentLayer` | Per-channel levels and curves apply before the master set. Adjustments of CMYK, Lab and indexed documents are kept as placeholders (the pixels were converted to RGB), and written as an identity levels layer, since their parameters mean nothing in an RGB file. |
+| Levels, curves, hue/saturation, brightness/contrast, exposure, invert, threshold, posterize | `AdjustmentLayer` | Per-channel levels and curves apply before the master set. Levels, curves, hue/saturation, brightness/contrast and exposure layers of CMYK and Lab documents are kept as placeholders (the pixels were converted to RGB, and these act on ink or Lab channels), and written as an identity levels layer, since their parameters mean nothing in an RGB file. Invert, threshold and posterize apply as usual. |
 | Gradient and pattern fills, shape layers with such fills | A pixel layer of the stored pixels | Not redrawn: the stored raster (often 1 x 1) is what renders. |
 | Text, smart objects, layer effects (`lfx2`, `lrFX`), strokes (`vstk`) | Pixel layer + kept blocks | Drawn from the stored pixels only; the blocks are written back untouched. |
 | Image resources, ICC profile, document-level blocks | `PsdFile.Resources`, `SourceProfile`, `DocumentBlocks` | Kept and written back. Document-level odd-length blocks keep their unpadded length so they write back byte for byte. |
