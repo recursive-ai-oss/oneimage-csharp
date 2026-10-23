@@ -12,8 +12,9 @@ public class FuzzReproTests
     [Fact]
     public void AMutatedFontWithCostlyLookupsStaysWithinTheShapingBudget()
     {
-        // Shaping 1200 glyph ids through every feature of this font took about 3.5 s in the first fuzz run (budget: 1024 subtable
-        // attempts per glyph, each costly here). The cost is bounded and linear; the test pins the bound loosely.
+        // This font has lookups made of tens of thousands of subtables the engine cannot use. Skipping them used to be free, so
+        // shaping 1200 glyph ids through every feature took 3.5 s (13 s unoptimized); skipped subtables now count against the
+        // work budget and the run takes milliseconds. The bound is generous on purpose; it only has to tell milliseconds from seconds.
         FontFace face = FontFile.Parse(File.ReadAllBytes(System.IO.Path.Combine(AppContext.BaseDirectory, "testdata", "fuzz", "font-slow-shaping.ttf")))[0];
         int n = Math.Min(face.NumGlyphs, 600);
         int[] glyphs = new int[n * 2];
@@ -26,7 +27,7 @@ public class FuzzReproTests
         var sw = Stopwatch.StartNew();
         var output = new List<ShapedRunGlyph>();
         TextShaper.ShapeGlyphs(face, glyphs, 0, features, output);
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(60), $"took {sw.Elapsed}");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"took {sw.Elapsed}");
         Assert.True(output.Count <= (8 * glyphs.Length) + 256);
     }
 }

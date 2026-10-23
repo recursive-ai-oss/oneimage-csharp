@@ -25,6 +25,14 @@ public sealed class ShapingOptions
     /// and a value; 0 switches a feature off). The list is empty by default.
     /// </summary>
     public IList<FontFeature> Features { get; } = [];
+
+    /// <summary>
+    /// Gets or sets whether the run is shaped to stand upright in a vertical column: pair kerning is off and the font's <c>vert</c> and
+    /// <c>vrt2</c> forms are on, as in the vertical <see cref="LayoutMode"/>s. <see cref="Features"/> are applied after these and win. The
+    /// default is <see langword="false"/>. Clusters report <see cref="ShapedCluster.VerticalAdvance"/> and
+    /// <see cref="ShapedCluster.GetUprightOutline"/> either way; this only changes which glyphs are chosen.
+    /// </summary>
+    public bool Vertical { get; set; }
 }
 
 /// <summary>
@@ -37,9 +45,12 @@ public sealed class ShapedCluster
     private readonly Font _font;
     private readonly ShapedGlyphRef[] _glyphs;
     private Path? _outline;
+    private Path? _upright;
+    private readonly int _codePoint;
 
-    internal ShapedCluster(Font font, int start, int length, float advance, bool missing, ShapedGlyphRef[] glyphs)
+    internal ShapedCluster(Font font, int start, int length, float advance, bool missing, ShapedGlyphRef[] glyphs, int codePoint)
     {
+        _codePoint = codePoint;
         _font = font;
         Start = start;
         Length = length;
@@ -59,6 +70,31 @@ public sealed class ShapedCluster
     /// as pixels per em, not points). It includes pair kerning with the cluster that follows in logical order.
     /// </summary>
     public float Advance { get; }
+
+    /// <summary>
+    /// Gets the distance the cluster takes up in a vertical column when it stands upright, in pixels at the font's size: the sum of its
+    /// glyphs' <c>vmtx</c> advance heights, or the font's line height for a font without vertical metrics.
+    /// </summary>
+    public float VerticalAdvance
+    {
+        get
+        {
+            FontFace face = _font.Face.Data;
+            float s = _font.Size / face.UnitsPerEm;
+            if (face.Vertical is not { } v)
+            {
+                return _font.Metrics.LineHeight * s;
+            }
+
+            int sum = 0;
+            foreach (ShapedGlyphRef g in _glyphs)
+            {
+                sum += v.GetAdvance(g.GlyphId);
+            }
+
+            return sum * s;
+        }
+    }
 
     /// <summary>Gets whether any glyph of the cluster is the font's missing-glyph box because the font lacks the character.</summary>
     public bool HasMissingGlyph { get; }
@@ -90,6 +126,44 @@ public sealed class ShapedCluster
 
         o = b.Build();
         Volatile.Write(ref _outline, o);
+        return o;
+    }
+
+    /// <summary>
+    /// Gets the outline of the cluster standing upright in a vertical column, in pixels at the font's size, unhinted, y pointing down. The
+    /// origin is the middle of the column at the top of the cluster's vertical cell, so the cluster occupies y from 0 to
+    /// <see cref="VerticalAdvance"/>. Ideographs, kana and other characters that stand upright by nature (Unicode Vertical_Orientation U
+    /// and Tu) are centered by their em square; the rest are centered by their ink. The glyph sits on the baseline the font's <c>VORG</c>
+    /// table or top side bearing gives, else one ascender below the top of the cell. The same instance is returned on every call.
+    /// </summary>
+    /// <exception cref="FontFormatException">The glyph data is malformed.</exception>
+    public Path GetUprightOutline()
+    {
+        Path? o = Volatile.Read(ref _upright);
+        if (o is not null)
+        {
+            return o;
+        }
+
+        FontFace face = _font.Face.Data;
+        float s = _font.Size / face.UnitsPerEm;
+        var b = new PathBuilder();
+        float yAdvance = 0;
+        foreach (ShapedGlyphRef g in _glyphs)
+        {
+            Outline ol = face.GetOutline(g.GlyphId);
+            (float ax, _, float bx, float by) = ol.IsEmpty ? default : ol.TightBox();
+            VerticalOrientationClass cls = VerticalOrientation.Of(_codePoint);
+            float dx = ol.IsEmpty || cls is VerticalOrientationClass.U or VerticalOrientationClass.Tu
+                ? -face.UnitsPerEm * s / 2
+                : (-((bx - ax) * s) / 2) - (ax * s);
+            float down = (face.Vertical is { } v ? v.GetOriginY(g.GlyphId, (int)MathF.Round(by)) : _font.Metrics.Ascender) * s;
+            GlyphPaths.Append(b, ol, new Matrix3x2(s, 0, 0, -s, dx + (g.XOffset * s), yAdvance + down - (g.YOffset * s)));
+            yAdvance += face.Vertical is { } vm ? vm.GetAdvance(g.GlyphId) * s : 0;
+        }
+
+        o = b.Build();
+        Volatile.Write(ref _upright, o);
         return o;
     }
 }
@@ -192,6 +266,15 @@ public static class TextShaping
     }
 
     /// <summary>
+    /// Returns whether a character stands upright in vertical text set in mixed orientation: Unicode Vertical_Orientation (UAX #50) U or
+    /// Tu, which covers ideographs, kana, Hangul and the like. Everything else (Latin letters, digits, Arabic, most punctuation) lies
+    /// rotated a quarter turn clockwise. <c>Tr</c> counts as rotated.
+    /// </summary>
+    /// <param name="codePoint">The Unicode scalar value.</param>
+    public static bool IsUprightInVerticalText(int codePoint) =>
+        VerticalOrientation.Of(codePoint) is VerticalOrientationClass.U or VerticalOrientationClass.Tu;
+
+    /// <summary>
     /// Shapes one run of text, set in one font in one direction, into clusters in logical order. The run is split into stretches of one
     /// script and each is shaped with that script's rules (Arabic joining, Indic and Southeast Asian syllables, ligatures, kerning, marks).
     /// Characters the font lacks give clusters with <see cref="ShapedCluster.HasMissingGlyph"/>; choosing a fallback font is up to the caller.
@@ -224,6 +307,13 @@ public static class TextShaping
         var settings = new List<(uint, int)>();
         if (options is not null)
         {
+            if (options.Vertical)
+            {
+                settings.Add((Tag.Kern, 0));
+                settings.Add((Be.Tag("vert"), 1));
+                settings.Add((Be.Tag("vrt2"), 1));
+            }
+
             if (options.Kerning != KerningMode.Normal)
             {
                 settings.Add((Tag.Kern, 0));
@@ -307,7 +397,9 @@ public static class TextShaping
             for (int k = 0; k < pending.Count; k++)
             {
                 int end = k + 1 < pending.Count ? pending[k + 1].Start : length;
-                clusters.Add(new ShapedCluster(font, pending[k].Start, Math.Max(end - pending[k].Start, 1), pending[k].Advance, pending[k].Missing, pending[k].Glyphs));
+                int first = pending[k].Start;
+                int cp0 = char.IsHighSurrogate(text[first]) && first + 1 < length && char.IsLowSurrogate(text[first + 1]) ? char.ConvertToUtf32(text[first], text[first + 1]) : text[first];
+                clusters.Add(new ShapedCluster(font, first, Math.Max(end - first, 1), pending[k].Advance, pending[k].Missing, pending[k].Glyphs, cp0));
             }
 
             return clusters;

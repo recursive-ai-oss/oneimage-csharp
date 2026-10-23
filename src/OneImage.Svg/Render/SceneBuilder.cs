@@ -269,6 +269,7 @@ internal sealed partial class SceneBuilder
         if (f.UseTarget is not null)
         {
             _active.Remove(f.UseTarget);
+            SetUseOf(f.UseTarget, null);
         }
 
         if (f.Marker is { } marker)
@@ -514,6 +515,7 @@ internal sealed partial class SceneBuilder
         Length? uw = Length.TryParse(e.Attr("width") ?? string.Empty, out Length lw) ? lw : null;
         Length? uh = Length.TryParse(e.Attr("height") ?? string.Empty, out Length lh) ? lh : null;
         _active.Add(target);
+        SetUseOf(target, e);
         (ResolvedPaint ctxFill, ResolvedPaint ctxStroke, BBoxHolder useBox) = ContextPaints(f, st, ctm);
         Open(stack, f, [target], st, ctm, f.Vp, useClip, st.NeedsLayer || useDeco is not null, target, uw, uh, f.UseDepth + 1, _limits.MaxLayerDepth, ctxFill, ctxStroke, useBox, useDeco);
     }

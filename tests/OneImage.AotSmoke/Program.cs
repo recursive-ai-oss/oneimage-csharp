@@ -644,6 +644,29 @@ foreach (bool lossless in new[] { true, false })
         Console.Error.WriteLine("svg text smoke failed");
         return 1;
     }
+
+    // Vertical text through a use element, with a faded span: ink in a narrow column that runs down the image.
+    byte[] verticalDoc = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 80' width='40' height='80' font-family='Noto Sans'>"
+        + "<defs><text id='t' x='20' y='4' font-size='12' writing-mode='tb'>Ab<tspan opacity='0.5'>cd</tspan></text></defs><g text-anchor='start'><use href='#t'/></g></svg>");
+    Rgba32[] verticalPixels = Image.Load(verticalDoc, new LoadOptions { Configuration = textConfig }).ToArray<Rgba32>();
+    int top = 80, bottom = -1, left = 40, right = -1;
+    for (int i = 0; i < verticalPixels.Length; i++)
+    {
+        if (verticalPixels[i].A > 64)
+        {
+            top = Math.Min(top, i / 40);
+            bottom = Math.Max(bottom, i / 40);
+            left = Math.Min(left, i % 40);
+            right = Math.Max(right, i % 40);
+        }
+    }
+
+    if (bottom - top < 25 || right - left > 16)
+    {
+        Console.Error.WriteLine("svg vertical text smoke failed");
+        return 1;
+    }
 }
 
 // Complex scripts: Devanagari (reph, pre-base matra) and Khmer (coeng, pre-base vowel) through the Indic and USE shapers.

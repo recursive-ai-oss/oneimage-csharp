@@ -239,4 +239,143 @@ public class SvgTextTests
             }
         }
     }
+
+    private static Rgba32[] RenderWith(string svg, params string[] fontFiles)
+    {
+        var fonts = new SvgFontOptions { UseSystemFonts = false };
+        foreach (string f in fontFiles)
+        {
+            fonts.AddFont(FontPath(f));
+        }
+
+        var config = new ImageConfiguration().Add(new SvgFormat(fonts: fonts));
+        return Image.Load(Encoding.UTF8.GetBytes(svg), new LoadOptions { Configuration = config }).ToArray<Rgba32>();
+    }
+
+    [Fact]
+    public void VerticalTextRunsDownItsColumnWithLatinLettersLyingOnTheirSide()
+    {
+        var h = Ink(Render("<text x='10' y='40' font-size='16'>Hello</text>"));
+        var v = Ink(Render("<text x='50' y='4' font-size='16' writing-mode='tb'>Hello</text>"));
+
+        // The same ink turned a quarter: its length runs down the column and its height across it.
+        Assert.InRange(v.Y1 - v.Y0, h.X1 - h.X0 - 3, h.X1 - h.X0 + 3);
+        Assert.InRange(v.X1 - v.X0, h.Y1 - h.Y0 - 3, h.Y1 - h.Y0 + 3);
+        Assert.InRange(v.Y0, 4, 8);
+        Assert.InRange((v.X0 + v.X1) / 2, 44, 56);
+    }
+
+    [Fact]
+    public void VerticalTextAnchorWorksAlongTheColumn()
+    {
+        var start = Ink(Render("<text x='50' y='25' font-size='12' writing-mode='tb'>Hello</text>"));
+        var middle = Ink(Render("<text x='50' y='25' font-size='12' writing-mode='tb' text-anchor='middle'>Hello</text>"));
+        var end = Ink(Render("<text x='50' y='25' font-size='12' writing-mode='tb' text-anchor='end'>Hello</text>"));
+        Assert.InRange(start.Y0, 24, 28);
+        Assert.InRange((middle.Y0 + middle.Y1) / 2, 23, 27);
+        Assert.InRange(end.Y1, 23, 26);
+    }
+
+    [Fact]
+    public void VerticalDxMovesAcrossTheColumnAndDyAlongIt()
+    {
+        var plain = Ink(Render("<text x='30' y='5' font-size='12' writing-mode='tb'>Hi</text>"));
+        var moved = Ink(Render("<text x='30' y='5' font-size='12' writing-mode='tb'><tspan dx='20' dy='10'>Hi</tspan></text>"));
+        Assert.InRange(moved.X0 - plain.X0, 19, 21);
+        Assert.InRange(moved.Y0 - plain.Y0, 9, 11);
+    }
+
+    [Fact]
+    public void WritingModeOnATspanDoesNotMakeTheTextVertical()
+    {
+        var ink = Ink(Render("<text x='10' y='30' font-size='14'><tspan writing-mode='tb'>Hello</tspan></text>"));
+        Assert.True(ink.X1 - ink.X0 > ink.Y1 - ink.Y0);
+    }
+
+    [Fact]
+    public void UprightIdeographsStandInTheColumnWhileLatinLiesDown()
+    {
+        // U+65E5 U+672C are Vertical_Orientation U: drawn as in horizontal text, one em apart down the column.
+        string body = "<text x='50' y='2' font-size='20' writing-mode='tb' font-family='Noto Sans CJK JP, Noto Sans'>\u65E5\u672C</text>";
+        Rgba32[] px = RenderWith($"<svg {Ns} viewBox='0 0 100 50' width='100' height='50'>{body}</svg>", "NotoSansCJK-Subset.otf", "NotoSans-Subset-Regular.ttf");
+        var ink = Ink(px);
+        Assert.InRange(ink.X1 - ink.X0, 14, 20);   // an upright ideograph is about as wide as it is tall
+        Assert.InRange(ink.Y1 - ink.Y0, 30, 40);   // two of them, one em each
+        Assert.InRange((ink.X0 + ink.X1) / 2, 46, 54);
+    }
+
+    [Fact]
+    public void TextTakesItsStyleFromTheAncestorsOfTheUseElement()
+    {
+        string defs = "<defs><text id='t' y='30' font-size='16'>Wide</text></defs>";
+        var plain = Ink(Render(defs + "<g text-anchor='middle'><use href='#t' x='50'/></g>"));
+        var other = Ink(Render(defs + "<g><use href='#t' x='50'/></g>"));
+        Assert.InRange((plain.X0 + plain.X1) / 2, 46, 54);
+        Assert.InRange(other.X0, 50, 54);
+
+        // The referenced element's own surroundings no longer count: a text-anchor on its parent in the defs does not apply.
+        var inDefs = Ink(Render("<defs><g text-anchor='end'><text id='t' y='30' font-size='16'>Wide</text></g></defs><use href='#t' x='50'/>"));
+        Assert.InRange(inDefs.X0, 50, 54);
+    }
+
+    [Fact]
+    public void OpacityOnATspanFadesJustThatSpan()
+    {
+        Rgba32[] px = Render("<text x='5' y='30' font-size='24' fill='black'>I<tspan opacity='0.5'>I</tspan>I</text>");
+        // Three stems along a row; the middle one is faded to half, the others are solid.
+        var peaks = new List<int>();
+        int peak = 0;
+        for (int x = 0; x < 100; x++)
+        {
+            int a = px[(22 * 100) + x].A;
+            if (a >= 64)
+            {
+                peak = Math.Max(peak, a);
+            }
+            else if (peak > 0)
+            {
+                peaks.Add(peak);
+                peak = 0;
+            }
+        }
+
+        Assert.Equal(3, peaks.Count);
+        Assert.Equal(255, peaks[0]);
+        Assert.InRange(peaks[1], 126, 130);
+        Assert.Equal(255, peaks[2]);
+    }
+
+    [Fact]
+    public void ACharacterWithItsOwnDxIsNotHeldBackByTheLigatureItWouldJoin()
+    {
+        // The font ties f and i into one glyph. Positioned apart they cannot share it, so the dx on the i takes effect.
+        string Svg(string text) => $"<svg {Ns} viewBox='0 0 100 50' width='100' height='50'><text x='5' y='35' font-size='30' font-family='Noto Sans'>{text}</text></svg>";
+        int Right(string text)
+        {
+            Rgba32[] px = RenderWith(Svg(text), "NotoSans-Shaping-Subset.ttf");
+            int x1 = -1;
+            for (int i = 0; i < px.Length; i++)
+            {
+                if (px[i].A > 128)
+                {
+                    x1 = Math.Max(x1, i % 100);
+                }
+            }
+
+            return x1;
+        }
+
+        int joined = Right("fi");
+        Assert.InRange(Right("f<tspan dx='10'>i</tspan>") - joined, 9, 11);
+        Assert.InRange(Right("<tspan rotate='0'>f</tspan><tspan rotate='5'>i</tspan>"), joined - 1, joined + 4);
+    }
+
+    [Fact]
+    public void NestedTspanOpacityCountsAgainstTheLayerDepthLimit()
+    {
+        var limits = new SvgLimits { MaxLayerDepth = 3 };
+        const string Nested = "<text y='30'><tspan opacity='.9'>a<tspan opacity='.9'>b<tspan opacity='.9'>c<tspan opacity='.9'>d<tspan opacity='.9'>e</tspan></tspan></tspan></tspan></tspan></text>";
+        Assert.Throws<ImageLimitException>(() => Render(Nested, limits));
+        Render(Nested);
+    }
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using OneImage.Drawing;
 using OneImage.Svg.Dom;
@@ -74,6 +75,8 @@ internal sealed partial class SceneBuilder
             overrides = m.Spans[m.CharSpan[i]].Ts.BidiOverride;
         }
 
+        // Writing mode applies to the text element only; right-to-left runs are reordered down the column as they would be along a line.
+        bool vertical = m.Spans[0].Ts.Vertical;
         if (paraRtl || overrides || MayNeedBidi(text, c0, c1))
         {
             lv = TextShaping.GetBidiLevels(text.Substring(c0, c1 - c0), paraRtl ? TextDirection.RightToLeft : TextDirection.LeftToRight, out int para);
@@ -98,8 +101,8 @@ internal sealed partial class SceneBuilder
             TSpan sp = m.Spans[m.CharSpan[i]];
             int cp = CodePointAt(text, i, c1);
             Font? f = sp.Chain!.Pick(cp);
-            int kern = sp.Ts.Kerning ? 0 : 1;
-            if (f is null || !sp.Ts.SmallCaps)
+            int kern = (sp.Ts.Kerning ? 0 : 1) | (vertical && TextShaping.IsUprightInVerticalText(cp) ? 4 : 0);
+            if (f is null || !sp.Ts.SmallCaps || (kern & 4) != 0)
             {
                 return (f, kern);
             }
@@ -140,7 +143,7 @@ internal sealed partial class SceneBuilder
             {
                 int cpn = CodePointAt(text, end, c1);
                 (Font? fn, int optNext) = Resolve(end);
-                if (optNext != optIndex || (lv is null ? (byte)0 : lv[end - c0]) != level || !ReferenceEquals(fn, font))
+                if (optNext != optIndex || (lv is null ? (byte)0 : lv[end - c0]) != level || !ReferenceEquals(fn, font) || SplitsLigature(m, text, end))
                 {
                     break;
                 }
@@ -148,7 +151,7 @@ internal sealed partial class SceneBuilder
                 end += cpn > 0xFFFF ? 2 : 1;
             }
 
-            if (prevFont is not null && level == 0 && prevLevel == 0 && (optIndex & 1) == 0 && prevOpt == optIndex && all.Count > 0 && all[^1].Index + all[^1].Length == pos)
+            if (prevFont is not null && level == 0 && prevLevel == 0 && (optIndex & 5) == 0 && prevOpt == optIndex && all.Count > 0 && all[^1].Index + all[^1].Length == pos)
             {
                 KernAcrossSizes(all[^1], chars, pos, prevFont, font, optIndex);
             }
@@ -161,14 +164,15 @@ internal sealed partial class SceneBuilder
             {
                 int gi = pos + c.Start;
                 TSpan owner = m.Spans[m.CharSpan[gi]];
-                double adv = c.Advance + owner.Ts.LetterSpacing;
+                bool upright = (optIndex & 4) != 0;
+                double adv = (upright ? c.VerticalAdvance : c.Advance) + owner.Ts.LetterSpacing;
                 if (text[gi] is ' ' or '\u00a0')
                 {
                     adv += owner.Ts.WordSpacing;
                 }
 
                 Count();
-                all.Add(new Placed { Cluster = c, Span = owner, Font = font, Index = gi, Length = c.Length, Level = lv is null ? (byte)0 : lv[gi - c0], Chunk = chunkId, Advance = adv });
+                all.Add(new Placed { Cluster = c, Span = owner, Font = font, Index = gi, Length = c.Length, Level = lv is null ? (byte)0 : lv[gi - c0], Chunk = chunkId, Advance = adv, Upright = upright });
             }
 
             if ((all.Count & 0x3FF) == 0)
@@ -197,6 +201,26 @@ internal sealed partial class SceneBuilder
         }
 
         last.Advance += two[0].Advance - last.Cluster.Advance;
+    }
+
+    // Two characters that are positioned apart (an own dx or dy, or a rotation that differs from the one before) cannot share a ligature, so the
+    // run of the shaper is cut between them. A combining mark stays with its base, and so does a joiner.
+    private static bool SplitsLigature(TextModel m, string text, int i)
+    {
+        double dx = TextModel.Get(m.Dx, i);
+        double dy = TextModel.Get(m.Dy, i);
+        double rot = TextModel.Get(m.Rot, i);
+        double prev = TextModel.Get(m.Rot, i - 1);
+        bool moved = (!double.IsNaN(dx) && dx != 0) || (!double.IsNaN(dy) && dy != 0);
+        bool turned = !double.IsNaN(rot) != !double.IsNaN(prev) || (!double.IsNaN(rot) && rot != prev);
+        if (!moved && !turned)
+        {
+            return false;
+        }
+
+        UnicodeCategory cat = char.GetUnicodeCategory(text, i);
+        return cat is not (UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.Format or UnicodeCategory.Surrogate)
+            && text[i] is not ('\u200D' or '\u200C');
     }
 
     private static int CodePointAt(string text, int i, int limit) =>
@@ -318,6 +342,12 @@ internal sealed partial class SceneBuilder
             return;
         }
 
+        if (m.Spans[0].Ts.Vertical)
+        {
+            PositionVertical(m, all, first, count, order, anchor, ref curX, ref curY);
+            return;
+        }
+
         double x0 = TextModel.IsSet(m.X, head.Index) ? m.X![head.Index] : curX;
         double y0 = TextModel.IsSet(m.Y, head.Index) ? m.Y![head.Index] : curY;
         double cx = x0, cy = y0;
@@ -377,6 +407,68 @@ internal sealed partial class SceneBuilder
 
         curX = cx + shift;
         curY = cy;
+    }
+
+    // Vertical text: the characters run down a column. x is the column's middle line and y where the chunk starts; dy moves along the column and
+    // dx across it. Text-anchor works on the extent along y. Characters that lie down are rotated a quarter turn clockwise about their pen
+    // position on the baseline, which sits so that the font's ascent and descent box is centered on the column's line; upright ones are
+    // drawn from their upright outline, centered on the line. Underlines and the like are bars on the rotated baseline, to its left.
+    private static void PositionVertical(TextModel m, List<Placed> all, int first, int count, int[] order, TextAnchor anchor, ref double curX, ref double curY)
+    {
+        Placed head = all[first];
+        double x0 = TextModel.IsSet(m.X, head.Index) ? m.X![head.Index] : curX;
+        double y0 = TextModel.IsSet(m.Y, head.Index) ? m.Y![head.Index] : curY;
+        double cx = x0, cy = y0;
+        double top = double.MaxValue, bottom = double.MinValue;
+        foreach (int oi in order)
+        {
+            Placed p = all[first + oi];
+            double dx = TextModel.Get(m.Dx, p.Index);
+            double dy = TextModel.Get(m.Dy, p.Index);
+            if (!double.IsNaN(dx))
+            {
+                cx += dx;
+            }
+
+            if (!double.IsNaN(dy))
+            {
+                cy += dy;
+            }
+
+            FontMetrics fm = p.Font.Metrics;
+            double scale = p.Font.Size / (double)fm.UnitsPerEm;
+            double baseX = cx - ((Math.Abs(fm.Ascender) - Math.Abs(fm.Descender)) * scale / 2);
+            double rot = TextModel.Get(m.Rot, p.Index);
+            double r = double.IsNaN(rot) ? 0 : rot;
+            p.Frame = Place(baseX, cy, 90 + r, 1);
+            p.Matrix = p.Upright ? Place(cx, cy, r, 1) : p.Frame.Value;
+            top = Math.Min(top, Math.Min(cy, cy + p.Advance));
+            bottom = Math.Max(bottom, Math.Max(cy, cy + p.Advance));
+            cy += p.Advance;
+        }
+
+        bottom -= all[first + order[^1]].Span.Ts.LetterSpacing;
+        double firstDy = TextModel.Get(m.Dy, head.Index);
+        double at = double.IsNaN(firstDy) ? y0 : y0 + firstDy;
+        double shift = anchor switch
+        {
+            TextAnchor.Middle => at - ((top + bottom) / 2),
+            TextAnchor.End => at - bottom,
+            _ => at - top,
+        };
+
+        if (shift != 0)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Placed p = all[first + i];
+                p.Matrix = p.Matrix with { F = p.Matrix.F + shift };
+                p.Frame = p.Frame!.Value with { F = p.Frame.Value.F + shift };
+            }
+        }
+
+        curX = cx;
+        curY = cy + shift;
     }
 
     private static void PositionOnPath(TextModel m, List<Placed> all, int first, int[] order, TSpan pathSpan, PathRoute route, TextAnchor anchor, bool rtl, ref double curX, ref double curY)

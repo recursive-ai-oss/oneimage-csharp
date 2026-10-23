@@ -146,6 +146,17 @@ internal sealed class Placed
     public Affine Matrix { get; set; }
 
     public bool Skip { get; set; }
+
+    /// <summary>In vertical text: the cluster stands upright (it is drawn from its upright outline and advances by its vertical advance) instead of lying rotated a quarter turn.</summary>
+    public bool Upright { get; init; }
+
+    /// <summary>The cluster's line frame (the matrix of the same cluster set as rotated text on the baseline), which decorations and the line box use; null when it is <see cref="Matrix"/>.</summary>
+    public Affine? Frame { get; set; }
+
+    public Affine FrameMatrix => Frame ?? Matrix;
+
+    /// <summary>The outline of the cluster in the space <see cref="Matrix"/> maps from.</summary>
+    public Path Outline => Upright ? Cluster.GetUprightOutline() : Cluster.GetOutline();
 }
 
 /// <summary>A flattened path with the point and direction at any distance along it. The figures of the path are one after the other.</summary>

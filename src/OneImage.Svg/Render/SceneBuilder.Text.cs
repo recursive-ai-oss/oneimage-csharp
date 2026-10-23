@@ -9,17 +9,41 @@ namespace OneImage.Svg.Render;
 // Text: collecting the characters of a text element, laying them out, and turning the placed clusters into render nodes.
 internal sealed partial class SceneBuilder
 {
-    // Shaping options for kerning on or off and small capitals on or off, shared (shaping only reads them).
+    // Shaping options for kerning on or off, small capitals on or off and upright vertical forms, shared (shaping only reads them).
     private static readonly ShapingOptions[] ShapeOptions = MakeShapeOptions();
 
     private readonly Dictionary<SvgElement, TextStyle> _textStyles = [];
 
+    // The use element that is instantiating an element right now. Text inherits its style from the use element's ancestors, not from the
+    // ancestors of the referenced element. An element can only be instantiated once at a time (use cycles are cut), so one entry is enough.
+    private readonly Dictionary<SvgElement, SvgElement> _useOf = [];
+
+    private SvgElement? TextParent(SvgElement e) => _useOf.TryGetValue(e, out SvgElement? use) ? use : e.Parent;
+
+    private void SetUseOf(SvgElement target, SvgElement? use)
+    {
+        if (use is null)
+        {
+            _useOf.Remove(target);
+        }
+        else
+        {
+            _useOf[target] = use;
+        }
+
+        // Styles computed through the old chain no longer apply.
+        if (_textStyles.Count > 0)
+        {
+            _textStyles.Clear();
+        }
+    }
+
     private static ShapingOptions[] MakeShapeOptions()
     {
-        var all = new ShapingOptions[4];
-        for (int i = 0; i < 4; i++)
+        var all = new ShapingOptions[8];
+        for (int i = 0; i < 8; i++)
         {
-            var o = new ShapingOptions { Kerning = (i & 1) != 0 ? KerningMode.None : KerningMode.Normal };
+            var o = new ShapingOptions { Kerning = (i & 1) != 0 ? KerningMode.None : KerningMode.Normal, Vertical = (i & 4) != 0 };
             if ((i & 2) != 0)
             {
                 o.Features.Add(new FontFeature("smcp", 1));
@@ -40,12 +64,12 @@ internal sealed partial class SceneBuilder
         }
 
         var chain = new Stack<SvgElement>();
-        for (SvgElement? p = e; p is not null && !_textStyles.ContainsKey(p); p = p.Parent)
+        for (SvgElement? p = e; p is not null && !_textStyles.ContainsKey(p); p = TextParent(p))
         {
             chain.Push(p);
         }
 
-        TextStyle ts = chain.Peek().Parent is { } above ? _textStyles[above] : TextStyle.Initial;
+        TextStyle ts = TextParent(chain.Peek()) is { } above ? _textStyles[above] : TextStyle.Initial;
         while (chain.Count > 0)
         {
             SvgElement n = chain.Pop();
@@ -363,11 +387,12 @@ internal sealed partial class SceneBuilder
     private TextModel? Collect(SvgElement textEl, in SvgStyle st, Viewport vp)
     {
         var m = new TextModel();
-        TextStyle parentTs = textEl.Parent is null ? TextStyle.Initial : TextStyleOf(textEl.Parent);
+        SvgElement? textParent = TextParent(textEl);
+        TextStyle parentTs = textParent is null ? TextStyle.Initial : TextStyleOf(textParent);
         TextStyle ts = TextStyle.Compute(textEl, parentTs, st, _rootVp.Width);
 
         // A decoration set on an ancestor of the text element applies to the text, drawn with the text element's own paint.
-        for (SvgElement? anc = textEl.Parent; anc is not null; anc = anc.Parent)
+        for (SvgElement? anc = textParent; anc is not null; anc = TextParent(anc))
         {
             TextStyle at = TextStyleOf(anc);
             ts.Underline |= at.Underline;

@@ -29,6 +29,8 @@
   <ItemGroup>
     <Content Include="../testdata/fonts/NotoSans-Subset-Regular.ttf" Link="testdata/fonts/NotoSans-Subset-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../testdata/fonts/NotoSans-Subset-Bold-kern.ttf" Link="testdata/fonts/NotoSans-Subset-Bold-kern.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../testdata/fonts/NotoSans-Shaping-Subset.ttf" Link="testdata/fonts/NotoSans-Shaping-Subset.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../testdata/fonts/NotoSansCJK-Subset.otf" Link="testdata/fonts/NotoSansCJK-Subset.otf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

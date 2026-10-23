@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 200 120" font-family="Noto Sans" font-size="16">
+  <defs>
+    <text id="label" x="20" y="10" writing-mode="tb">Vertical text</text>
+    <text id="cjk" x="60" y="10" writing-mode="vertical-rl" dy="2 4" dx="1 0 3">&#x65E5;&#x672C; Japan &#x627;&#x644;</text>
+  </defs>
+  <g text-anchor="middle" letter-spacing="1">
+    <use href="#label"/>
+    <use href="#cjk" x="20"/>
+  </g>
+  <text x="100" y="40" rotate="0 5 -5" fill="blue">fi<tspan opacity="0.5" dx="3">ffi<tspan opacity="0.5" fill="red" dy="2">fl</tspan></tspan>office</text>
+  <text x="110" y="10" writing-mode="tb" text-anchor="end" text-decoration="underline"><tspan dy="-4" rotate="20 30">ABC</tspan> def</text>
+</svg>

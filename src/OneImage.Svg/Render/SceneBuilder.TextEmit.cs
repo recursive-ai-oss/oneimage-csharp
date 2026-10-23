@@ -64,7 +64,7 @@ internal sealed partial class SceneBuilder
     }
 
     // The cluster's outline in its own space; the cluster's matrix carries its horizontal scale (textLength with lengthAdjust).
-    private static Path GlyphGeometry(Placed p) => p.Cluster.GetOutline();
+    private static Path GlyphGeometry(Placed p) => p.Outline;
 
     // The bounds of everything the text draws, in the text element's user space; null when nothing has ink.
     private static Box? InkBox(List<Placed> placed)
@@ -77,7 +77,7 @@ internal sealed partial class SceneBuilder
                 continue;
             }
 
-            Path outline = p.Cluster.GetOutline();
+            Path outline = p.Outline;
             if (outline.IsEmpty)
             {
                 continue;
@@ -110,7 +110,7 @@ internal sealed partial class SceneBuilder
             double scale = p.Font.Size / (double)fm.UnitsPerEm;
             double asc = Math.Abs(fm.Ascender) * scale;
             double desc = Math.Abs(fm.Descender) * scale;
-            (double ax, double ay, double bx, double by) = p.Matrix.TransformRect(0, -asc, p.Cluster.Advance, desc);
+            (double ax, double ay, double bx, double by) = p.FrameMatrix.TransformRect(0, -asc, p.Upright ? p.Cluster.VerticalAdvance : p.Cluster.Advance, desc);
             x0 = Math.Min(x0, ax);
             y0 = Math.Min(y0, ay);
             x1 = Math.Max(x1, bx);
@@ -178,10 +178,10 @@ internal sealed partial class SceneBuilder
     private void BuildTextNodes(Frame f, Affine ctm, TextModel m, List<Placed> placed, Path? clip, ref BBoxHolder? bbox, List<RNode> nodes)
     {
         _ = m;
-        var below = new List<RNode>();
-        var first = new List<RNode>();
-        var second = new List<RNode>();
-        var above = new List<RNode>();
+        var below = new List<(TSpan, RNode)>();
+        var first = new List<(TSpan, RNode)>();
+        var second = new List<(TSpan, RNode)>();
+        var above = new List<(TSpan, RNode)>();
 
         foreach (Placed p in placed)
         {
@@ -190,7 +190,7 @@ internal sealed partial class SceneBuilder
                 continue;
             }
 
-            Path outline = p.Cluster.GetOutline();
+            Path outline = p.Outline;
             if (outline.IsEmpty)
             {
                 continue;
@@ -215,28 +215,121 @@ internal sealed partial class SceneBuilder
             RPath? strokeNode = sp.HasStroke ? MakeNode(geometry, full, sp, st, fill: false, clip) : null;
             if (strokeFirst)
             {
-                AddIf(first, strokeNode);
-                AddIf(second, fillNode);
+                AddIf(first, p.Span, strokeNode);
+                AddIf(second, p.Span, fillNode);
             }
             else
             {
-                AddIf(first, fillNode);
-                AddIf(second, strokeNode);
+                AddIf(first, p.Span, fillNode);
+                AddIf(second, p.Span, strokeNode);
             }
         }
 
         BuildDecorations(f, ctm, placed, clip, ref bbox, below, above);
-        nodes.AddRange(below);
-        nodes.AddRange(first);
-        nodes.AddRange(second);
-        nodes.AddRange(above);
+        var all = new List<(TSpan Owner, RNode Node)>(below.Count + first.Count + second.Count + above.Count);
+        all.AddRange(below);
+        all.AddRange(first);
+        all.AddRange(second);
+        all.AddRange(above);
+        AppendBySpan(f, all, nodes);
     }
 
-    private static void AddIf(List<RNode> list, RNode? node)
+    private static void AddIf(List<(TSpan, RNode)> list, TSpan owner, RNode? node)
     {
         if (node is not null)
         {
-            list.Add(node);
+            list.Add((owner, node));
+        }
+    }
+
+    // Opacity on a tspan (or textPath, or a) fades what that element's characters draw as one group. The nodes of such an element go into one layer
+    // at the place of its first node, inner elements with their own opacity in layers inside it.
+    private void AppendBySpan(Frame f, List<(TSpan Owner, RNode Node)> all, List<RNode> into)
+    {
+        bool any = false;
+        foreach ((TSpan owner, _) in all)
+        {
+            for (TSpan? a = owner; a is { Parent: not null } && !any; a = a.Parent)
+            {
+                any = a.St.Opacity < 1;
+            }
+
+            if (any)
+            {
+                break;
+            }
+        }
+
+        if (!any)
+        {
+            foreach ((_, RNode node) in all)
+            {
+                into.Add(node);
+            }
+
+            return;
+        }
+
+        AppendLayered(f, all, null, into, f.LayerDepth + 1);
+    }
+
+    // The outermost span below <paramref name="within"/> with opacity under 1 on the way from a node's owner up.
+    private static TSpan? FadingBelow(TSpan owner, TSpan? within)
+    {
+        TSpan? found = null;
+        for (TSpan? a = owner; a is { Parent: not null } && !ReferenceEquals(a, within); a = a.Parent)
+        {
+            if (a.St.Opacity < 1)
+            {
+                found = a;
+            }
+        }
+
+        return found;
+    }
+
+    private void AppendLayered(Frame f, List<(TSpan Owner, RNode Node)> all, TSpan? within, List<RNode> into, int depth)
+    {
+        // One pass sorts the nodes into the layers of the spans that fade them (kept in the order the first node of each appears), the next builds those.
+        var buckets = new Dictionary<TSpan, List<(TSpan Owner, RNode Node)>>();
+        var slots = new List<(TSpan? Fade, RNode Node)>();
+        foreach ((TSpan owner, RNode node) in all)
+        {
+            TSpan? fade = FadingBelow(owner, within);
+            if (fade is null)
+            {
+                slots.Add((null, node));
+            }
+            else if (!buckets.TryGetValue(fade, out List<(TSpan Owner, RNode Node)>? list))
+            {
+                buckets[fade] = list = [];
+                list.Add((owner, node));
+                slots.Add((fade, node));
+            }
+            else
+            {
+                list.Add((owner, node));
+            }
+        }
+
+        foreach ((TSpan? fade, RNode node) in slots)
+        {
+            if (fade is null)
+            {
+                into.Add(node);
+                continue;
+            }
+
+            if (depth > _limits.MaxLayerDepth)
+            {
+                throw new ImageLimitException($"Groups with opacity are nested more than {_limits.MaxLayerDepth} deep.");
+            }
+
+            var children = new List<RNode>();
+            AppendLayered(f, buckets[fade], fade, children, depth + 1);
+            var layer = new RLayer { Children = children, Opacity = (float)fade.St.Opacity };
+            Union(layer, children);
+            into.Add(layer);
         }
     }
 
@@ -300,7 +393,7 @@ internal sealed partial class SceneBuilder
     }
 
     // Decorations: one path per decorating element and kind, made of a bar under (or over, or through) each cluster, drawn with that element's paint.
-    private void BuildDecorations(Frame f, Affine ctm, List<Placed> placed, Path? clip, ref BBoxHolder? bbox, List<RNode> below, List<RNode> above)
+    private void BuildDecorations(Frame f, Affine ctm, List<Placed> placed, Path? clip, ref BBoxHolder? bbox, List<(TSpan, RNode)> below, List<(TSpan, RNode)> above)
     {
         Dictionary<(TSpan, int), List<Bar>>? runs = null;
         foreach (Placed p in placed)
@@ -330,20 +423,20 @@ internal sealed partial class SceneBuilder
                 if (a.Ts.Underline)
                 {
                     float yc = -fm.UnderlinePosition * s;
-                    Add(runs, a, 0, new Bar(p.Matrix, 0, yc - (thick / 2), width, thick));
+                    Add(runs, a, 0, new Bar(p.FrameMatrix, 0, yc - (thick / 2), width, thick));
                 }
 
                 if (a.Ts.Overline)
                 {
                     float top = (-fm.Ascender * s) - (thick / 2);
-                    Add(runs, a, 1, new Bar(p.Matrix, 0, top, width, thick));
+                    Add(runs, a, 1, new Bar(p.FrameMatrix, 0, top, width, thick));
                 }
 
                 if (a.Ts.LineThrough)
                 {
                     float sthick = fm.StrikeoutSize > 0 ? fm.StrikeoutSize * s : thick;
                     float yc = -fm.StrikeoutPosition * s;
-                    Add(runs, a, 2, new Bar(p.Matrix, 0, yc - (sthick / 2), width, sthick));
+                    Add(runs, a, 2, new Bar(p.FrameMatrix, 0, yc - (sthick / 2), width, sthick));
                 }
             }
         }
@@ -401,7 +494,7 @@ internal sealed partial class SceneBuilder
             node.Y1 = by1 + pad;
             node.ContentX1 = bx1;
             node.ContentY1 = by1;
-            (kind == 2 ? above : below).Add(node);
+            (kind == 2 ? above : below).Add((owner, node));
         }
     }
 

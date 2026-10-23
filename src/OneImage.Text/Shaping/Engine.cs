@@ -121,15 +121,18 @@ internal sealed partial class Engine
         for (int s = 0; s < lk.Count; s++)
         {
             byte type = lk.Types[s];
-            if (type == 0 || (!_gpos && type == 8 && _depth > 0))
-            {
-                continue;
-            }
 
+            // Skipped subtables count as work too: a lookup with tens of thousands of subtables the engine cannot use would
+            // otherwise cost that many steps at every glyph for free.
             if (++_ops > _maxOps)
             {
                 Exhausted = true;
                 return false;
+            }
+
+            if (type == 0 || (!_gpos && type == 8 && _depth > 0))
+            {
+                continue;
             }
 
             try

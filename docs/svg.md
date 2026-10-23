@@ -229,7 +229,12 @@ Text is laid out by the SVG package and shaped and outlined by `OneImage.Text`; 
 - **Painting.** Fill and stroke with paint servers (a gradient or pattern in `objectBoundingBox` units measures the line box: each glyph's advance wide and the font's ascent plus descent tall, not the ink), `context-fill`/`context-stroke`, `paint-order`, opacity, masks and filters on the text element. Underline, overline and line-through are drawn as bars with the font's metrics and share one bar across a run. `text-rendering: optimizeSpeed` on the `text` element draws its glyphs without anti-aliasing. Text inside a `clipPath` clips like geometry.
 - **Whitespace.** `xml:space` and `white-space`; collapsing runs across `tspan` boundaries, and a preserved space ends a collapsing run.
 
-Known gaps: vertical `writing-mode` (needs a vertical layout mode in `OneImage.Text`), variable-font axes, bitmap and COLRv1 glyphs, text style does not follow a `use` instance's ancestors (it follows the DOM), `opacity` on a `tspan` is not layered per span, and a ligature is kept whole when an interior character has its own `dx` or `rotate`.
+- **Vertical text.** `writing-mode` `tb`, `tb-rl`, `vertical-rl`, `vertical-lr` (and `sideways-*`) on the `text` element (on a `tspan` it has no effect). The characters run down the column from `y`, with `x` the middle line of the column. As in the mixed vertical mode of `OneImage.Text`, characters with Vertical_Orientation U or Tu (ideographs, kana, Hangul) stand upright and are shaped with the font's `vert` forms; the rest (Latin, digits, Arabic) lie rotated a quarter turn clockwise, with the font's ascent-plus-descent box centered on the column line. `dx` moves across the column, `dy` along it, `text-anchor` anchors the extent along `y`, and right-to-left runs are reordered down the column. `glyph-orientation-vertical` and `text-orientation` are not used (the reference ignores them too), and all four vertical modes lay out the same way (each column starts at its own `x`). Underlines are bars on the rotated baseline, to its left. Text on a path ignores the writing mode.
+- **Text style through `use`.** A `use` element's ancestors are the ancestors of the text it instantiates for everything that inherits (`font-family`, `text-anchor`, `writing-mode`, `direction`, `letter-spacing`, decorations); the surroundings of the referenced element itself no longer count.
+- **Opacity on spans.** `opacity` on a `tspan`, `textPath` or `a` fades the characters of that element (and its descendants) as one group, with nested groups inside it. The reference renderer ignores it (`tspan/with-opacity`), so that one test differs on purpose.
+- **Ligatures and positions.** A character with its own `dx` or `dy`, or a `rotate` that differs from the previous character's, ends the run the shaper sees, so it cannot be held inside a ligature; combining marks and joiners stay with their base.
+
+Known gaps: variable-font axes, bitmap and COLRv1 glyphs, and vertical `text-orientation`.
 
 ## Testing against resvg's suite
 
@@ -282,28 +287,28 @@ Of the 85 failures in these subcategories (and `fill`/`opacity`/`display` and so
 
 ### Text results
 
-The text category, rendered with the suite's own fonts, generic families as the suite sets them, `DefaultFontSize = 12` (the suite's references were made with a 12 px `medium` font; our default is 16, the browsers') and no installed fonts (`ONEIMAGE_RESVG_TESTS` pointing at the full collection). Before the text unit text passed 16 of 383; now 269 of 383 (70.2%), and the whole table is 1396 of 1706 (81.8%; 1112 before). No other category lost a test; `painting` gained two (gradients on text).
+The text category, rendered with the suite's own fonts, generic families as the suite sets them, `DefaultFontSize = 12` (the suite's references were made with a 12 px `medium` font; our default is 16, the browsers') and no installed fonts (`ONEIMAGE_RESVG_TESTS` pointing at the full collection). Before the text unit text passed 16 of 383; the first text unit reached 269 (70.2%) and vertical writing and `use` inheritance bring it to 279 of 383 (72.8%). The whole table is 1416 of 1706 (83.0%; 1406 before this step). No category lost a test, and one test moved on purpose: `tspan/with-opacity` passed while the opacity of a `tspan` was ignored, as the reference ignores it, and differs now that it is applied as SVG 2 says.
 
 | subdirectory | pass / rendered |
 |---|---:|
 | alignment-baseline | 16 / 19 |
-| baseline-shift, dominant-baseline, font-size, font-size-adjust, font-stretch, font-style, font-variant, glyph-orientation-horizontal, word-spacing, kerning, font-kerning, text-rendering, tref | all |
-| font-family, font-weight, tspan, text-anchor, text, textLength, letter-spacing | 12/13, 11/12, 29/32, 14/15, 38/44, 10/12, 9/12 |
+| baseline-shift, dominant-baseline, font-size, font-size-adjust, font-stretch, font-style, font-variant, glyph-orientation-horizontal, glyph-orientation-vertical, word-spacing, kerning, font-kerning, text-rendering, tref | all |
+| font-family, font-weight, tspan, text-anchor, text, textLength, letter-spacing | 12/13, 11/12, 28/32, 14/15, 38/44, 10/12, 9/12 |
 | text-decoration | 11 / 22 |
 | lengthAdjust | 1 / 4 |
-| writing-mode | 8 / 24 |
+| writing-mode | 17 / 24 |
 | textPath | 7 / 43 |
-| font-variation-settings, `font/` (variable-font and auto-axis tests), color-font | 0/14, 0/14, 1/10 |
-| direction, unicode-bidi, glyph-orientation-vertical | 0/2, 0/1, 0/1 |
+| font-variation-settings, `font/` (variable-font and auto-axis tests), color-font | 0/14, 1/2, 1/10 |
+| direction, unicode-bidi | 1/2, 0/1 |
 
 Why the rest fails:
 
 - **Variable fonts (about 28 tests: font-variation-settings, `font/`) and color fonts (9: bitmap, SVG-table and COLRv1 glyphs):** `OneImage.Text` reads neither variation axes nor those glyph tables. Out of scope for this unit.
-- **Vertical writing (about 16 in writing-mode, plus lengthAdjust/vertical, hanging-on-vertical, direction/rtl-with-vertical-writing-mode, glyph-orientation-vertical):** needs vertical layout in `OneImage.Text`; listed follow-up.
-- **textPath (36):** every one is a small positional disagreement, 0.5–0.8% of pixels on the simple cases and more on curves and closed paths. On a straight horizontal path the glyphs are off from the reference by 0.0–0.4 px, different for each glyph and not accounted for by kerning, advances or the placement angle; no systematic rule was found, so this is listed as an unexplained difference rather than a deliberate one.
+- **Vertical writing (7 of the 24 writing-mode tests, plus lengthAdjust/vertical and alignment-baseline/hanging-on-vertical):** the layout agrees with the reference (columns, orientation per character, anchors, `dx`/`dy`; `tb-with-negative-dy-and-text-anchor`, `tb-with-rotate` and `mixed-languages-with-tb` are within 0.3-0.45%), but upright ideographs sit about 0.17 px (16-20 px text) to 1.2 px (64 px text) lower in the reference than the font's own vertical origin (`vmtx` top side bearing plus the glyph's top) puts them; no rule explains the amount, so `japanese-with-tb` (2.45%), `tb-and-punctuation` (0.96%) and the underline variants stay open. `tb-with-rotate` and `tb-with-rotate-and-underline` are marked undefined behavior in the suite. `lengthAdjust/vertical` stretches along the column, which this does not do, and `hanging-on-vertical` moves baselines across the column, which it does not either.
+- **textPath (36):** every one is a small positional disagreement, 0.5-0.8% of pixels on the simple cases and more on curves and closed paths. A second look, on `m-L-Z-path` (a straight horizontal path, so flattening and tangent angle cannot matter): per glyph the reference sits from -0.4 to +0.3 user px from where the exact advances put it, in no pattern (not the sign of the advance's fraction, not rounding of advances or positions to whole pixels, and kerning is absent in that string), while plain text with the same font agrees to 0.01 px. Flattening tolerance, chord against tangent angle and arc length were already swept in the first pass. The reference's coverage is sampled on a 4 x 4 grid and could account for part of it. No rule was found, so it stays an unexplained difference.
 - **Edge anti-aliasing (text-decoration 0.25–0.5%: all-types-*, style-resolving-*, underline, underline-with-y-list, tspan-decoration, indirect-with-multiple-colors; text/escaped-text-3, tspan/pseudo-multi-line, tspan/mixed-xml-space-2, lengthAdjust/with-underline and /text-on-path, textLength/on-a-single-tspan, complex-grapheme-split-by-tspan, xml-lang=ja):** the bars and outlines agree to a fraction of a pixel; the difference is the exact-area coverage against the reference's sampled coverage on stroked text edges.
 - **Arabic and mixed-script (arabic, arabic-with-dx, arabic-with-dy, underline-with-dy-on-arabic, letter-spacing/on-Arabic and mixed-scripts, textLength/arabic, unicode-bidi/bidi-override, direction/rtl, zalgo, glyph-splitting):** shaping, mark placement or the reference's handling of spacing across joined letters differs from ours.
-- **Deliberate:** `direction/rtl` — with `direction: rtl` we anchor `start` at the right edge, as the SVG specification says; the reference does not flip the anchor.
+- **Deliberate:** `tspan/with-opacity` (the reference ignores `opacity` on a `tspan`; SVG 2 and browsers apply it) and `direction/rtl` — with `direction: rtl` we anchor `start` at the right edge, as the SVG specification says; the reference does not flip the anchor.
 - **Filters on text (text/filter-bbox, letter-spacing/filter-bbox, textPath/with-filter):** the filter region of a text element's bounding box; another unit's area.
 - **Font fallback and synthesis (font-family/fallback-1, font-weight/650, font/fallback-1):** which face the reference picks for an intermediate weight and for a missing-glyph fallback.
 
@@ -396,7 +401,7 @@ Planned order. Each step is a coherent piece with its own observable claim, meas
 5. **Clipping and masking** (done). `clipPath`, `mask`, viewport clipping; the layer-multiply op (`Image.ApplyMask`). Claim: `masking` pass rate (see [Results](#results)).
 6. **Filters, part one** (done). The filter graph, regions and subregions, linear-light float evaluation, and the primitives that map onto existing operations, `feDropShadow` and the CSS filter functions. Claim: the corresponding `filters` directories.
 7. **Filters, part two.** The new primitives: component transfer, arithmetic, morphology, tile, convolution completions, turbulence, displacement, lighting. Claim: the rest of `filters`.
-8. **Text** (done, see [Text results](#text-results)). `text`/`tspan`/`textPath`/`tref`, per-character positioning through the public cluster API in `OneImage.Text`, fonts from `SvgFontOptions`, fallback, decorations, bidirectional text, paint servers on text. Claim: `text` pass rate 70.2%; vertical writing, variable and color fonts wait on `OneImage.Text`.
+8. **Text** (done, see [Text results](#text-results)). `text`/`tspan`/`textPath`/`tref`, per-character positioning through the public cluster API in `OneImage.Text`, fonts from `SvgFontOptions`, fallback, decorations, bidirectional text, paint servers on text. Claim: `text` pass rate 72.8% (279 of 383); variable and color fonts wait on `OneImage.Text`.
 9. **Hardening and speed.** Fuzz targets for the document, CSS and renderer; hostile-input tests for every limit; benchmarks (24-megapixel and thumbnail renders, large maps, filter-heavy art) against the .NET SVG renderers and libvips/librsvg; the package readme, release notes and publishing setup. Claim: no fuzz findings after the stated run, and the benchmark table.
 
 ## Status
