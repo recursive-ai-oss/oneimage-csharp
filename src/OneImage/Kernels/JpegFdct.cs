@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
 namespace OneImage.Kernels;
@@ -162,8 +163,8 @@ internal static class JpegFdct
     }
 
     /// <summary>
-    /// Transforms and quantizes one block: <see cref="Forward"/> followed by <see cref="Quantize"/>, with an AVX2 path that
-    /// produces exactly the same integers.
+    /// Transforms and quantizes one block: <see cref="Forward"/> followed by <see cref="Quantize"/>, with AVX2 and 128-bit paths that
+    /// produce exactly the same integers.
     /// </summary>
     public static void ForwardQuantize(ReadOnlySpan<byte> samples, int stride, ReadOnlySpan<int> quant, ReadOnlySpan<uint> reciprocal, ReadOnlySpan<byte> zigzag, Span<short> output)
     {
@@ -178,6 +179,19 @@ internal static class JpegFdct
             ForwardAvx2(samples, stride, coef);
             Span<short> natural = stackalloc short[64];
             QuantizeAvx2(coef, quant, reciprocal, natural);
+            for (int k = 0; k < 64; k++)
+            {
+                output[k] = natural[zigzag[k] & 63];
+            }
+
+            return;
+        }
+
+        if (JpegIdct.UsesVector128)
+        {
+            ForwardVector128(samples, stride, coef);
+            Span<short> natural = stackalloc short[64];
+            QuantizeVector128(coef, quant, reciprocal, natural);
             for (int k = 0; k < 64; k++)
             {
                 output[k] = natural[zigzag[k] & 63];
@@ -317,5 +331,151 @@ internal static class JpegFdct
         Vector256<ulong> odd = Avx2.Multiply(Avx2.ShiftRightLogical(n.AsUInt64(), 32).AsUInt32(), Avx2.ShiftRightLogical(rec.AsUInt64(), 32).AsUInt32());
         Vector256<uint> res = Avx2.Or(Avx2.ShiftRightLogical(even, 32).AsUInt32(), odd.AsUInt32() & Vector256.Create(0xFFFFFFFF00000000UL).AsUInt32());
         return Avx2.Sign(res.AsInt32(), coef);
+    }
+
+    // ---- 128-bit path (SSE2/SSE4.1 on x64, AdvSimd on ARM64): the same arithmetic on four lanes ----
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Mul(Vector128<int> a, int k) => Vector128.Multiply(a, Vector128.Create(k));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Descale(Vector128<int> x, int n) => Vector128.ShiftRightArithmetic(x + Vector128.Create(1 << (n - 1)), n);
+
+    /// <summary>One 1-D pass over eight vectors, the four-lane form of the AVX2 pass.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Pass(ref Vector128<int> v0, ref Vector128<int> v1, ref Vector128<int> v2, ref Vector128<int> v3, ref Vector128<int> v4, ref Vector128<int> v5, ref Vector128<int> v6, ref Vector128<int> v7, bool rowPass)
+    {
+        int rot = rowPass ? ConstBits - Pass1Bits : ConstBits + Pass1Bits;
+        Vector128<int> tmp0 = v0 + v7, tmp7 = v0 - v7;
+        Vector128<int> tmp1 = v1 + v6, tmp6 = v1 - v6;
+        Vector128<int> tmp2 = v2 + v5, tmp5 = v2 - v5;
+        Vector128<int> tmp3 = v3 + v4, tmp4 = v3 - v4;
+
+        Vector128<int> tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
+        Vector128<int> tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+        Vector128<int> o0, o4;
+        if (rowPass)
+        {
+            o0 = Vector128.ShiftLeft((tmp10 + tmp11) - Vector128.Create(1024), Pass1Bits);
+            o4 = Vector128.ShiftLeft(tmp10 - tmp11, Pass1Bits);
+        }
+        else
+        {
+            o0 = Descale(tmp10 + tmp11, Pass1Bits);
+            o4 = Descale(tmp10 - tmp11, Pass1Bits);
+        }
+
+        Vector128<int> z1 = Mul(tmp12 + tmp13, F0541);
+        Vector128<int> o2 = Descale(z1 + Mul(tmp13, F0765), rot);
+        Vector128<int> o6 = Descale(z1 + Mul(tmp12, -F1847), rot);
+
+        Vector128<int> a1 = tmp4 + tmp7;
+        Vector128<int> a2 = tmp5 + tmp6;
+        Vector128<int> a3 = tmp4 + tmp6;
+        Vector128<int> a4 = tmp5 + tmp7;
+        Vector128<int> z5 = Mul(a3 + a4, F1175);
+        tmp4 = Mul(tmp4, F0298);
+        tmp5 = Mul(tmp5, F2053);
+        tmp6 = Mul(tmp6, F3072);
+        tmp7 = Mul(tmp7, F1501);
+        a1 = Mul(a1, -F0899);
+        a2 = Mul(a2, -F2562);
+        a3 = Mul(a3, -F1961) + z5;
+        a4 = Mul(a4, -F0390) + z5;
+        Vector128<int> o7 = Descale(tmp4 + a1 + a3, rot);
+        Vector128<int> o5 = Descale(tmp5 + a2 + a4, rot);
+        Vector128<int> o3 = Descale(tmp6 + a2 + a3, rot);
+        Vector128<int> o1 = Descale(tmp7 + a1 + a4, rot);
+        v0 = o0;
+        v1 = o1;
+        v2 = o2;
+        v3 = o3;
+        v4 = o4;
+        v5 = o5;
+        v6 = o6;
+        v7 = o7;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void LoadRow(ReadOnlySpan<byte> samples, int offset, out Vector128<int> lo, out Vector128<int> hi)
+    {
+        Vector128<ushort> w = Vector128.WidenLower(Vector128.CreateScalar(BinaryPrimitives.ReadUInt64LittleEndian(samples.Slice(offset, 8))).AsByte());
+        lo = Vector128.WidenLower(w).AsInt32();
+        hi = Vector128.WidenUpper(w).AsInt32();
+    }
+
+    /// <summary>128-bit form of <see cref="Forward"/>: identical output, four lanes per vector.</summary>
+    public static void ForwardVector128(ReadOnlySpan<byte> samples, int stride, Span<int> output)
+    {
+        LoadRow(samples, 0, out Vector128<int> l0, out Vector128<int> h0);
+        LoadRow(samples, stride, out Vector128<int> l1, out Vector128<int> h1);
+        LoadRow(samples, 2 * stride, out Vector128<int> l2, out Vector128<int> h2);
+        LoadRow(samples, 3 * stride, out Vector128<int> l3, out Vector128<int> h3);
+        LoadRow(samples, 4 * stride, out Vector128<int> l4, out Vector128<int> h4);
+        LoadRow(samples, 5 * stride, out Vector128<int> l5, out Vector128<int> h5);
+        LoadRow(samples, 6 * stride, out Vector128<int> l6, out Vector128<int> h6);
+        LoadRow(samples, 7 * stride, out Vector128<int> l7, out Vector128<int> h7);
+        JpegIdct.Transpose8(ref l0, ref l1, ref l2, ref l3, ref l4, ref l5, ref l6, ref l7, ref h0, ref h1, ref h2, ref h3, ref h4, ref h5, ref h6, ref h7);
+        Pass(ref l0, ref l1, ref l2, ref l3, ref l4, ref l5, ref l6, ref l7, true);
+        Pass(ref h0, ref h1, ref h2, ref h3, ref h4, ref h5, ref h6, ref h7, true);
+        JpegIdct.Transpose8(ref l0, ref l1, ref l2, ref l3, ref l4, ref l5, ref l6, ref l7, ref h0, ref h1, ref h2, ref h3, ref h4, ref h5, ref h6, ref h7);
+        Pass(ref l0, ref l1, ref l2, ref l3, ref l4, ref l5, ref l6, ref l7, false);
+        Pass(ref h0, ref h1, ref h2, ref h3, ref h4, ref h5, ref h6, ref h7, false);
+        output = output.Slice(0, 64);
+        l0.CopyTo(output.Slice(0, 4));
+        h0.CopyTo(output.Slice(4, 4));
+        l1.CopyTo(output.Slice(8, 4));
+        h1.CopyTo(output.Slice(12, 4));
+        l2.CopyTo(output.Slice(16, 4));
+        h2.CopyTo(output.Slice(20, 4));
+        l3.CopyTo(output.Slice(24, 4));
+        h3.CopyTo(output.Slice(28, 4));
+        l4.CopyTo(output.Slice(32, 4));
+        h4.CopyTo(output.Slice(36, 4));
+        l5.CopyTo(output.Slice(40, 4));
+        h5.CopyTo(output.Slice(44, 4));
+        l6.CopyTo(output.Slice(48, 4));
+        h6.CopyTo(output.Slice(52, 4));
+        l7.CopyTo(output.Slice(56, 4));
+        h7.CopyTo(output.Slice(60, 4));
+    }
+
+    /// <summary>Upper 32 bits of the 32x32-bit unsigned products, lane by lane.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<uint> MultiplyHigh(Vector128<uint> n, Vector128<uint> r)
+    {
+        if (Sse2.IsSupported)
+        {
+            Vector128<ulong> even = Sse2.Multiply(n, r);
+            Vector128<ulong> odd = Sse2.Multiply(Sse2.ShiftRightLogical(n.AsUInt64(), 32).AsUInt32(), Sse2.ShiftRightLogical(r.AsUInt64(), 32).AsUInt32());
+            return Sse2.ShiftRightLogical(even, 32).AsUInt32() | (odd.AsUInt32() & Vector128.Create(0xFFFFFFFF00000000UL).AsUInt32());
+        }
+
+        Vector128<ulong> lo = AdvSimd.MultiplyWideningLower(n.GetLower(), r.GetLower());
+        Vector128<ulong> hi = AdvSimd.MultiplyWideningLower(n.GetUpper(), r.GetUpper());
+        return Vector128.Narrow(Vector128.ShiftRightLogical(lo, 32), Vector128.ShiftRightLogical(hi, 32));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> QuantizeFour(ReadOnlySpan<int> c, ReadOnlySpan<int> q, ReadOnlySpan<uint> r)
+    {
+        Vector128<int> coef = Vector128.Create(c);
+        Vector128<int> half = Vector128.ShiftLeft(Vector128.Create(q), 2);
+        Vector128<uint> n = (Vector128.Abs(coef) + half).AsUInt32();
+        Vector128<int> res = MultiplyHigh(n, Vector128.Create(r)).AsInt32();
+        // Rounds half away from zero: negate the magnitude where the coefficient was negative.
+        Vector128<int> neg = Vector128.ShiftRightArithmetic(coef, 31);
+        return (res ^ neg) - neg;
+    }
+
+    /// <summary>128-bit form of the quantizer without the zigzag reorder: natural-order shorts, same rounding as <see cref="Quantize"/>.</summary>
+    public static void QuantizeVector128(ReadOnlySpan<int> coefficients, ReadOnlySpan<int> quant, ReadOnlySpan<uint> reciprocal, Span<short> natural)
+    {
+        for (int i = 0; i < 64; i += 8)
+        {
+            Vector128<int> a = QuantizeFour(coefficients.Slice(i, 4), quant.Slice(i, 4), reciprocal.Slice(i, 4));
+            Vector128<int> b = QuantizeFour(coefficients.Slice(i + 4, 4), quant.Slice(i + 4, 4), reciprocal.Slice(i + 4, 4));
+            Vector128.Narrow(a, b).CopyTo(natural.Slice(i, 8));
+        }
     }
 }

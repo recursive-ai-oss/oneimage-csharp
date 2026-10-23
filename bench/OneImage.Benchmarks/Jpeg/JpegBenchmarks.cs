@@ -1,4 +1,5 @@
 using System.IO;
+using OneImage.Kernels;
 using System.Threading;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
@@ -295,5 +296,82 @@ internal static class JpegBenchHelpers
         var sink = new ReuseSink(w, h, f.Format, t_scratch);
         JpegFormat.Instance.DecodeFrame(ms, info, 0, new DecodeRequest(new ImageRect(0, 0, w, h), scale), sink, ImageLimits.Default, CancellationToken.None);
         return sink.Total;
+    }
+}
+
+/// <summary>The 8x8 transforms alone, 256 blocks per invocation (results are per invocation; divide by 256 for a block).</summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, warmupCount: 3, iterationCount: 15)]
+public class JpegTransformKernelBenchmarks
+{
+    private const int Blocks = 256;
+    private short[] _coef = null!;
+    private int[] _quant = null!;
+    private byte[] _plane = null!;
+    private byte[] _dst = null!;
+    private uint[] _recip = null!;
+    private short[] _out = new short[64];
+    private int[] _fwd = new int[64];
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var rnd = new Random(5);
+        _coef = new short[64 * Blocks];
+        for (int b = 0; b < Blocks; b++)
+        {
+            // Photograph-like blocks: a DC term and a decaying handful of AC terms.
+            _coef[b * 64] = (short)rnd.Next(-200, 200);
+            for (int i = 1; i < 64; i++)
+            {
+                if (rnd.Next(64) < 24 - (i / 3))
+                {
+                    _coef[(b * 64) + i] = (short)rnd.Next(-12, 13);
+                }
+            }
+        }
+
+        _quant = new int[64];
+        Array.Fill(_quant, 8);
+        _recip = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(_quant, JpegFdct.Reciprocal));
+        _plane = new byte[64 * 64];
+        rnd.NextBytes(_plane);
+        _dst = new byte[64 * 64];
+    }
+
+    [Benchmark(Description = "IDCT dispatch")]
+    public void IdctDispatch()
+    {
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegIdct.Idct8(_coef.AsSpan(b * 64, 64), _quant, _dst.AsSpan(((b & 7) * 8 * 64) + ((b >> 3 & 7) * 8)), 64);
+        }
+    }
+
+    [Benchmark(Description = "IDCT scalar")]
+    public void IdctScalar()
+    {
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegIdct.Idct8Scalar(_coef.AsSpan(b * 64, 64), _quant, _dst.AsSpan(((b & 7) * 8 * 64) + ((b >> 3 & 7) * 8)), 64);
+        }
+    }
+
+    [Benchmark(Description = "FDCT+quantize dispatch")]
+    public void ForwardQuantizeDispatch()
+    {
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegFdct.ForwardQuantize(_plane.AsSpan(((b & 7) * 8 * 64) + ((b >> 3 & 7) * 8)), 64, _quant, _recip, OneImage.Codecs.Jpeg.JpegConstants.Zigzag, _out);
+        }
+    }
+
+    [Benchmark(Description = "FDCT scalar")]
+    public void ForwardScalar()
+    {
+        for (int b = 0; b < Blocks; b++)
+        {
+            JpegFdct.Forward(_plane.AsSpan(((b & 7) * 8 * 64) + ((b >> 3 & 7) * 8)), 64, _fwd);
+        }
     }
 }

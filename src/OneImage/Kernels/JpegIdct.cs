@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
 namespace OneImage.Kernels;
@@ -9,8 +10,8 @@ namespace OneImage.Kernels;
 /// <summary>
 /// Inverse DCT kernels for JPEG decoding. The 8x8 transform is the accurate integer algorithm of
 /// Loeffler, Ligtenberg and Moschytz in 13-bit fixed point (the same arithmetic as the widely used reference
-/// decoder, so results are bit-comparable): the scalar version is the reference, and the AVX2 version
-/// runs the identical arithmetic on eight columns at a time. Reduced transforms (4x4, 2x2, 1x1) implement DCT scaling:
+/// decoder, so results are bit-comparable): the scalar version is the reference, and the AVX2 and 128-bit
+/// versions run the identical arithmetic on eight or four columns at a time. Reduced transforms (4x4, 2x2, 1x1) implement DCT scaling:
 /// each output sample is the average of a 2x2, 4x4 or 8x8 group of samples of the full inverse transform.
 /// Callers validate buffer sizes; kernels never parse.
 /// </summary>
@@ -44,7 +45,12 @@ internal static class JpegIdct
     private const int F3624 = 29692;
 
     /// <summary>Gets whether the vectorized 8x8 transform is used on this machine.</summary>
-    public static bool UsesVectorPath => Avx2.IsSupported && Vector256.IsHardwareAccelerated;
+    public static bool UsesVectorPath => UsesAvx2 || UsesVector128;
+
+    private static bool UsesAvx2 => Avx2.IsSupported && Vector256.IsHardwareAccelerated;
+
+    /// <summary>Gets whether the 128-bit path (SSE2 or AdvSimd) is usable: it needs hardware 128-bit vectors and a native 4x4 transpose.</summary>
+    internal static bool UsesVector128 => Vector128.IsHardwareAccelerated && (Sse2.IsSupported || AdvSimd.Arm64.IsSupported);
 
     /// <summary>Gets the number of fractional bits of the intermediate rows for a sample precision.</summary>
     public static int Pass1Bits(int precision) => precision == 8 ? 2 : 1;
@@ -131,9 +137,13 @@ internal static class JpegIdct
     public static void Idct8(ReadOnlySpan<short> coef, ReadOnlySpan<int> quant, Span<byte> dst, int stride)
     {
         CheckArgs(coef, quant, dst.Length, stride, 8);
-        if (UsesVectorPath)
+        if (UsesAvx2)
         {
             Idct8Avx2(coef, quant, dst, stride);
+        }
+        else if (UsesVector128)
+        {
+            Idct8Vector128(coef, quant, dst, stride);
         }
         else
         {
@@ -571,5 +581,185 @@ internal static class JpegIdct
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref d, stride), b.GetElement(1));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref d, 2 * stride), b.GetElement(2));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref d, 3 * stride), b.GetElement(3));
+    }
+
+    // ---- 128-bit path (SSE2/SSE4.1 on x64, AdvSimd on ARM64): the same arithmetic on four lanes ----
+    // A block row is two vectors (columns 0..3 and 4..7); the two halves run the same pass independently.
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Mul(Vector128<int> a, int k) => Vector128.Multiply(a, Vector128.Create(k));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> DescaleV(Vector128<int> x, int n) =>
+        Vector128.ShiftRightArithmetic(x + Vector128.Create(1 << (n - 1)), n);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Pass(
+        Vector128<int> i0, Vector128<int> i1, Vector128<int> i2, Vector128<int> i3,
+        Vector128<int> i4, Vector128<int> i5, Vector128<int> i6, Vector128<int> i7,
+        int shift,
+        out Vector128<int> o0, out Vector128<int> o1, out Vector128<int> o2, out Vector128<int> o3,
+        out Vector128<int> o4, out Vector128<int> o5, out Vector128<int> o6, out Vector128<int> o7)
+    {
+        Vector128<int> z2 = i2;
+        Vector128<int> z3 = i6;
+        Vector128<int> z1 = Mul(z2 + z3, F0541);
+        Vector128<int> tmp2 = z1 + Mul(z3, -F1847);
+        Vector128<int> tmp3 = z1 + Mul(z2, F0765);
+        Vector128<int> tmp0 = Vector128.ShiftLeft(i0 + i4, ConstBits);
+        Vector128<int> tmp1 = Vector128.ShiftLeft(i0 - i4, ConstBits);
+        Vector128<int> tmp10 = tmp0 + tmp3;
+        Vector128<int> tmp13 = tmp0 - tmp3;
+        Vector128<int> tmp11 = tmp1 + tmp2;
+        Vector128<int> tmp12 = tmp1 - tmp2;
+        tmp0 = i7;
+        tmp1 = i5;
+        tmp2 = i3;
+        tmp3 = i1;
+        z1 = tmp0 + tmp3;
+        z2 = tmp1 + tmp2;
+        z3 = tmp0 + tmp2;
+        Vector128<int> z4 = tmp1 + tmp3;
+        Vector128<int> z5 = Mul(z3 + z4, F1175);
+        tmp0 = Mul(tmp0, F0298);
+        tmp1 = Mul(tmp1, F2053);
+        tmp2 = Mul(tmp2, F3072);
+        tmp3 = Mul(tmp3, F1501);
+        z1 = Mul(z1, -F0899);
+        z2 = Mul(z2, -F2562);
+        z3 = Mul(z3, -F1961) + z5;
+        z4 = Mul(z4, -F0390) + z5;
+        tmp0 += z1 + z3;
+        tmp1 += z2 + z4;
+        tmp2 += z2 + z3;
+        tmp3 += z1 + z4;
+        o0 = DescaleV(tmp10 + tmp3, shift);
+        o7 = DescaleV(tmp10 - tmp3, shift);
+        o1 = DescaleV(tmp11 + tmp2, shift);
+        o6 = DescaleV(tmp11 - tmp2, shift);
+        o2 = DescaleV(tmp12 + tmp1, shift);
+        o5 = DescaleV(tmp12 - tmp1, shift);
+        o3 = DescaleV(tmp13 + tmp0, shift);
+        o4 = DescaleV(tmp13 - tmp0, shift);
+    }
+
+    /// <summary>Transposes a 4x4 block of 32-bit lanes held in four vectors.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void Transpose4(ref Vector128<int> a, ref Vector128<int> b, ref Vector128<int> c, ref Vector128<int> d)
+    {
+        if (Sse2.IsSupported)
+        {
+            Vector128<int> t0 = Sse2.UnpackLow(a, b);
+            Vector128<int> t1 = Sse2.UnpackHigh(a, b);
+            Vector128<int> t2 = Sse2.UnpackLow(c, d);
+            Vector128<int> t3 = Sse2.UnpackHigh(c, d);
+            a = Sse2.UnpackLow(t0.AsInt64(), t2.AsInt64()).AsInt32();
+            b = Sse2.UnpackHigh(t0.AsInt64(), t2.AsInt64()).AsInt32();
+            c = Sse2.UnpackLow(t1.AsInt64(), t3.AsInt64()).AsInt32();
+            d = Sse2.UnpackHigh(t1.AsInt64(), t3.AsInt64()).AsInt32();
+        }
+        else
+        {
+            Vector128<int> t0 = AdvSimd.Arm64.ZipLow(a, b);
+            Vector128<int> t1 = AdvSimd.Arm64.ZipHigh(a, b);
+            Vector128<int> t2 = AdvSimd.Arm64.ZipLow(c, d);
+            Vector128<int> t3 = AdvSimd.Arm64.ZipHigh(c, d);
+            a = AdvSimd.Arm64.ZipLow(t0.AsInt64(), t2.AsInt64()).AsInt32();
+            b = AdvSimd.Arm64.ZipHigh(t0.AsInt64(), t2.AsInt64()).AsInt32();
+            c = AdvSimd.Arm64.ZipLow(t1.AsInt64(), t3.AsInt64()).AsInt32();
+            d = AdvSimd.Arm64.ZipHigh(t1.AsInt64(), t3.AsInt64()).AsInt32();
+        }
+    }
+
+    /// <summary>Transposes an 8x8 block of 32-bit values stored as low (columns 0..3) and high (columns 4..7) halves of eight rows.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void Transpose8(
+        ref Vector128<int> l0, ref Vector128<int> l1, ref Vector128<int> l2, ref Vector128<int> l3,
+        ref Vector128<int> l4, ref Vector128<int> l5, ref Vector128<int> l6, ref Vector128<int> l7,
+        ref Vector128<int> h0, ref Vector128<int> h1, ref Vector128<int> h2, ref Vector128<int> h3,
+        ref Vector128<int> h4, ref Vector128<int> h5, ref Vector128<int> h6, ref Vector128<int> h7)
+    {
+        Transpose4(ref l0, ref l1, ref l2, ref l3);
+        Transpose4(ref h0, ref h1, ref h2, ref h3);
+        Transpose4(ref l4, ref l5, ref l6, ref l7);
+        Transpose4(ref h4, ref h5, ref h6, ref h7);
+
+        // The off-diagonal 4x4 quadrants trade places.
+        (h0, l4) = (l4, h0);
+        (h1, l5) = (l5, h1);
+        (h2, l6) = (l6, h2);
+        (h3, l7) = (l7, h3);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Load(ReadOnlySpan<short> coef, ReadOnlySpan<int> quant, int row, out Vector128<int> lo, out Vector128<int> hi)
+    {
+        Vector128<short> c = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(coef), (nuint)(row * 8));
+        ref int q = ref MemoryMarshal.GetReference(quant);
+        lo = Vector128.WidenLower(c) * Vector128.LoadUnsafe(ref q, (nuint)(row * 8));
+        hi = Vector128.WidenUpper(c) * Vector128.LoadUnsafe(ref q, (nuint)((row * 8) + 4));
+    }
+
+    /// <summary>128-bit form of <see cref="Idct8"/>: identical output, four columns per vector.</summary>
+    public static void Idct8Vector128(ReadOnlySpan<short> coef, ReadOnlySpan<int> quant, Span<byte> dst, int stride)
+    {
+        CheckArgs(coef, quant, dst.Length, stride, 8);
+        Load(coef, quant, 0, out Vector128<int> l0, out Vector128<int> h0);
+        Load(coef, quant, 1, out Vector128<int> l1, out Vector128<int> h1);
+        Load(coef, quant, 2, out Vector128<int> l2, out Vector128<int> h2);
+        Load(coef, quant, 3, out Vector128<int> l3, out Vector128<int> h3);
+        Load(coef, quant, 4, out Vector128<int> l4, out Vector128<int> h4);
+        Load(coef, quant, 5, out Vector128<int> l5, out Vector128<int> h5);
+        Load(coef, quant, 6, out Vector128<int> l6, out Vector128<int> h6);
+        Load(coef, quant, 7, out Vector128<int> l7, out Vector128<int> h7);
+
+        // Flat blocks (no AC at all): the full transform is exactly this constant.
+        Vector128<int> ac = l1 | l2 | l3 | l4 | l5 | l6 | l7 | h0 | h1 | h2 | h3 | h4 | h5 | h6 | h7
+            | (l0 & Vector128.Create(0, -1, -1, -1));
+        if (ac == Vector128<int>.Zero)
+        {
+            int dc = l0.GetElement(0);
+            byte v = (byte)Math.Clamp((((dc << 2) + 16) >> 5) + 128, 0, 255);
+            ulong fill = 0x0101010101010101UL * v;
+            ref byte d0 = ref MemoryMarshal.GetReference(dst);
+            for (int y = 0; y < 8; y++)
+            {
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref d0, y * stride), fill);
+            }
+
+            return;
+        }
+
+        Pass(l0, l1, l2, l3, l4, l5, l6, l7, ConstBits - 2, out l0, out l1, out l2, out l3, out l4, out l5, out l6, out l7);
+        Pass(h0, h1, h2, h3, h4, h5, h6, h7, ConstBits - 2, out h0, out h1, out h2, out h3, out h4, out h5, out h6, out h7);
+        Transpose8(ref l0, ref l1, ref l2, ref l3, ref l4, ref l5, ref l6, ref l7, ref h0, ref h1, ref h2, ref h3, ref h4, ref h5, ref h6, ref h7);
+        Pass(l0, l1, l2, l3, l4, l5, l6, l7, ConstBits + 2 + 3, out l0, out l1, out l2, out l3, out l4, out l5, out l6, out l7);
+        Pass(h0, h1, h2, h3, h4, h5, h6, h7, ConstBits + 2 + 3, out h0, out h1, out h2, out h3, out h4, out h5, out h6, out h7);
+        Transpose8(ref l0, ref l1, ref l2, ref l3, ref l4, ref l5, ref l6, ref l7, ref h0, ref h1, ref h2, ref h3, ref h4, ref h5, ref h6, ref h7);
+
+        ref byte d = ref MemoryMarshal.GetReference(dst);
+        Store2(ref d, stride, l0, h0, l1, h1);
+        Store2(ref Unsafe.Add(ref d, 2 * stride), stride, l2, h2, l3, h3);
+        Store2(ref Unsafe.Add(ref d, 4 * stride), stride, l4, h4, l5, h5);
+        Store2(ref Unsafe.Add(ref d, 6 * stride), stride, l6, h6, l7, h7);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<ushort> Level(Vector128<int> lo, Vector128<int> hi)
+    {
+        Vector128<int> bias = Vector128.Create(128);
+        Vector128<int> max = Vector128.Create(255);
+        Vector128<int> a = Vector128.Min(Vector128.Max(lo + bias, Vector128<int>.Zero), max);
+        Vector128<int> b = Vector128.Min(Vector128.Max(hi + bias, Vector128<int>.Zero), max);
+        return Vector128.Narrow(a.AsUInt32(), b.AsUInt32());
+    }
+
+    // Two rows of eight samples: one 16-byte narrow, then two 8-byte stores.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Store2(ref byte d, int stride, Vector128<int> aLo, Vector128<int> aHi, Vector128<int> bLo, Vector128<int> bHi)
+    {
+        Vector128<ulong> b = Vector128.Narrow(Level(aLo, aHi), Level(bLo, bHi)).AsUInt64();
+        Unsafe.WriteUnaligned(ref d, b.GetElement(0));
+        Unsafe.WriteUnaligned(ref Unsafe.Add(ref d, stride), b.GetElement(1));
     }
 }

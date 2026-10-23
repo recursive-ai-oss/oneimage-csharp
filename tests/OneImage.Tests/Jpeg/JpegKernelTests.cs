@@ -11,7 +11,7 @@ public class JpegKernelTests
     [Fact]
     public void ReportHardwarePaths() =>
         TestContext.Current.SendDiagnosticMessage(
-            $"Vector128={Vector128.IsHardwareAccelerated} Vector256={Vector256.IsHardwareAccelerated} Vector512={Vector512.IsHardwareAccelerated} Avx2={Avx2.IsSupported} IdctVector={JpegIdct.UsesVectorPath}");
+            $"Vector128={Vector128.IsHardwareAccelerated} Vector256={Vector256.IsHardwareAccelerated} Vector512={Vector512.IsHardwareAccelerated} Avx2={Avx2.IsSupported} IdctVector={JpegIdct.UsesVectorPath} Idct128={JpegIdct.UsesVector128} Sse2={Sse2.IsSupported} AdvSimd={System.Runtime.Intrinsics.Arm.AdvSimd.IsSupported}");
 
     private static int[] Quant(Random rnd, bool flat)
     {
@@ -83,6 +83,13 @@ public class JpegKernelTests
             JpegIdct.Idct8Scalar(coef, q, a, 11 > 8 ? 11 : 8);
             JpegIdct.Idct8(coef, q, b, 11);
             Assert.True(a.AsSpan().SequenceEqual(b), $"iteration {iter} kind {kind}");
+            if (JpegIdct.UsesVector128)
+            {
+                byte[] c = new byte[8 * 11];
+                Array.Fill(c, (byte)7);
+                JpegIdct.Idct8Vector128(coef, q, c, 11);
+                Assert.True(a.AsSpan().SequenceEqual(c), $"iteration {iter} kind {kind} (128-bit)");
+            }
         }
     }
 
@@ -239,6 +246,22 @@ public class JpegKernelTests
             short[] actual = new short[64];
             JpegFdct.ForwardQuantize(plane, stride, q, recip, OneImage.Codecs.Jpeg.JpegConstants.Zigzag, actual);
             Assert.True(expected.AsSpan().SequenceEqual(actual), $"iteration {iter}");
+            if (JpegIdct.UsesVector128)
+            {
+                int[] v128 = new int[64];
+                JpegFdct.ForwardVector128(plane, stride, v128);
+                Assert.True(coef.AsSpan().SequenceEqual(v128), $"iteration {iter} (128-bit transform)");
+                short[] nat = new short[64];
+                short[] natRef = new short[64];
+                JpegFdct.QuantizeVector128(coef, q, recip, nat);
+                for (int k = 0; k < 64; k++)
+                {
+                    natRef[OneImage.Codecs.Jpeg.JpegConstants.Zigzag[k] & 63] = expected[k];
+                }
+
+                Assert.True(natRef.AsSpan().SequenceEqual(nat), $"iteration {iter} (128-bit quantizer)");
+            }
+
             if (Avx2.IsSupported)
             {
                 int[] vec = new int[64];

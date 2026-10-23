@@ -355,9 +355,15 @@ about 1.5 to 2.5, so differences under 10% are noise):
 
 The other kernels and the codecs measured within 10% of their AVX-512 time
 on AVX2 (resize, blur, JPEG, PNG, WebP, GIF, TIFF, geometry, tone and the
-remaining filters). On SSE only, JPEG encode and decode (the transforms
-have an AVX2 path and a scalar path, no 128-bit one) take about 2.4 times
-as long as with AVX2.
+remaining filters). The JPEG transforms have an AVX2 path and a 128-bit path (SSE2/SSE4.1 on
+x64, AdvSimd on ARM64); all three give identical bits. With AVX2 turned off
+(`DOTNET_EnableAVX2=0`, same host, load 1.6 to 10) a 24 MP decode took 47 ms
+(79 ms before the 128-bit path; 32 ms with AVX2) and a q90 4:2:0 encode
+179 ms (225 ms before; 86 ms with AVX2). Per 8x8 block the inverse DCT takes
+40 ns (scalar 145, AVX2 19) and the forward DCT with quantization 71 ns
+(scalar 131, AVX2 47). The AVX2 times did not change. The rest of the
+SSE-only gap is the other JPEG stages (entropy coding, color conversion,
+upsampling), not the transforms.
 
 ## Method
 
