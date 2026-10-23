@@ -287,7 +287,7 @@ internal sealed partial class SceneBuilder
             }
         }
 
-        if (f.Layer is { } layer && layer.Children.Count > 0)
+        if (f.Layer is { } layer && (layer.Children.Count > 0 || f.Deco?.Filter is not null))
         {
             Union(layer, layer.Children);
             if (f.Deco is { } deco)
@@ -949,7 +949,7 @@ internal sealed partial class SceneBuilder
 
         // Markers of the shape's vertices (path, line, polyline and polygon only), drawn even when the shape itself paints nothing.
         MarkerPlan? markers = PlanMarkers(e, st, f, ctm, fillPaint, strokePaint);
-        if (!fill && !stroke && markers is null)
+        if (!fill && !stroke && markers is null && e.Prop("filter") is null)
         {
             return;
         }

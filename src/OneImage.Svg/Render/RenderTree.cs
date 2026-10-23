@@ -144,6 +144,9 @@ internal sealed class RLayer : RNode
     /// <summary>Gets or sets the mask the layer is composited through: another layer whose content gives the coverage (see <see cref="MaskAlpha"/>). Its own <see cref="Mask"/> narrows it further.</summary>
     public RLayer? Mask { get; set; }
 
+    /// <summary>Gets or sets the filters (the <c>filter</c> property) that run on the layer's content before the clip, mask and opacity: each one's output is the next one's input.</summary>
+    public RFilter[]? Filters { get; set; }
+
     /// <summary>Gets a value indicating whether, when this layer is a mask, its alpha is the coverage (<c>mask-type: alpha</c>) instead of its luminance.</summary>
     public bool MaskAlpha { get; init; }
 

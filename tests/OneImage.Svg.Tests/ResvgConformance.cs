@@ -140,6 +140,12 @@ public sealed partial class ResvgConformance
     {
         string[] files = Directory.GetFiles(Path.Combine(root, "tests"), "*.svg", SearchOption.AllDirectories);
         Array.Sort(files, StringComparer.Ordinal);
+        if (Environment.GetEnvironmentVariable("ONEIMAGE_SVG_ONLY") is { Length: > 0 } only)
+        {
+            // A path prefix below tests/, for example "filters/feOffset", to iterate on one area.
+            files = [.. files.Where(f => Path.GetRelativePath(Path.Combine(root, "tests"), f).Replace('\\', '/').StartsWith(only, StringComparison.Ordinal))];
+        }
+
         var results = new Result[files.Length];
         Parallel.For(0, files.Length, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i => results[i] = RunOne(root, files[i]));
         return results;
@@ -216,7 +222,7 @@ public sealed partial class ResvgConformance
         string root = RootFolder();
         Assert.True(Directory.Exists(Path.Combine(root, "tests")), $"test files not found in {root}");
         IReadOnlyList<Result> results = RunAll(root);
-        Assert.True(results.Count > 1000, $"only {results.Count} test files found");
+        Assert.True(results.Count > 1000 || Environment.GetEnvironmentVariable("ONEIMAGE_SVG_ONLY") is { Length: > 0 }, $"only {results.Count} test files found");
 
         string table = Table(results);
         Console.WriteLine(table);

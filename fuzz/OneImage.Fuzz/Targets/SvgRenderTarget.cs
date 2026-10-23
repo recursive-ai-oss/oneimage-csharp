@@ -27,6 +27,8 @@ internal static class SvgRenderTarget
         MaxImageBytes = 1 << 16,
         MaxTotalImageBytes = 1 << 18,
         MaxImageDepth = 2,
+        MaxFilterPixels = 1 << 20,
+        MaxFilterPrimitives = 32,
     };
 
     private static readonly LoadOptions Options = new()

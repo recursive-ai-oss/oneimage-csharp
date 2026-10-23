@@ -49,14 +49,14 @@ internal static class SceneRenderer
                 grid.Query(qx0, qy0, qx1, qy1, hits);
                 foreach (int i in hits)
                 {
-                    DrawNode(canvas, scene.Nodes[i], dev, qx0, qy0, qx1, qy1, 0, limits);
+                    DrawNode(canvas, scene.Nodes[i], dev, qx0, qy0, qx1, qy1, 0, limits, cancel);
                 }
             }
             else
             {
                 foreach (RNode n in scene.Nodes)
                 {
-                    DrawNode(canvas, n, dev, qx0, qy0, qx1, qy1, 0, limits);
+                    DrawNode(canvas, n, dev, qx0, qy0, qx1, qy1, 0, limits, cancel);
                 }
             }
 
@@ -91,7 +91,7 @@ internal static class SceneRenderer
         }
     }
 
-    internal static void DrawNode(Canvas canvas, RNode node, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits)
+    internal static void DrawNode(Canvas canvas, RNode node, Affine dev, double qx0, double qy0, double qx1, double qy1, int depth, SvgLimits limits, CancellationToken cancel = default)
     {
         if (node.X1 < qx0 || node.X0 > qx1 || node.Y1 < qy0 || node.Y0 > qy1)
         {
@@ -122,9 +122,16 @@ internal static class SceneRenderer
                 Affine ldev = Affine.Translate(-ox, -oy).Multiply(dev);
                 using (var offscreen = new Canvas(lw, lh, PixelFormat.Rgba8))
                 {
-                    foreach (RNode child in layer.Children)
+                    if (layer.Filters is not null)
                     {
-                        DrawNode(offscreen, child, ldev, qx0, qy0, qx1, qy1, depth + 1, limits);
+                        FilterRenderer.Draw(offscreen, layer, ldev, depth, limits, cancel);
+                    }
+                    else
+                    {
+                        foreach (RNode child in layer.Children)
+                        {
+                            DrawNode(offscreen, child, ldev, qx0, qy0, qx1, qy1, depth + 1, limits, cancel);
+                        }
                     }
 
                     Image snapshot = offscreen.Snapshot();

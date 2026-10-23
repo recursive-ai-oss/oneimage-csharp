@@ -27,6 +27,12 @@ internal sealed partial class SceneBuilder
 
         public SvgElement? MaskEl { get; init; }
 
+        /// <summary>The element's <c>filter</c> property, resolved once its box is known.</summary>
+        public FilterRequest? Filter { get; init; }
+
+        /// <summary>For a filtered element: the clip that was in force outside it, which applies to the filter's result rather than to the content.</summary>
+        public Path? OuterClip { get; init; }
+
         /// <summary>The element's user space in scene space (the clip and the mask are defined in it).</summary>
         public Affine Ctm { get; init; }
 
@@ -260,12 +266,19 @@ internal sealed partial class SceneBuilder
     private bool Decorate(SvgElement e, Affine ctm, Viewport vp, int useDepth, ref Path? clip, out Deco? deco, Box? box = null)
     {
         deco = null;
+        FilterRequest? filter = null;
+        if (e.Prop("filter") is { } filterValue && ParseFilterProperty(e, filterValue, out filter) == FilterStatus.NotRendered)
+        {
+            return false;
+        }
+
         SvgElement? cp = Lookup(e.Prop("clip-path"), "clipPath");
         SvgElement? mk = MaskRef(e);
         SvgElement? deferredClip = null;
         if (cp is not null)
         {
-            if (box is null && ClipChainNeedsBox(cp))
+            // A clip acts on the filter's result, so with a filter it waits for the layer.
+            if (filter is not null || (box is null && ClipChainNeedsBox(cp)))
             {
                 deferredClip = cp;
             }
@@ -285,9 +298,13 @@ internal sealed partial class SceneBuilder
             }
         }
 
-        if (deferredClip is not null || mk is not null)
+        if (deferredClip is not null || mk is not null || filter is not null)
         {
-            deco = new Deco { ClipEl = deferredClip, MaskEl = mk, Ctm = ctm, Vp = vp, Box = box, UseDepth = useDepth };
+            deco = new Deco { ClipEl = deferredClip, MaskEl = mk, Filter = filter, OuterClip = filter is null ? null : clip, Ctm = ctm, Vp = vp, Box = box, UseDepth = useDepth };
+            if (filter is not null)
+            {
+                clip = null;
+            }
         }
 
         return true;
@@ -538,14 +555,33 @@ internal sealed partial class SceneBuilder
     private void FinishLayer(Stack<Frame> stack, RLayer layer, Deco deco, List<RNode> parent, int layerDepth)
     {
         Box? box = deco.Box;
-        if (box is null && (deco.ClipEl is not null || deco.MaskEl is not null))
+        if (box is null && (deco.ClipEl is not null || deco.MaskEl is not null || deco.Filter is not null))
         {
             box = MeasureBox(layer.Children, deco.Ctm);
         }
 
-        if (deco.ClipEl is { } cp)
+        // The filter runs first; clip, mask and opacity then act on its result.
+        if (deco.Filter is { } filterRequest && !ApplyFilters(layer, filterRequest, deco, box))
         {
-            Path region = ClipRegion(cp, deco.Ctm, deco.Vp, box, 0);
+            return;
+        }
+
+        if (deco.ClipEl is not null || deco.OuterClip is not null)
+        {
+            Path region;
+            if (deco.ClipEl is { } cp)
+            {
+                region = ClipRegion(cp, deco.Ctm, deco.Vp, box, 0);
+                if (!region.IsEmpty && deco.OuterClip is not null)
+                {
+                    region = region.Intersect(deco.OuterClip);
+                }
+            }
+            else
+            {
+                region = deco.OuterClip!;
+            }
+
             if (region.IsEmpty)
             {
                 return;

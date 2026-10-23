@@ -73,4 +73,16 @@ public sealed class SvgLimits
 
     /// <summary>Gets the largest total of all <c>data:</c> image payloads in one document, nested images included, in bytes. Default 64 MiB.</summary>
     public long MaxTotalImageBytes { get; init; } = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// Gets the most pixels one filter may work on at once, after cutting its region to what the requested output needs plus the margin its
+    /// primitives read. A filter that needs more fails with <see cref="ImageLimitException"/> before any buffer is allocated. Default 64 megapixels.
+    /// </summary>
+    public long MaxFilterPixels { get; init; } = 64L * 1024 * 1024;
+
+    /// <summary>Gets the most primitives one <c>filter</c> element may have. A filter with more fails the build with <see cref="ImageLimitException"/>. Default 256.</summary>
+    public int MaxFilterPrimitives { get; init; } = 256;
+
+    /// <summary>Gets how deep filters may nest (an <c>feImage</c> that draws an element which itself has a filter ...). Default 4.</summary>
+    public int MaxFilterDepth { get; init; } = 4;
 }

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 240 160" width="240" height="160">
+  <title>Filters: every primitive that maps onto an existing operation, filter functions, units, subregions, a rotated group, recursion through feImage</title>
+  <defs>
+    <filter id="blur" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3 1"/></filter>
+    <filter id="shadow" color-interpolation-filters="sRGB"><feOffset in="SourceAlpha" dx="3" dy="4"/><feGaussianBlur stdDeviation="2" result="s"/><feFlood flood-color="navy" flood-opacity="0.6"/><feComposite in2="s" operator="in"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="mix" primitiveUnits="objectBoundingBox"><feFlood flood-color="gold" x="0.1" y="0.1" width="0.6" height="0.6" result="f"/><feBlend in="SourceGraphic" in2="f" mode="multiply"/><feOffset dx="0.05" dy="0.05"/><feComposite in2="SourceGraphic" operator="arithmetic" k2="0.8" k3="0.6"/></filter>
+    <filter id="matrix"><feColorMatrix type="hueRotate" values="90"/><feColorMatrix type="saturate" values="0.4"/></filter>
+    <filter id="conv" x="0" y="0" width="1" height="1"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" edgeMode="duplicate"/></filter>
+    <filter id="image" x="0" y="0" width="1" height="1"><feImage xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAMElEQVR4nGNkCPj//78IAwOjCAMDNprlP8MjBkYGBob/DAxYaRZGhkc4Jf8zDBETAL1QKSUkxh5rAAAAAElFTkSuQmCC" preserveAspectRatio="xMidYMid slice"/></filter>
+    <filter id="ref" filterUnits="userSpaceOnUse" x="150" y="10" width="80" height="60"><feImage xlink:href="#dot"/></filter>
+    <filter id="chain" xlink:href="#blur"/>
+    <filter id="loop"><feImage xlink:href="#looped"/></filter>
+    <circle id="dot" cx="20" cy="20" r="14" fill="crimson" filter="url(#blur)"/>
+    <rect id="looped" x="2" y="2" width="10" height="10" fill="green" filter="url(#loop)"/>
+  </defs>
+  <rect x="10" y="10" width="50" height="40" fill="seagreen" filter="url(#blur)"/>
+  <circle cx="95" cy="30" r="20" fill="orange" stroke="purple" stroke-width="4" filter="url(#shadow)"/>
+  <rect x="130" y="10" width="40" height="40" fill="teal" filter="url(#mix)"/>
+  <g filter="url(#matrix)"><rect x="180" y="10" width="20" height="40" fill="red"/><rect x="200" y="10" width="20" height="40" fill="blue"/></g>
+  <rect x="10" y="70" width="50" height="40" fill="url(#g)" filter="url(#conv)"/>
+  <linearGradient id="g"><stop offset="0" stop-color="white"/><stop offset="1" stop-color="black"/></linearGradient>
+  <rect x="70" y="70" width="50" height="40" filter="url(#image)"/>
+  <rect x="130" y="70" width="40" height="40" fill="red" filter="url(#ref)"/>
+  <g transform="translate(200 90) rotate(30) skewX(10)"><rect x="-20" y="-12" width="40" height="24" fill="navy" filter="url(#chain)"/></g>
+  <rect x="10" y="120" width="30" height="30" fill="red" filter="url(#loop)"/>
+  <rect x="50" y="120" width="30" height="30" fill="tomato" style="filter: grayscale(0.5) blur(1.5px) drop-shadow(3px 3px 2px rgba(0,0,0,0.5))"/>
+  <g style="filter: hue-rotate(0.25turn) saturate(150%) url(#blur) opacity(80%)"><circle cx="110" cy="135" r="14" fill="gold"/></g>
+  <rect x="140" y="120" width="30" height="30" fill="gray" filter="url(#missing)"/>
+  <rect x="180" y="120" width="40" height="30" fill="plum" clip-path="url(#cp)" mask="url(#mk)" filter="url(#blur)" opacity="0.9"/>
+  <clipPath id="cp"><circle cx="200" cy="135" r="14"/></clipPath>
+  <mask id="mk"><rect x="180" y="120" width="40" height="30" fill="white"/></mask>
+</svg>
