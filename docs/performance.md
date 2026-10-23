@@ -155,7 +155,8 @@ Notes:
 - **gif-decode** is 1.3 ms behind SkiaSharp on a 50-frame 500×500 file.
 - **jpeg-encode** uses optimized Huffman tables by default (smaller
   files), which costs extra work. The gap to NetVips shrank from
-  2.72× to 1.58× after the last fixes and is a goal, not a gate.
+  2.72× to 1.58× after the last fixes and is a goal, not a gate; the
+  encoder pass described under "JPEG encode pass" closed it (0.96×).
 
 ## JPEG entropy decoding
 
@@ -192,6 +193,39 @@ scan decoder is the whole of that time in both (37.9 and 28.4 ms inside
 the decoder); 24 MP CMYK file of 16.5 MB, full size 111 to 90 ms.
 Progressive full-size decoding stays dominated by refinement scans
 (about 205 ms for a noisy 24 MP file against 218 before).
+
+## JPEG encode pass
+
+Encoding got faster with byte-identical output (the same bytes at
+degrees 1, 4 and 16, with AVX-512 off, AVX2 off and intrinsics off, for
+quality 30/75/90/100 × 4:4:4/4:2:2/4:2:0/4:4:0/gray × optimized/standard
+tables × baseline/progressive, at 0.1 MP and 4.6 MP).
+
+- RGB to YCbCr is an SSSE3/SSE4.1 multiply-add kernel and the chroma
+  averaging is portable 128-bit code, each with its scalar loop as the
+  reference. Quantized blocks are put into zigzag order by placing only
+  the non-zero values.
+- Without restart markers, every worker takes the next MCU row and does
+  all its work (convert, downsample, transform, count or code), so
+  there is no barrier between stages. Symbol counts, including the DC
+  differences across row boundaries, are gathered in the same pass that
+  transforms. When coding, a row needs only the last DC of the row
+  before it, which its owner publishes right after quantizing. Finished
+  rows are appended to the output in order by whichever worker is free.
+  Memory is the same as before: the per-worker row buffers and one tile
+  row of pixels.
+
+Measured on the worker (Ryzen 9 7950X3D, 32 logical CPUs, .NET 10.0.13,
+AVX-512 off, default degree 4, load 1.0-5.0 before, during and after
+both runs, no other benchmark running):
+
+| Row | Before | After | ImageSharp 3.1.12 | NetVips |
+|---|---|---|---|---|
+| jpeg-encode 24 MP q90 4:2:0, optimized (BenchmarkDotNet) | 82.8 ms | 51.7 ms | 101.7 ms | 53.3 ms |
+| same, standard tables | 46.4 ms | 30.7 ms | | |
+| gate report jpeg-encode | 86.8 ms | 50.4 ms | 101.0 ms | 52.4 ms |
+| gate peak working memory | 4.9 (±1.4) MiB | 3.1 (±0.9) MiB | 4.1 (±1.3) MiB | |
+| 3 MP q90 4:2:0, optimized | 7.31 ms | 5.18 ms | 15.8 ms | 7.56 ms |
 
 ## JPEG full-size transform split
 

@@ -179,11 +179,7 @@ internal static class JpegFdct
             ForwardAvx2(samples, stride, coef);
             Span<short> natural = stackalloc short[64];
             QuantizeAvx2(coef, quant, reciprocal, natural);
-            for (int k = 0; k < 64; k++)
-            {
-                output[k] = natural[zigzag[k] & 63];
-            }
-
+            ToZigzag(natural, zigzag, output);
             return;
         }
 
@@ -192,6 +188,36 @@ internal static class JpegFdct
             ForwardVector128(samples, stride, coef);
             Span<short> natural = stackalloc short[64];
             QuantizeVector128(coef, quant, reciprocal, natural);
+            ToZigzag(natural, zigzag, output);
+            return;
+        }
+
+        Forward(samples, stride, coef);
+        Quantize(coef, quant, reciprocal, zigzag, output);
+    }
+
+    private static readonly byte[] s_inverseZigzag = InvertZigzag();
+
+    private static byte[] InvertZigzag()
+    {
+        byte[] inv = new byte[64];
+        ReadOnlySpan<byte> zz = OneImage.Codecs.Jpeg.JpegConstants.Zigzag;
+        for (int k = 0; k < 64; k++)
+        {
+            inv[zz[k] & 63] = (byte)k;
+        }
+
+        return inv;
+    }
+
+    /// <summary>
+    /// Reorders 64 quantized values from natural to zigzag order. Most quantized coefficients are zero, so with the standard
+    /// zigzag table the output is cleared and only the non-zero values are placed; any other table takes the plain gather.
+    /// </summary>
+    private static void ToZigzag(ReadOnlySpan<short> natural, ReadOnlySpan<byte> zigzag, Span<short> output)
+    {
+        if (!Vector128.IsHardwareAccelerated || !System.Runtime.CompilerServices.Unsafe.AreSame(in System.Runtime.InteropServices.MemoryMarshal.GetReference(zigzag), in System.Runtime.InteropServices.MemoryMarshal.GetReference(OneImage.Codecs.Jpeg.JpegConstants.Zigzag)))
+        {
             for (int k = 0; k < 64; k++)
             {
                 output[k] = natural[zigzag[k] & 63];
@@ -200,8 +226,21 @@ internal static class JpegFdct
             return;
         }
 
-        Forward(samples, stride, coef);
-        Quantize(coef, quant, reciprocal, zigzag, output);
+        ulong nonZero = 0;
+        for (int i = 0; i < 8; i++)
+        {
+            uint zeros = Vector128.Equals(Vector128.Create(natural.Slice(i * 8, 8)), Vector128<short>.Zero).ExtractMostSignificantBits();
+            nonZero |= (ulong)(~zeros & 0xFFu) << (i * 8);
+        }
+
+        output[..64].Clear();
+        byte[] inverse = s_inverseZigzag;
+        while (nonZero != 0)
+        {
+            int n = System.Numerics.BitOperations.TrailingZeroCount(nonZero);
+            nonZero &= nonZero - 1;
+            output[inverse[n]] = natural[n];
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

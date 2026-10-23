@@ -249,6 +249,64 @@ public class JpegEncodeBenchmarks : IDisposable
     public int Vips() => _vips.JpegsaveBuffer(q: 90, subsampleMode: global::NetVips.Enums.ForeignSubsample.On).Length;
 }
 
+/// <summary>Encode a 3 MP RGB image (2048x1536) at quality 90, 4:2:0, with optimized tables (the stored-blocks path).</summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, warmupCount: 5, iterationCount: 15)]
+public class JpegEncode3MpBenchmarks : IDisposable
+{
+    private const int W = 2048;
+    private const int H = 1536;
+    private OneImage.Image _ours = null!;
+    private SharpRgb _sharp = null!;
+    private VipsImage _vips = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        OneImage.Rgb24[] full = JpegData.Pixels();
+        OneImage.Rgb24[] px = new OneImage.Rgb24[W * H];
+        for (int y = 0; y < H; y++)
+        {
+            Array.Copy(full, y * JpegData.Width, px, y * W, W);
+        }
+
+        _ours = OneImage.Image.FromPixels<OneImage.Rgb24>(px, W, H);
+        byte[] raw = new byte[px.Length * 3];
+        System.Runtime.InteropServices.MemoryMarshal.Cast<OneImage.Rgb24, byte>(px).CopyTo(raw);
+        _sharp = SharpImage.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgb24>(raw, W, H);
+        _vips = VipsImage.NewFromMemory(raw, W, H, 3, global::NetVips.Enums.BandFormat.Uchar);
+    }
+
+    [GlobalCleanup]
+    public void Cleanup() => Dispose();
+
+    public void Dispose()
+    {
+        _sharp.Dispose();
+        _vips.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    [Benchmark(Description = "OneImage q90 4:2:0 optimized tables, 3 MP")]
+    public int Ours()
+    {
+        using var ms = new MemoryStream(2 << 20);
+        _ours.Save(ms, JpegFormat.Instance, new SaveOptions { EncoderOptions = new JpegEncoderOptions { Quality = 90 } });
+        return (int)ms.Length;
+    }
+
+    [Benchmark(Description = "ImageSharp q90 4:2:0, 3 MP")]
+    public int ImageSharp()
+    {
+        using var ms = new MemoryStream(2 << 20);
+        _sharp.Save(ms, new JpegEncoder { Quality = 90, ColorType = JpegEncodingColor.YCbCrRatio420 });
+        return (int)ms.Length;
+    }
+
+    [Benchmark(Description = "NetVips q90 4:2:0, 3 MP")]
+    public int Vips() => _vips.JpegsaveBuffer(q: 90, subsampleMode: global::NetVips.Enums.ForeignSubsample.On).Length;
+}
+
 internal static class JpegBenchHelpers
 {
     private sealed class ReuseSink : IRowSink
