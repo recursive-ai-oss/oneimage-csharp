@@ -43,6 +43,10 @@ internal static class ColorMatrixKernel
         {
             start = Wide8(ref s, ref d, width, inChannels, outChannels, computeAlpha, matrix);
         }
+        else if (Vector128.IsHardwareAccelerated)
+        {
+            start = Wide4(ref s, ref d, width, inChannels, outChannels, computeAlpha, matrix);
+        }
 
         for (int x = start; x < width; x++)
         {
@@ -128,6 +132,49 @@ internal static class ColorMatrixKernel
         return x;
     }
 
+    /// <summary>The same as <see cref="Wide8"/> with four pixels per step, for hardware with 128-bit vectors only; returns how many pixels it did (a multiple of four).</summary>
+    private static int Wide4(ref byte s, ref byte d, int width, int inChannels, int outChannels, bool computeAlpha, ReadOnlySpan<float> m)
+    {
+        bool hasA = inChannels == 4;
+        bool useA = !hasA || m[12] != 0f || m[13] != 0f || m[14] != 0f || (computeAlpha && m[15] != 0f);
+        bool useG = m[4] != 0f || m[5] != 0f || m[6] != 0f || (computeAlpha && m[7] != 0f);
+        bool useB = m[8] != 0f || m[9] != 0f || m[10] != 0f || (computeAlpha && m[11] != 0f);
+        Vector128<float> v255 = Vector128.Create(255f);
+        Vector128<float> half = Vector128.Create(0.5f);
+        Vector128<uint> mask = Vector128.Create(0xFFu);
+        Vector128<float> one = Vector128.Create(1f);
+
+        // The 3-byte layouts load and store 16 bytes for four pixels, so they stop two pixels early to stay inside the row.
+        int reach = inChannels == 3 || outChannels == 3 ? 6 : 4;
+        Vector128<byte> inMask = Vector128.Create((byte)0, 1, 2, 0x80, 3, 4, 5, 0x80, 6, 7, 8, 0x80, 9, 10, 11, 0x80);
+        Vector128<byte> outMask = Vector128.Create((byte)0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 0x80, 0x80, 0x80, 0x80);
+        int x = 0;
+        for (; x + reach <= width; x += 4)
+        {
+            Vector128<uint> p = inChannels == 4
+                ? Vector128.LoadUnsafe(ref Unsafe.As<byte, uint>(ref s), (nuint)x)
+                : Vector128.Shuffle(Vector128.LoadUnsafe(ref s, (nuint)(x * 3)), inMask).AsUInt32();
+            Vector128<float> r = Vector128.ConvertToSingle((p & mask).AsInt32()) / v255;
+            Vector128<float> g = useG ? Vector128.ConvertToSingle(((p >> 8) & mask).AsInt32()) / v255 : default;
+            Vector128<float> b = useB ? Vector128.ConvertToSingle(((p >> 16) & mask).AsInt32()) / v255 : default;
+            Vector128<float> a = !hasA ? one : useA ? Vector128.ConvertToSingle((p >> 24).AsInt32()) / v255 : default;
+            Vector128<uint> o = Channel(r, g, b, a, m[0], m[4], m[8], m[12], m[16], v255, half)
+                | (Channel(r, g, b, a, m[1], m[5], m[9], m[13], m[17], v255, half) << 8)
+                | (Channel(r, g, b, a, m[2], m[6], m[10], m[14], m[18], v255, half) << 16);
+            if (outChannels == 4)
+            {
+                o |= computeAlpha ? Channel(r, g, b, a, m[3], m[7], m[11], m[15], m[19], v255, half) << 24 : p & Vector128.Create(0xFF000000u);
+                Vector128.StoreUnsafe(o, ref Unsafe.As<byte, uint>(ref d), (nuint)x);
+            }
+            else
+            {
+                Vector128.Shuffle(o.AsByte(), outMask).StoreUnsafe(ref d, (nuint)(x * 3));
+            }
+        }
+
+        return x;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<uint> Channel(Vector256<float> r, Vector256<float> g, Vector256<float> b, Vector256<float> a, float w1, float w2, float w3, float w4, float offset, Vector256<float> v255, Vector256<float> half)
     {
@@ -150,7 +197,32 @@ internal static class ColorMatrixKernel
 
         acc += Vector256.Create(offset);
         Vector256<float> v = Vector256.Min(Vector256.Max((acc * v255) + half, Vector256<float>.Zero), v255);
-        return Vector256.ConvertToInt32(v).AsUInt32();
+        return Vector256.ConvertToInt32Native(v).AsUInt32() & Vector256.Create(0xFFu);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<uint> Channel(Vector128<float> r, Vector128<float> g, Vector128<float> b, Vector128<float> a, float w1, float w2, float w3, float w4, float offset, Vector128<float> v255, Vector128<float> half)
+    {
+        // Same order as the float-plane path: ((((R*w1 + G*w2) + B*w3) + A*w4) + offset).
+        Vector128<float> acc = r * Vector128.Create(w1);
+        if (w2 != 0f)
+        {
+            acc += g * Vector128.Create(w2);
+        }
+
+        if (w3 != 0f)
+        {
+            acc += b * Vector128.Create(w3);
+        }
+
+        if (w4 != 0f)
+        {
+            acc += a * Vector128.Create(w4);
+        }
+
+        acc += Vector128.Create(offset);
+        Vector128<float> v = Vector128.Min(Vector128.Max((acc * v255) + half, Vector128<float>.Zero), v255);
+        return Vector128.ConvertToInt32Native(v).AsUInt32() & Vector128.Create(0xFFu);
     }
 
     private static float[] BuildUnit()

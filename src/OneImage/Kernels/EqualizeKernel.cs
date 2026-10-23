@@ -78,12 +78,15 @@ internal static class EqualizeKernel
         return x;
     }
 
+    // The channel values are masked to 0..255 and read as signed lanes: the unsigned 32-bit to float conversion has no
+    // instruction before AVX-512 and is emulated. The sum is at most 255 (the weights add up to 1), so the final conversion
+    // needs no saturation fix-up.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<int> Luma8(Vector256<uint> px, Vector256<uint> mask, Vector256<float> wr, Vector256<float> wg, Vector256<float> wb, Vector256<float> inv, Vector256<float> k255, bool divide)
     {
-        Vector256<float> r = Vector256.ConvertToSingle(px & mask);
-        Vector256<float> g = Vector256.ConvertToSingle(Vector256.ShiftRightLogical(px, 8) & mask);
-        Vector256<float> b = Vector256.ConvertToSingle(Vector256.ShiftRightLogical(px, 16) & mask);
+        Vector256<float> r = Vector256.ConvertToSingle((px & mask).AsInt32());
+        Vector256<float> g = Vector256.ConvertToSingle((Vector256.ShiftRightLogical(px, 8) & mask).AsInt32());
+        Vector256<float> b = Vector256.ConvertToSingle((Vector256.ShiftRightLogical(px, 16) & mask).AsInt32());
         Vector256<float> sum;
         if (divide)
         {
@@ -94,7 +97,7 @@ internal static class EqualizeKernel
             sum = Vector256.Add(Vector256.Add(Vector256.Multiply(wr, Vector256.Multiply(r, inv)), Vector256.Multiply(wg, Vector256.Multiply(g, inv))), Vector256.Multiply(wb, Vector256.Multiply(b, inv)));
         }
 
-        return Vector256.ConvertToInt32(Vector256.Round(Vector256.Multiply(sum, k255)));
+        return Vector256.ConvertToInt32Native(Vector256.Round(Vector256.Multiply(sum, k255)));
     }
 
     private static int Vector128Path(ReadOnlySpan<byte> rgba, int width, Span<ushort> luma, bool divide)
@@ -121,9 +124,9 @@ internal static class EqualizeKernel
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector128<int> Luma4(Vector128<uint> px, Vector128<uint> mask, Vector128<float> wr, Vector128<float> wg, Vector128<float> wb, Vector128<float> inv, Vector128<float> k255, bool divide)
     {
-        Vector128<float> r = Vector128.ConvertToSingle(px & mask);
-        Vector128<float> g = Vector128.ConvertToSingle(Vector128.ShiftRightLogical(px, 8) & mask);
-        Vector128<float> b = Vector128.ConvertToSingle(Vector128.ShiftRightLogical(px, 16) & mask);
+        Vector128<float> r = Vector128.ConvertToSingle((px & mask).AsInt32());
+        Vector128<float> g = Vector128.ConvertToSingle((Vector128.ShiftRightLogical(px, 8) & mask).AsInt32());
+        Vector128<float> b = Vector128.ConvertToSingle((Vector128.ShiftRightLogical(px, 16) & mask).AsInt32());
         Vector128<float> sum;
         if (divide)
         {
@@ -134,6 +137,6 @@ internal static class EqualizeKernel
             sum = Vector128.Add(Vector128.Add(Vector128.Multiply(wr, Vector128.Multiply(r, inv)), Vector128.Multiply(wg, Vector128.Multiply(g, inv))), Vector128.Multiply(wb, Vector128.Multiply(b, inv)));
         }
 
-        return Vector128.ConvertToInt32(Vector128.Round(Vector128.Multiply(sum, k255)));
+        return Vector128.ConvertToInt32Native(Vector128.Round(Vector128.Multiply(sum, k255)));
     }
 }

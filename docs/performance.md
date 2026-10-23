@@ -250,6 +250,39 @@ and
 | cmyk-jpeg-to-srgb | 243.4 | 241.2 | 149.4 | 1.61× slower (ImageSharp skips the ICC conversion) |
 | jpeg-decode-rgba | 43.4 | 44.2 | 79.5 | 1.80× faster |
 
+## Vector kernels on AVX2 and SSE
+
+The .NET vector API compiles to one instruction only where the CPU has it.
+Unsigned 32-bit lanes converted to float (and back), unsigned compares,
+64-bit lane multiplies and saturating float-to-int conversions are native
+with AVX-512 but expanded into several instructions on AVX2 and SSE, so
+benchmarks on an AVX-512 desktop hide them while the AVX2 gate pays for
+them. Every kernel in `Kernels/` was checked for these (by reading the
+code and by scanning the generated assembly of every kernel the test
+suite and a sweep of about fifty operations and codecs reach, with AVX-512 off and AVX2 off). Four
+needed work, and their output did not change by a bit.
+
+One thread, 1024 x 1024 pixels, minimum of 12 runs, nanoseconds per pixel
+(AMD Ryzen 9 7950X3D, .NET 10.0.11; the host was shared, load average
+about 1.5 to 2.5, so differences under 10% are noise):
+
+| Kernel or operation | AVX-512 before | AVX-512 after | AVX2 before | AVX2 after | SSE only before | SSE only after |
+|---|--:|--:|--:|--:|--:|--:|
+| Error diffusion, Floyd-Steinberg, fast match | 19.6 | 18.8 | 60.8 | 18.5 | 60.8 | 18.8 |
+| Error diffusion, Floyd-Steinberg, exact match | 34.5 | 33.7 | 68.2 | 33.5 | 64.7 | 33.5 |
+| Error diffusion, Atkinson, exact match | 39.1 | 39.0 | 93.0 | 38.8 | 92.5 | 38.4 |
+| Equalization luma kernel (multiply form) | 0.21 | 0.18 | 0.35 | 0.18 | 0.87 | 0.34 |
+| Color matrix kernel, RGBA to RGBA | 1.36 | 1.25 | 2.64 | 1.53 | 3.72 | 3.07 |
+| Color matrix kernel, RGB to RGB | 1.23 | 1.21 | 1.64 | 1.39 | 3.79 | 2.49 |
+| Float-path RGBA composite kernel | 1.66 | 1.07 | 2.15 | 1.12 | 4.27 | 2.25 |
+| `Composite` operation, 8-bit RGBA | 2.43 | 1.85 | 2.99 | 1.89 | 4.88 | 2.70 |
+
+The other kernels and the codecs measured within 10% of their AVX-512 time
+on AVX2 (resize, blur, JPEG, PNG, WebP, GIF, TIFF, geometry, tone and the
+remaining filters). On SSE only, JPEG encode and decode (the transforms
+have an AVX2 path and a scalar path, no 128-bit one) take about 2.4 times
+as long as with AVX2.
+
 ## Method
 
 - **Libraries.** OneImage, measured against

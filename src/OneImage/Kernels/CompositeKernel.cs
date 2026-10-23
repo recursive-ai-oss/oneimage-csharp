@@ -229,8 +229,8 @@ internal static class CompositeKernel
 
     // (unit·255 + 0.5) clamped to 0..255 and truncated: the scalar ToByte, with the same NaN-free inputs. Signed conversions: AVX2 has no unsigned ones, and every value here is far below 2^31.
     private static Vector256<uint> ToByte8(Vector256<float> unit, Vector256<float> c255, Vector256<float> half, Vector256<float> zero) =>
-        Vector256.ConvertToInt32(Vector256.Min(Vector256.Max((unit * c255) + half, zero), c255)).AsUInt32();
+        Vector256.ConvertToInt32Native(Vector256.MinNative(Vector256.MaxNative((unit * c255) + half, zero), c255)).AsUInt32();
 
     private static Vector128<uint> ToByte4(Vector128<float> unit, Vector128<float> c255, Vector128<float> half, Vector128<float> zero) =>
-        Vector128.ConvertToInt32(Vector128.Min(Vector128.Max((unit * c255) + half, zero), c255)).AsUInt32();
+        Vector128.ConvertToInt32Native(Vector128.MinNative(Vector128.MaxNative((unit * c255) + half, zero), c255)).AsUInt32();
 }
