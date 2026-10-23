@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using BenchmarkDotNet.Attributes;
 using OneImage.Svg;
@@ -47,16 +48,8 @@ public class SvgTextBenchmarks
         _loaded = Image.Load(Encoding.UTF8.GetBytes(_text), _options);
     }
 
-    private static string FindRoot()
-    {
-        string? dir = AppContext.BaseDirectory;
-        while (dir is not null && !Directory.Exists(Path.Combine(dir, "tests", "testdata", "fonts")))
-        {
-            dir = Path.GetDirectoryName(dir);
-        }
-
-        return dir ?? throw new DirectoryNotFoundException("The repository root with tests/testdata/fonts was not found.");
-    }
+    private static string FindRoot() =>
+        System.Reflection.CustomAttributeExtensions.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>(typeof(SvgTextBenchmarks).Assembly).First(a => a.Key == "RepoRoot").Value!;
 
     [Benchmark(Description = "text page (40 lines of tspans + a path) -> 800: load + render")]
     public Rgba32 LoadRender() => Image.Load(Encoding.UTF8.GetBytes(_text), _options).Resize(width: 800).ToArray<Rgba32>()[0];

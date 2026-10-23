@@ -182,7 +182,7 @@ Every bound is checked before the allocation or work it guards; breaking one rai
 | Nested isolated layers (groups with `opacity`, `mask`, or a `clip-path` that needs its box), and masks chained through `mask` on a mask | 32 (`MaxLayerDepth`) | render tree and renderer — implemented; deeper nesting fails closed with `ImageLimitException` before anything is drawn |
 | Nested image documents (`MaxImageDepth`) | 3 levels | `image` of an SVG data URI; they share the budgets above |
 | `data:` payload per image / per document (`MaxImageBytes`, `MaxTotalImageBytes`) | 16 MiB / 64 MiB | render tree; decoded under `ImageLimits`; the encoded length is checked before the payload is decoded |
-| Text characters | 1 million | render tree |
+| Text characters (`MaxTextCharacters`) | 1 million | render tree — implemented: counted as text is read and again for every copy `use` instantiates; past it the load fails with `ImageLimitException` before any layout |
 | Pattern tile size | 16 megapixels (`MaxPatternTilePixels`) | renderer, after scaling to device pixels — implemented: a larger tile is drawn at a coarser resolution, not refused; each level of pattern nesting gets half of its parent's share |
 | Offscreen layer | one band: region width × at most 128 rows, under 4 megapixels | renderer — implemented |
 | Filter region | 64 megapixels (`MaxFilterPixels`) | renderer, in device pixels after clipping to what the output needs plus the margin the primitives read — implemented: a filter that needs more fails with `ImageLimitException` before any buffer exists |
@@ -216,6 +216,20 @@ Lazy behavior follows the rest of the library: `Identify` and `Load` read the ro
 - **References** (`use`) are instantiated under budgets (see [Limits](#limits)); a `use` of itself, of an ancestor, or around a cycle draws nothing; a dangling or external reference draws nothing. A `symbol` instantiated with a size gives percentage lengths inside it that size.
 
 Seams for the following steps: style sheets add their declarations between the presentation attributes and the `style` attribute in `SvgDocument.Build`; paint servers are in; markers are in (`SceneBuilder.Markers.cs`: a shape with markers pushes one frame that instantiates them one at a time, so a marker inside itself is seen as active); text outlines resolve paints through `SceneBuilder.ResolvePaint` (it takes the geometry for the bounding box); filters wrap or add `RNode`s where `EmitShape` and `Open` create them (the frame already carries an inherited clip path in scene space and decides when a group needs a layer; `Decorate` adds an element's `clip-path` and `mask`, and `OverflowClip` is the viewport clip that markers and patterns reuse); text becomes `RPath`s from outlines. A node that is not a path (`RImage`) is drawn by `SceneRenderer.DrawNode` through `ImageRenderer`.
+
+### What is drawn: text
+
+Text is laid out by the SVG package and shaped and outlined by `OneImage.Text`; the glyph outlines go through the same fill, stroke, clip and paint-server code as any path.
+
+- **Elements.** `text`, `tspan`, `a`, `tref` (it may point at any SVG element and takes its character data) and `textPath` (to a `path` or any basic shape; `startOffset` in user units or percent of the path length, `side=right`, subpaths followed in order, glyphs whose middle falls off the path are dropped). Glyphs on a path sit with their middle on the path and turn with the chord they span.
+- **Positions.** Per-character `x`, `y`, `dx`, `dy` and `rotate` lists, each applying to the characters of its element in order and nearest-element-wins; an absolute position starts a new chunk. `text-anchor` anchors a chunk by its advance; `textLength` with `lengthAdjust` spacing or spacingAndGlyphs per chunk; `letter-spacing` and `word-spacing` (lengths, `em`, and percentages of the root viewport width, which is how the test-suite reference reads them).
+- **Fonts.** `SvgFontOptions` (passed as `new SvgFormat(limits, languages, fonts)`) holds fonts added from files, bytes or streams, generic-family mappings, fallback families and whether installed fonts are scanned (default on). `font-family` lists, `font-weight`, `font-style`, `font-stretch`, the `font` shorthand and `font-variant: small-caps` (the font's `smcp` glyphs, or capitals at 0.8 of the size). Characters no listed font has fall back to the fallback families, then to the installed fonts. Without any usable font a text element draws nothing and the rest of the document renders. The initial and `medium` font size is 12 px and the named sizes step by 1.2 around it (`xx-small` is 12 / 1.2³, `xx-large` 12 × 1.2³).
+- **Shaping.** Ligatures, kerning (`font-kerning`, and the SVG 1.1 `kerning="0"`), complex scripts and bidirectional text (`direction`, `unicode-bidi` embed and override) come from `OneImage.Text`. Kerning also applies across a `tspan` boundary between runs of one family that differ in size or weight, using the first run's font.
+- **Baselines.** `dominant-baseline`, `alignment-baseline`, `baseline-shift` (including `super` and `sub` from the font's own metrics).
+- **Painting.** Fill and stroke with paint servers (a gradient or pattern in `objectBoundingBox` units measures the line box: each glyph's advance wide and the font's ascent plus descent tall, not the ink), `context-fill`/`context-stroke`, `paint-order`, opacity, masks and filters on the text element. Underline, overline and line-through are drawn as bars with the font's metrics and share one bar across a run. `text-rendering: optimizeSpeed` on the `text` element draws its glyphs without anti-aliasing. Text inside a `clipPath` clips like geometry.
+- **Whitespace.** `xml:space` and `white-space`; collapsing runs across `tspan` boundaries, and a preserved space ends a collapsing run.
+
+Known gaps: vertical `writing-mode` (needs a vertical layout mode in `OneImage.Text`), variable-font axes, bitmap and COLRv1 glyphs, text style does not follow a `use` instance's ancestors (it follows the DOM), `opacity` on a `tspan` is not layered per span, and a ligature is kept whole when an interior character has its own `dx` or `rotate`.
 
 ## Testing against resvg's suite
 
@@ -265,6 +279,40 @@ Of the 85 failures in these subcategories (and `fill`/`opacity`/`display` and so
 
 - later steps: `fill`/`stroke` with gradients and patterns (painting fill, stroke, fill-opacity, stroke-opacity, defs, `funcIRI` tests), `context-fill`/`context-stroke`, markers, `paint-order`, `mix-blend-mode`, `isolation`, `use/complex-style-resolving-order`, `clipPath`/`mask`, filters and text (`display`/`visibility` on `tspan`, text in `defs`);
 - deliberate differences: `shapes/rect/rem-values` (resvg does not support `rem`, so its reference shows nothing; this renders it as CSS defines), `painting/fill/rgba-0-127-0-50percent` (CSS Color 4 accepts a percentage alpha in the comma syntax; the reference rejects it), `structure/svg/zero-size` and `negative-size` (resvg's reference is empty; this renders the content at its measured size), `structure/svg/not-UTF-8-encoding` (Windows-1251 is not a supported encoding), `painting/shape-rendering/on-horizontal-line` (the pixel rows a non-anti-aliased line covers when its edge falls exactly on a pixel center), `structure/svg/preserveAspectRatio=none` (a 0.75 px frame stroke that the reference draws as a hairline).
+
+### Text results
+
+The text category, rendered with the suite's own fonts, generic families as the suite sets them and no installed fonts (`ONEIMAGE_RESVG_TESTS` pointing at the full collection). Before the text unit text passed 16 of 383; now 269 of 383 (70.2%), and the whole table is 1396 of 1706 (81.8%; 1112 before). No other category lost a test; `painting` gained two (gradients on text).
+
+| subdirectory | pass / rendered |
+|---|---:|
+| alignment-baseline | 16 / 19 |
+| baseline-shift, dominant-baseline, font-size, font-size-adjust, font-stretch, font-style, font-variant, glyph-orientation-horizontal, word-spacing, kerning, font-kerning, text-rendering, tref | all |
+| font-family, font-weight, tspan, text-anchor, text, textLength, letter-spacing | 12/13, 11/12, 29/32, 14/15, 38/44, 10/12, 9/12 |
+| text-decoration | 11 / 22 |
+| lengthAdjust | 1 / 4 |
+| writing-mode | 8 / 24 |
+| textPath | 7 / 43 |
+| font-variation-settings, `font/` (variable-font and auto-axis tests), color-font | 0/14, 0/14, 1/10 |
+| direction, unicode-bidi, glyph-orientation-vertical | 0/2, 0/1, 0/1 |
+
+Why the rest fails:
+
+- **Variable fonts (about 28 tests: font-variation-settings, `font/`) and color fonts (9: bitmap, SVG-table and COLRv1 glyphs):** `OneImage.Text` reads neither variation axes nor those glyph tables. Out of scope for this unit.
+- **Vertical writing (about 16 in writing-mode, plus lengthAdjust/vertical, hanging-on-vertical, direction/rtl-with-vertical-writing-mode, glyph-orientation-vertical):** needs vertical layout in `OneImage.Text`; listed follow-up.
+- **textPath (36):** every one is a small positional disagreement, 0.5–0.8% of pixels on the simple cases and more on curves and closed paths. On a straight horizontal path the glyphs are off from the reference by 0.0–0.4 px, different for each glyph and not accounted for by kerning, advances or the placement angle; no systematic rule was found, so this is listed as an unexplained difference rather than a deliberate one.
+- **Edge anti-aliasing (text-decoration 0.25–0.5%: all-types-*, style-resolving-*, underline, underline-with-y-list, tspan-decoration, indirect-with-multiple-colors; text/escaped-text-3, tspan/pseudo-multi-line, tspan/mixed-xml-space-2, lengthAdjust/with-underline and /text-on-path, textLength/on-a-single-tspan, complex-grapheme-split-by-tspan, xml-lang=ja):** the bars and outlines agree to a fraction of a pixel; the difference is the exact-area coverage against the reference's sampled coverage on stroked text edges.
+- **Arabic and mixed-script (arabic, arabic-with-dx, arabic-with-dy, underline-with-dy-on-arabic, letter-spacing/on-Arabic and mixed-scripts, textLength/arabic, unicode-bidi/bidi-override, direction/rtl, zalgo, glyph-splitting):** shaping, mark placement or the reference's handling of spacing across joined letters differs from ours.
+- **Deliberate:** `direction/rtl` — with `direction: rtl` we anchor `start` at the right edge, as the SVG specification says; the reference does not flip the anchor.
+- **Filters on text (text/filter-bbox, letter-spacing/filter-bbox, textPath/with-filter):** the filter region of a text element's bounding box; another unit's area.
+- **Font fallback and synthesis (font-family/fallback-1, font-weight/650, font/fallback-1):** which face the reference picks for an intermediate weight and for a missing-glyph fallback.
+
+Text, a 800 x 1000 page of 40 lines of `tspan`s (bold, colored, sized, kerned, some with per-character `dx` and `rotate`) and a block of text on a curve, drawn at 800 px wide with the committed Noto Sans subsets (BenchmarkDotNet, default job, `[MemoryDiagnoser]`; worker: AMD Ryzen 9 7950X3D, 32 logical cores, .NET 10.0.402 / runtime 10.0.13, load average 3.9 before, 4.2 after from another job; no other library compared, because Svg.Skia takes its fonts from the system):
+
+| row | mean | allocated |
+|---|---:|---:|
+| text page, OneImage load + render | 9.2 ms | 15.1 MB |
+| text page, OneImage render (loaded) | 4.2 ms | 8.7 MB |
 
 ### Paint servers results
 
@@ -348,7 +396,7 @@ Planned order. Each step is a coherent piece with its own observable claim, meas
 5. **Clipping and masking** (done). `clipPath`, `mask`, viewport clipping; the layer-multiply op (`Image.ApplyMask`). Claim: `masking` pass rate (see [Results](#results)).
 6. **Filters, part one** (done). The filter graph, regions and subregions, linear-light float evaluation, and the primitives that map onto existing operations, `feDropShadow` and the CSS filter functions. Claim: the corresponding `filters` directories.
 7. **Filters, part two.** The new primitives: component transfer, arithmetic, morphology, tile, convolution completions, turbulence, displacement, lighting. Claim: the rest of `filters`.
-8. **Text.** `text`/`tspan`/`textPath`, per-character positioning (with the `OneImage.Text` addition), fonts from `SvgOptions` and the system, fallback, decorations, writing modes; bidirectional text once `OneImage.Text` has it. Claim: `text` pass rate with the suite's fonts.
+8. **Text** (done, see [Text results](#text-results)). `text`/`tspan`/`textPath`/`tref`, per-character positioning through the public cluster API in `OneImage.Text`, fonts from `SvgFontOptions`, fallback, decorations, bidirectional text, paint servers on text. Claim: `text` pass rate 70.2%; vertical writing, variable and color fonts wait on `OneImage.Text`.
 9. **Hardening and speed.** Fuzz targets for the document, CSS and renderer; hostile-input tests for every limit; benchmarks (24-megapixel and thumbnail renders, large maps, filter-heavy art) against the .NET SVG renderers and libvips/librsvg; the package readme, release notes and publishing setup. Claim: no fuzz findings after the stated run, and the benchmark table.
 
 ## Status

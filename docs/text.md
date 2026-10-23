@@ -305,6 +305,27 @@ Differences you will meet, all deliberate or pending the later units:
   - *Rendering* (black on white, 420x200, mean absolute level difference over all pixels; `RichRenderTests`): runs with underline, strikeout and overline 0.62 (max 248), a wrapped paragraph with a larger run and superscript 0.39 (max 254), fallback text 0.13 (max 133), text along a polyline 0.07 (max 99). Glyph pixels agree like plain `DrawText` does. The large maxima are decoration lines: both libraries agree on where a decoration is (segment ends, center and thickness within 0.01 px) but the reference rasterizes the thin rectangle about 0.3 to 0.7 px higher or lower than that geometry, so a one or two pixel line differs in whole rows; we paint the reported geometry exactly.
   - *Layout and hinting modes*: the reference's `HorizontalBottomTop` mode places glyphs as top-to-bottom does; ours stacks lines upward. Vertical layout and hinting are compared in [Vertical layout](#vertical-layout) and [Hinting](#hinting).
 
+## Shaping clusters for your own layout
+
+`TextShaping` (in `OneImage.Text`) exposes what a caller needs to lay text out itself — SVG text, with a position for every character, is the user — without the library's own paragraph layout:
+
+```csharp
+byte[] levels = TextShaping.GetBidiLevels(text, TextDirection.LeftToRight, out int paragraphLevel);  // UAX #9 level per UTF-16 unit
+int[] visual = TextShaping.GetVisualOrder(levels);                                                   // logical indexes in visual order
+IReadOnlyList<ShapedCluster> clusters = TextShaping.ShapeRun(text, font, rightToLeft: false, new ShapingOptions { Language = "tr" });
+foreach (ShapedCluster c in clusters)
+{
+    // c.Start and c.Length: UTF-16 units of the input; c.Advance: pixels at the font size, kerning included;
+    // c.GetOutline(): the glyphs as a Path with the pen at (0, 0), y down, in pixels; c.HasMissingGlyph.
+}
+```
+
+- `GetBidiLevels(string, TextDirection, out int paragraphLevel)` runs the algorithm on one paragraph (`Auto` picks the level from the first strong character) and returns one level per UTF-16 unit. `GetVisualOrder(ReadOnlySpan<byte> levels)` reverses runs per rule L2 and returns the logical index at each visual position; an empty input gives an empty array.
+- `ShapeRun(ReadOnlySpan<char>, Font, bool rightToLeft = false, ShapingOptions? = null)` shapes one run in one font and returns its clusters in logical order. A cluster is what cannot be positioned apart (a letter with its marks, a ligature, a syllable), so each can be placed, rotated or stretched on its own. Runs longer than `TextShaping.MaxRunLength` (2^24) throw `ArgumentException`. The run is not split by script or direction: the caller does that, and passes `rightToLeft` for odd levels. A character the font lacks gives a cluster with `HasMissingGlyph` true and the font's missing-glyph outline.
+- `ShapingOptions`: `Language` (BCP 47, default the font's default language system), `Kerning` (`KerningMode`, default `Normal`) and `Features` (`FontFeature` list, empty by default, applied on top of the script's defaults; value 0 switches a feature off).
+- `ShapedCluster.GetOutline()` builds the outline once and returns the same `Path` afterwards. Outlines are unhinted. Nothing is cached across runs.
+- `FontFaceInfo.GetWeight(Font)`, `GetIsItalic(Font)`, `GetSuperscriptRaise(Font)` and `GetSubscriptDrop(Font)` read the face's OS/2 weight class, italic flag and the superscript and subscript offsets in pixels at the font's size (0 when the face has none).
+
 ## Where the next pieces plug in
 
 `Layout/TextLayout.cs` is the whole layout in four steps with narrow seams between them.

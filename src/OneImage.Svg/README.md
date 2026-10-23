@@ -13,6 +13,6 @@ Image.Load("logo.svg", load).Resize(width: 400).Save("logo-400.png");     // dra
 Image.Thumbnail("logo.svg", 64, upscale: true, loadOptions: load).Save("logo-64.webp");
 ```
 
-This package is under construction and not published yet. It draws shapes and paths with solid fills and strokes (width, caps, joins, dashes), opacity, transforms, `viewBox`, nested `svg`, `use` and `symbol` at any size, one region at a time. Gradients, patterns, markers, clipping, masks, filters, text, images and style sheets are still to come.
+This package is under construction and not published yet. It draws shapes and paths with solid fills and strokes (width, caps, joins, dashes), opacity, transforms, `viewBox`, nested `svg`, `use` and `symbol` at any size, one region at a time. Text is drawn with fonts you add through `SvgFontOptions` (or the installed ones).
 External references (other files, URLs), scripts, animation and `foreignObject` are never loaded. The XML parser refuses DTDs and entity declarations.
 See `docs/svg.md` in the repository for the design.
