@@ -97,7 +97,7 @@ public enum GlowSource
 }
 
 /// <summary>
-/// One effect of a <see cref="LayerStyle"/>: a drop shadow, glow, stroke, overlay or satin that is drawn from the layer's own shape
+/// One effect of a <see cref="LayerStyle"/>: a drop shadow, glow, stroke, overlay, bevel or satin that is drawn from the layer's own shape
 /// (its alpha, after its mask) when the document is composited, not stored in the layer's pixels. Effects are immutable. Every effect has a
 /// <see cref="Blend"/> mode that blends it with whatever is below the layer, an <see cref="Opacity"/>, and a <see cref="Color"/>.
 /// <para>
@@ -289,7 +289,7 @@ public sealed class InnerShadowEffect : LayerEffect
     internal override int Footprint => (int)Math.Ceiling(_distance + _size) + 2;
 
     /// <inheritdoc/>
-    internal override int Order => 3;
+    internal override int Order => 5;
 
     internal override void DescribeKind(List<OpParameter> p, string prefix)
     {
@@ -337,6 +337,12 @@ public sealed class OuterGlowEffect : LayerEffect
     /// <summary>Gets the falloff curve, or null for linear.</summary>
     public EffectContour? Contour { get; init; }
 
+    /// <summary>
+    /// Gets a gradient that colors the glow instead of <see cref="LayerEffect.Color"/>, or null. Its start is where the glow is strongest (at the shape) and
+    /// its end where it fades out; the gradient's opacity stops fade the glow further.
+    /// </summary>
+    public EffectGradient? Gradient { get; init; }
+
     /// <inheritdoc/>
     internal override int Reach => (int)Math.Ceiling(_size) + 2;
 
@@ -351,6 +357,11 @@ public sealed class OuterGlowEffect : LayerEffect
         p.Add(new(prefix + "spread", (double)_spread));
         p.Add(new(prefix + "size", (double)_size));
         p.Add(new(prefix + "range", (double)_range));
+        if (Gradient != null)
+        {
+            p.Add(new(prefix + "gradient", Gradient.Label()));
+        }
+
         DescribeContour(p, prefix, Contour);
     }
 }
@@ -391,6 +402,9 @@ public sealed class InnerGlowEffect : LayerEffect
     /// <summary>Gets the falloff curve, or null for linear.</summary>
     public EffectContour? Contour { get; init; }
 
+    /// <summary>Gets a gradient that colors the glow instead of <see cref="LayerEffect.Color"/>, or null; see <see cref="OuterGlowEffect.Gradient"/>.</summary>
+    public EffectGradient? Gradient { get; init; }
+
     /// <inheritdoc/>
     internal override int Reach => 0;
 
@@ -398,7 +412,7 @@ public sealed class InnerGlowEffect : LayerEffect
     internal override int Footprint => (int)Math.Ceiling(_size) + 2;
 
     /// <inheritdoc/>
-    internal override int Order => 2;
+    internal override int Order => 4;
 
     internal override void DescribeKind(List<OpParameter> p, string prefix)
     {
@@ -406,6 +420,11 @@ public sealed class InnerGlowEffect : LayerEffect
         p.Add(new(prefix + "choke", (double)_choke));
         p.Add(new(prefix + "size", (double)_size));
         p.Add(new(prefix + "range", (double)_range));
+        if (Gradient != null)
+        {
+            p.Add(new(prefix + "gradient", Gradient.Label()));
+        }
+
         DescribeContour(p, prefix, Contour);
     }
 }
@@ -424,6 +443,16 @@ public sealed class StrokeEffect : LayerEffect
     /// <summary>Gets the stroke width in pixels (0 to 250).</summary>
     public float Size { get => _size; init => _size = CheckRange(value, MaxSize, nameof(Size)); }
 
+    /// <summary>
+    /// Gets a gradient that paints the stroke instead of <see cref="LayerEffect.Color"/>, or null. The gradient is laid out on the layer's bounds (or the
+    /// document) like a gradient overlay; with <see cref="EffectGradientStyle.ShapeBurst"/> it follows the distance from the edge instead. When both a
+    /// gradient and a pattern are set, the gradient wins.
+    /// </summary>
+    public EffectGradientFill? Gradient { get; init; }
+
+    /// <summary>Gets a pattern that paints the stroke instead of <see cref="LayerEffect.Color"/>, or null.</summary>
+    public EffectPatternFill? PatternFill { get; init; }
+
     /// <inheritdoc/>
     public override string Name => "stroke";
 
@@ -437,12 +466,14 @@ public sealed class StrokeEffect : LayerEffect
     internal override bool BelowLayer => Position == StrokePosition.Outside;
 
     /// <inheritdoc/>
-    internal override int Order => 4;
+    internal override int Order => 7;
 
     internal override void DescribeKind(List<OpParameter> p, string prefix)
     {
         p.Add(new(prefix + "position", Position switch { StrokePosition.Inside => "inside", StrokePosition.Center => "center", _ => "outside" }));
         p.Add(new(prefix + "size", (double)_size));
+        Gradient?.Describe(p, prefix);
+        PatternFill?.Describe(p, prefix);
     }
 }
 
@@ -502,7 +533,7 @@ public sealed class SatinEffect : LayerEffect
     internal override int Reach => 0;
 
     /// <inheritdoc/>
-    internal override int Order => 1;
+    internal override int Order => 3;
 
     internal override void DescribeKind(List<OpParameter> p, string prefix)
     {
@@ -516,10 +547,10 @@ public sealed class SatinEffect : LayerEffect
 
 /// <summary>
 /// The effects of a layer, an immutable list. Effects are drawn from the layer's shape (its alpha, after its mask) when the document is
-/// composited. Bottom to top the drawing order is fixed by kind: drop shadows, outer glows, the layer's pixels, color overlays, satin,
-/// inner glows, inner shadows, strokes; effects of the same kind are drawn in list order. The layer's opacity scales every effect, while its fill
+/// composited. Bottom to top the drawing order is fixed by kind: drop shadows, outer glows, the outside part of bevels and embosses,
+/// the layer's pixels, color overlays, gradient overlays, pattern overlays, satin, inner glows, inner shadows, the inside part of bevels and embosses, strokes; effects of the same kind are drawn in list order. The layer's opacity scales every effect, while its fill
 /// opacity scales the layer's own pixels, and with them the color overlays (which recolor those pixels and leave their alpha alone), but not shadows, glows,
-/// satin or strokes. A layer's blend mode applies to its pixels only; each effect has its own.
+/// satin, bevels or strokes. A layer's blend mode applies to its pixels only; each effect has its own.
 /// <para>
 /// Effects reach beyond the layer's bounds (a shadow by its distance plus size), and the document recomputes the tiles an edit can reach
 /// through them. Styles are drawn on pixel and fill layers; a style on a group or an adjustment layer is kept but not drawn. A layer clipped to the layer below, and
@@ -558,6 +589,7 @@ public sealed class LayerStyle
 
         Reach = reach;
         Footprint = footprint;
+        DirtyReach = Math.Max(reach, footprint);
     }
 
     /// <summary>Gets the effects.</summary>
@@ -570,11 +602,21 @@ public sealed class LayerStyle
     /// </summary>
     public bool ShapeFromMask { get; init; }
 
+    /// <summary>
+    /// Gets the rectangle, in document coordinates, that gradients and patterns "aligned with the layer" are laid out on, or null (the default) for the layer's
+    /// bounds. Photoshop uses the bounds of the shape itself (the visible pixels, or the outline of a shape layer), which can be smaller than the pixel
+    /// rectangle a layer keeps.
+    /// </summary>
+    public ImageRect? AlignBox { get; init; }
+
     /// <summary>Gets how far, in pixels, enabled effects reach beyond the layer's bounds.</summary>
     internal int Reach { get; }
 
     /// <summary>Gets how far past the layer's bounds its shape must be known for the effects inside it.</summary>
     internal int Footprint { get; }
+
+    /// <summary>Gets how far an edit of the layer's pixels can change what the effects draw (outer reach or inner footprint).</summary>
+    internal int DirtyReach { get; }
 
     /// <summary>True when at least one effect is enabled.</summary>
     internal bool Any

@@ -467,7 +467,7 @@ public sealed class Document : IDisposable
             case PixelLayer p:
                 {
                     TileGrid grid = p.Pixels.SnapshotGrid();
-                    DiffGrids(p.LastGrid, grid, p.X, p.Y, p.Style?.Reach ?? 0, Invalidate);
+                    DiffGrids(p.LastGrid, grid, p.X, p.Y, p.Style?.DirtyReach ?? 0, Invalidate);
                     if (!ReferenceEquals(p.LastGrid, grid) || p.LastNode == null)
                     {
                         p.LastNode = new GridSourceNode(grid);

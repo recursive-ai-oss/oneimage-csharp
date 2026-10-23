@@ -51,6 +51,7 @@ internal sealed partial class TileJob
         float[] cov = ArrayPool<float>.Shared.Rent(w * h);
         float[] shape = ArrayPool<float>.Shared.Rent(w * h);
         float[] over = ArrayPool<float>.Shared.Rent(w * channels);
+        float[]? paint = null;
         Tile? result = null;
         try
         {
@@ -75,15 +76,19 @@ internal sealed partial class TileJob
             {
                 _context.CancellationToken.ThrowIfCancellationRequested();
                 LayerEffect e = item.Effect;
-                if (e.Opacity <= 0f || !EffectRenderer.Render(item, source, _rect, cov))
+                float eo = item.Opacity;
+                if (eo <= 0f || !EffectRenderer.Render(item, source, _rect, cov))
                 {
                     continue;
                 }
 
-                float r = e.Color.R / 255f;
-                float g = e.Color.G / 255f;
-                float b = e.Color.B / 255f;
-                float gray = (0.2126f * r) + (0.7152f * g) + (0.0722f * b);
+                // Effects with more than one color (gradients, patterns) bring a color per pixel.
+                paint ??= ArrayPool<float>.Shared.Rent(w * h * 4);
+                bool painted = EffectRenderer.Paint(item, source, _rect, cov, paint);
+                Rgba32 color = item.Color;
+                float r = color.R / 255f;
+                float g = color.G / 255f;
+                float b = color.B / 255f;
                 bool recolor = item.Interior == FxInterior.Recolor;
                 AlphaComposition composition = recolor || atop ? AlphaComposition.SrcAtop : AlphaComposition.SrcOver;
                 for (int y = 0; y < h; y++)
@@ -95,34 +100,44 @@ internal sealed partial class TileJob
                         float k;
                         if (recolor)
                         {
-                            k = a > 0f ? Math.Min(1f, c / a) * e.Opacity : 0f;
+                            k = a > 0f ? Math.Min(1f, c / a) * eo : 0f;
                         }
                         else if (atop)
                         {
-                            k = a > 0f ? Math.Min(1f, c * e.Opacity / a) : 0f;
+                            k = a > 0f ? Math.Min(1f, c * eo / a) : 0f;
                         }
                         else
                         {
-                            k = c * e.Opacity;
+                            k = c * eo;
+                        }
+
+                        float pr = r, pg = g, pb = b;
+                        if (painted)
+                        {
+                            int pi = ((y * w) + x) * 4;
+                            pr = paint![pi];
+                            pg = paint[pi + 1];
+                            pb = paint[pi + 2];
+                            k *= paint[pi + 3];
                         }
 
                         int i = x * channels;
                         if (colors == 3)
                         {
-                            over[i] = r * k;
-                            over[i + 1] = g * k;
-                            over[i + 2] = b * k;
+                            over[i] = pr * k;
+                            over[i + 1] = pg * k;
+                            over[i + 2] = pb * k;
                         }
                         else
                         {
-                            over[i] = gray * k;
+                            over[i] = ((0.2126f * pr) + (0.7152f * pg) + (0.0722f * pb)) * k;
                         }
 
                         over[i + colors] = k;
                     }
 
                     Span<float> row = surface.AsSpan(y * w * channels, w * channels);
-                    BlendKernel.Row(e.Blend, row, over.AsSpan(0, w * channels), row, colors, 1f, composition);
+                    BlendKernel.Row(item.Blend, row, over.AsSpan(0, w * channels), row, colors, 1f, composition);
                 }
             }
 
@@ -147,6 +162,10 @@ internal sealed partial class TileJob
             ArrayPool<float>.Shared.Return(cov);
             ArrayPool<float>.Shared.Return(shape);
             ArrayPool<float>.Shared.Return(over);
+            if (paint != null)
+            {
+                ArrayPool<float>.Shared.Return(paint);
+            }
         }
     }
 
@@ -167,12 +186,12 @@ internal sealed partial class TileJob
         var source = new FxSource(this, l);
         int n = _rect.Width * _rect.Height;
         float[] cov = ArrayPool<float>.Shared.Rent(n);
+        float[]? paint = null;
         try
         {
             foreach (FxItem item in items)
             {
-                LayerEffect e = item.Effect;
-                float opacity = e.Opacity * plan.Opacity * (item.Interior == FxInterior.Recolor ? plan.FillOpacity : 1f);
+                float opacity = item.Opacity * plan.Opacity * (item.Interior == FxInterior.Recolor ? plan.FillOpacity : 1f);
                 if (opacity <= 0f)
                 {
                     continue;
@@ -187,7 +206,8 @@ internal sealed partial class TileJob
                         continue;
                     }
 
-                    tile = EffectTile(e.Color, cov);
+                    paint ??= ArrayPool<float>.Shared.Rent(n * 4);
+                    tile = EffectTile(item.Color, cov, EffectRenderer.Paint(item, source, _rect, cov, paint) ? paint : null);
                 }
                 catch
                 {
@@ -195,19 +215,23 @@ internal sealed partial class TileJob
                     throw;
                 }
 
-                back = OverHeld(back, tile, opacity, e.Blend, composition);
+                back = OverHeld(back, tile, opacity, item.Blend, composition);
             }
         }
         finally
         {
             ArrayPool<float>.Shared.Return(cov);
+            if (paint != null)
+            {
+                ArrayPool<float>.Shared.Return(paint);
+            }
         }
 
         return back;
     }
 
     // A tile of one color whose alpha is the coverage.
-    private Tile EffectTile(Rgba32 color, float[] cov)
+    private Tile EffectTile(Rgba32 color, float[] cov, float[]? paint = null)
     {
         int w = _rect.Width;
         int bpp = _format.BytesPerPixel;
@@ -228,17 +252,28 @@ internal sealed partial class TileJob
                 for (int x = 0; x < w; x++)
                 {
                     float a = cov[(y * w) + x];
+                    float pr = r, pg = g, pb = b, pgray = gray;
+                    if (paint != null)
+                    {
+                        int pi = ((y * w) + x) * 4;
+                        pr = paint[pi];
+                        pg = paint[pi + 1];
+                        pb = paint[pi + 2];
+                        a *= paint[pi + 3];
+                        pgray = (0.2126f * pr) + (0.7152f * pg) + (0.0722f * pb);
+                    }
+
                     int i = x * channels;
                     if (channels == 4)
                     {
-                        row[i] = r * a;
-                        row[i + 1] = g * a;
-                        row[i + 2] = b * a;
+                        row[i] = pr * a;
+                        row[i + 1] = pg * a;
+                        row[i + 2] = pb * a;
                         row[i + 3] = a;
                     }
                     else
                     {
-                        row[i] = gray * a;
+                        row[i] = pgray * a;
                         row[i + 1] = a;
                     }
                 }
@@ -262,6 +297,10 @@ internal sealed partial class TileJob
     // The layer's shape: the alpha of its pixels times its mask, read for any rectangle of the document.
     private sealed class FxSource(TileJob job, LayerState layer) : IFxSource
     {
+        public ImageRect Box => layer.Fx?.AlignBox ?? layer.Bounds;
+
+        public ImageRect Document => new(0, 0, job._doc.Width, job._doc.Height);
+
         public void ReadAlpha(ImageRect region, float[] dest)
         {
             int n = region.Width * region.Height;

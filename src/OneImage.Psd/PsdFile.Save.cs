@@ -237,7 +237,15 @@ public sealed partial class PsdFile
         // new block that keeps the items of the old one the model does not carry; the old block and its legacy twin (which would still show the old
         // effects) are left out.
         bool styleEdited = !ReferenceEquals(l.Style, info.SourceStyle);
-        byte[]? styleData = styleEdited ? EffectsWriter.Write(l.Style, info.SourceFx) : null;
+        var stylePatterns = new List<EffectPattern>();
+        byte[]? styleData = styleEdited ? EffectsWriter.Write(l.Style, info.SourceFx, stylePatterns) : null;
+        foreach (EffectPattern ep in stylePatterns)
+        {
+            if (PatternLibrary.Find(spec.DocumentBlocks, FillWriter.PatternId(ep)) == null)
+            {
+                AddPattern(spec, FillWriter.ResourceFor(ep, spec.Depth) ?? throw new ImageOperationException("A pattern in a layer style cannot be stored in this document (it has transparent pixels, or the document is not 8 or 16 bits)."));
+            }
+        }
 
         switch (l)
         {

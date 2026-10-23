@@ -178,7 +178,7 @@ public abstract class Layer
                 return;
             }
 
-            int reach = Math.Max(_style?.Reach ?? 0, value?.Reach ?? 0);
+            int reach = Math.Max(_style?.DirtyReach ?? 0, value?.DirtyReach ?? 0);
             _style = value;
             if (IsAttached)
             {
@@ -279,7 +279,7 @@ public abstract class Layer
     }
 
     /// <summary>How far, in pixels, this layer's effects (and, for a group, its children's) reach beyond its bounds.</summary>
-    internal int Reach => Math.Max(_style?.Reach ?? 0, ChildReach);
+    internal int Reach => Math.Max(_style?.DirtyReach ?? 0, ChildReach);
 
     internal virtual int ChildReach => 0;
 

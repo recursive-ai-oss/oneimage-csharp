@@ -235,7 +235,7 @@ internal sealed class LayerLoader
         PsdBlock? legacyFx = rl.Blocks.FirstOrDefault(static b => b.Key == "lrFX");
         if (fx != null && (legacyFx == null || EffectsCodec.Visible(legacyFx.Data.Span)))
         {
-            EffectsCodec.Result r = EffectsCodec.Read(fx.Data.Span, _psd, new ColorConverter(_doc.ColorProfile, _s.Header.Mode is PsdColorMode.Cmyk or PsdColorMode.Lab ? _s.IccProfile : null), shapeFromMask: rl.Blocks.Any(static b => b.Key is "vmsk" or "vsms"), EffectsCodec.GlobalAngle(_s.Resources));
+            EffectsCodec.Result r = EffectsCodec.Read(fx.Data.Span, _psd, new ColorConverter(_doc.ColorProfile, _s.Header.Mode is PsdColorMode.Cmyk or PsdColorMode.Lab ? _s.IccProfile : null), shapeFromMask: rl.Blocks.Any(static b => b.Key is "vmsk" or "vsms"), EffectsCodec.GlobalAngle(_s.Resources), _patterns ??= new PatternCache(_file.DocumentBlocks), () => ShapeBounds(layer, rl));
             layer.Style = r.Style;
             info.SourceStyle = r.Style;
             if (r.Source != null)
@@ -584,6 +584,45 @@ internal sealed class LayerLoader
     // rendered from other data already contains the vector mask (that is how this library writes one), so the path is not applied again.
     // How far past the canvas a shape layer's outline is rasterized for its effects.
     private const int MaxEffectOverscan = 256;
+
+    // The bounds of the layer's shape in document pixels: the outline of its vector mask, else the smallest rectangle around its visible pixels. Photoshop lays
+    // gradients and patterns that are aligned with a layer out on this rectangle, which is smaller than the pixel rectangle the layer keeps.
+    private ImageRect? ShapeBounds(Layer layer, RawLayer rl)
+    {
+        if (rl.Blocks.FirstOrDefault(static b => b.Key is "vmsk" or "vsms") is { } vector &&
+            VectorMask.Parse(vector.Data.Span, _doc.Width, _doc.Height, 0, 0, out _, out _) is { } path && path.Bounds.Width > 0 && path.Bounds.Height > 0)
+        {
+            int x0 = (int)Math.Round(path.Bounds.Left);
+            int y0 = (int)Math.Round(path.Bounds.Top);
+            return new ImageRect(x0, y0, Math.Max(1, (int)Math.Round(path.Bounds.Right) - x0), Math.Max(1, (int)Math.Round(path.Bounds.Bottom) - y0));
+        }
+
+        if (layer is not PixelLayer pl || pl.Pixels.Width * (long)pl.Pixels.Height > 1L << 26)
+        {
+            return null;
+        }
+
+        int w = pl.Pixels.Width;
+        int h = pl.Pixels.Height;
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        var row = new Rgba32[w];
+        for (int y = 0; y < h; y++)
+        {
+            pl.Pixels.CopyTo<Rgba32>(row, new ImageRect(0, y, w, 1));
+            for (int x = 0; x < w; x++)
+            {
+                if (row[x].A != 0)
+                {
+                    minX = Math.Min(minX, x);
+                    maxX = Math.Max(maxX, x);
+                    minY = Math.Min(minY, y);
+                    maxY = y;
+                }
+            }
+        }
+
+        return maxX < 0 ? null : new ImageRect(pl.X + minX, pl.Y + minY, maxX - minX + 1, maxY - minY + 1);
+    }
 
     private void ReadMask(Layer layer, RawLayer rl, PsdBlock? vector)
     {

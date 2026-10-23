@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using OneImage.Drawing;
+using OneImage.Layers;
 
 namespace OneImage.Psd;
 
@@ -201,6 +202,53 @@ internal static class FillWriter
             .Add("Scl ", DescNode.Unitf("#Prc", 100))
             .Add("Algn", DescNode.Bool_(false));
         return new FillPlan { Key = "PtFl", Data = Versioned(root), Pattern = new PatternResource { Id = id, Entry = PatternEntry(title, id, w, h, depth, planes) } };
+    }
+
+    /// <summary>The id a pattern is stored under: its own id when it has one, else a GUID-shaped hash of its pixels.</summary>
+    public static string PatternId(EffectPattern pattern)
+    {
+        if (pattern.Id != null)
+        {
+            return pattern.Id;
+        }
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData([(byte)(pattern.Width >> 8), (byte)pattern.Width, (byte)(pattern.Height >> 8), (byte)pattern.Height]);
+        hash.AppendData(pattern.Pixels);
+        string id = Convert.ToHexString(hash.GetHashAndReset().AsSpan(0, 16)).ToLowerInvariant();
+        return $"{id[..8]}-{id[8..12]}-{id[12..16]}-{id[16..20]}-{id[20..32]}";
+    }
+
+    /// <summary>The pattern resource entry for an effect's pattern, or null when it cannot be stored (translucent pixels, a side beyond 4096, or a depth other than 8 and 16).</summary>
+    public static PatternResource? ResourceFor(EffectPattern pattern, int depth)
+    {
+        int w = pattern.Width;
+        int h = pattern.Height;
+        if (depth is not (8 or 16) || w > 4096 || h > 4096)
+        {
+            return null;
+        }
+
+        ReadOnlySpan<byte> px = pattern.Pixels;
+        for (int i = 3; i < px.Length; i += 4)
+        {
+            if (px[i] != 255)
+            {
+                return null;
+            }
+        }
+
+        int bytes = depth / 8;
+        byte[][] planes = [new byte[w * h * bytes], new byte[w * h * bytes], new byte[w * h * bytes]];
+        for (int i = 0; i < w * h; i++)
+        {
+            Put(planes[0], i, px[i * 4], bytes);
+            Put(planes[1], i, px[(i * 4) + 1], bytes);
+            Put(planes[2], i, px[(i * 4) + 2], bytes);
+        }
+
+        string id = PatternId(pattern);
+        return new PatternResource { Id = id, Entry = PatternEntry("Pattern " + id[..8], id, w, h, depth, planes) };
     }
 
     private static void Put(byte[] plane, int index, byte v, int bytes)

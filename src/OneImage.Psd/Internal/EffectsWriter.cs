@@ -18,8 +18,11 @@ internal static class EffectsWriter
         ("inner-shadow", "IrSh", "innerShadowMulti"),
         ("outer-glow", "OrGl", null),
         ("color-overlay", "SoFi", "solidFillMulti"),
+        ("gradient-overlay", "GrFl", "gradientFillMulti"),
+        ("pattern-overlay", "patternFill", null),
         ("stroke", "FrFX", "frameFXMulti"),
         ("inner-glow", "IrGl", null),
+        ("bevel-emboss", "ebbl", null),
         ("satin", "ChFX", null),
     ];
 
@@ -32,12 +35,12 @@ internal static class EffectsWriter
 
     /// <summary>Returns the data of the effects block for <paramref name="style"/>, or null when there is nothing to store.</summary>
     /// <exception cref="ImageOperationException">The style holds more than one effect of a kind that PSD stores once.</exception>
-    public static byte[]? Write(LayerStyle? style, FxSource? source)
+    public static byte[]? Write(LayerStyle? style, FxSource? source, List<EffectPattern>? patterns = null)
     {
         DescNode root = StartFrom(source, source?.Limits ?? PsdLimits.Default, out Dictionary<(string, int), DescNode> originals);
         foreach ((string kind, string single, string? multi) in Kinds)
         {
-            ApplyKind(root, kind, single, multi, style, source, originals);
+            ApplyKind(root, kind, single, multi, style, source, originals, patterns);
         }
 
         int enabled = 0;
@@ -120,7 +123,7 @@ internal static class EffectsWriter
             .Add("masterFXSwitch", DescNode.Bool_(true));
     }
 
-    private static void ApplyKind(DescNode root, string kind, string single, string? multi, LayerStyle? style, FxSource? source, Dictionary<(string, int), DescNode> originals)
+    private static void ApplyKind(DescNode root, string kind, string single, string? multi, LayerStyle? style, FxSource? source, Dictionary<(string, int), DescNode> originals, List<EffectPattern>? patterns)
     {
         // The items of the original that stay: whatever the model did not take.
         var final = new List<DescNode>();
@@ -164,7 +167,7 @@ internal static class EffectsWriter
                 }
                 else
                 {
-                    fresh.Add((e, Build(e), false));
+                    fresh.Add((e, Build(e, patterns), false));
                 }
             }
         }
@@ -248,7 +251,7 @@ internal static class EffectsWriter
     }
 
     // The descriptor of one effect, with the items Photoshop writes for its kind.
-    private static DescNode Build(LayerEffect e)
+    private static DescNode Build(LayerEffect e, List<EffectPattern>? patterns)
     {
         switch (e)
         {
@@ -267,22 +270,57 @@ internal static class EffectsWriter
                     .Add("Nose", DescNode.Unitf("#Prc", 0)).Add("AntA", DescNode.Bool_(false)).Add("TrnS", Contour(s.Contour));
             case OuterGlowEffect g:
                 return Begin("OrGl", g)
-                    .Add("Md  ", Blend(g.Blend)).Add("Clr ", Color(g.Color)).Add("Opct", Percent(g.Opacity))
+                    .Add("Md  ", Blend(g.Blend)).Add(g.Gradient == null ? "Clr " : "Grad", g.Gradient == null ? Color(g.Color) : Gradient(g.Gradient)).Add("Opct", Percent(g.Opacity))
                     .Add("GlwT", DescNode.Enum("BETE", "SfBL")).Add("Ckmt", Pixels(g.Spread * 100f)).Add("blur", Pixels(g.Size))
                     .Add("Nose", DescNode.Unitf("#Prc", 0)).Add("ShdN", DescNode.Unitf("#Prc", 0)).Add("AntA", DescNode.Bool_(false))
                     .Add("TrnS", Contour(g.Contour)).Add("Inpr", DescNode.Unitf("#Prc", Pct(g.Range)));
             case InnerGlowEffect g:
                 return Begin("IrGl", g)
-                    .Add("Md  ", Blend(g.Blend)).Add("Clr ", Color(g.Color)).Add("Opct", Percent(g.Opacity))
+                    .Add("Md  ", Blend(g.Blend)).Add(g.Gradient == null ? "Clr " : "Grad", g.Gradient == null ? Color(g.Color) : Gradient(g.Gradient)).Add("Opct", Percent(g.Opacity))
                     .Add("GlwT", DescNode.Enum("BETE", "SfBL")).Add("Ckmt", Pixels(g.Choke * 100f)).Add("blur", Pixels(g.Size))
                     .Add("Nose", DescNode.Unitf("#Prc", 0)).Add("ShdN", DescNode.Unitf("#Prc", 0)).Add("AntA", DescNode.Bool_(false))
                     .Add("TrnS", Contour(g.Contour)).Add("Inpr", DescNode.Unitf("#Prc", Pct(g.Range)))
                     .Add("glwS", DescNode.Enum("IGSr", g.Source == GlowSource.Center ? "SrcC" : "SrcE"));
             case StrokeEffect k:
-                return Begin("FrFX", k)
-                    .Add("Styl", DescNode.Enum("FStl", k.Position switch { StrokePosition.Inside => "InsF", StrokePosition.Center => "CtrF", _ => "OutF" }))
-                    .Add("PntT", DescNode.Enum("FrFl", "SClr")).Add("Md  ", Blend(k.Blend)).Add("Opct", Percent(k.Opacity))
-                    .Add("Sz  ", Pixels(k.Size)).Add("Clr ", Color(k.Color)).Add("overprint", DescNode.Bool_(false));
+                {
+                    DescNode d = Begin("FrFX", k)
+                        .Add("Styl", DescNode.Enum("FStl", k.Position switch { StrokePosition.Inside => "InsF", StrokePosition.Center => "CtrF", _ => "OutF" }))
+                        .Add("PntT", DescNode.Enum("FrFl", k.Gradient != null ? "GrFl" : k.PatternFill != null ? "Ptrn" : "SClr")).Add("Md  ", Blend(k.Blend)).Add("Opct", Percent(k.Opacity))
+                        .Add("Sz  ", Pixels(k.Size)).Add("Clr ", Color(k.Color));
+                    if (k.Gradient != null)
+                    {
+                        AddGradientFill(d, k.Gradient);
+                    }
+                    else if (k.PatternFill != null)
+                    {
+                        d.Add("Ptrn", PatternRef(k.PatternFill.Pattern, patterns)).Add("Scl ", Percent(k.PatternFill.Scale)).Add("Lnkd", DescNode.Bool_(k.PatternFill.LinkWithLayer))
+                            .Add("phase", Obj("Pnt ").Add("Hrzn", DescNode.Unitf("#Prc", Exact(k.PatternFill.PhaseX))).Add("Vrtc", DescNode.Unitf("#Prc", Exact(k.PatternFill.PhaseY))));
+                    }
+
+                    return d.Add("overprint", DescNode.Bool_(false));
+                }
+
+            case GradientOverlayEffect go:
+                {
+                    DescNode d = Begin("GrFl", go).Add("Md  ", Blend(go.Blend)).Add("Opct", Percent(go.Opacity));
+                    AddGradientFill(d, go.Fill);
+                    return d;
+                }
+
+            case PatternOverlayEffect po:
+                return Begin("patternFill", po).Add("Md  ", Blend(po.Blend)).Add("Opct", Percent(po.Opacity))
+                    .Add("Ptrn", PatternRef(po.Fill.Pattern, patterns)).Add("Scl ", Percent(po.Fill.Scale)).Add("Algn", DescNode.Bool_(po.Fill.LinkWithLayer))
+                    .Add("phase", Obj("Pnt ").Add("Hrzn", DescNode.Dbl(Exact(po.Fill.PhaseX))).Add("Vrtc", DescNode.Dbl(Exact(po.Fill.PhaseY))));
+            case BevelEmbossEffect b:
+                return Begin("ebbl", b)
+                    .Add("hglM", Blend(b.HighlightBlend)).Add("hglC", Color(b.HighlightColor)).Add("hglO", Percent(b.HighlightOpacity * b.Opacity))
+                    .Add("sdwM", Blend(b.ShadowBlend)).Add("sdwC", Color(b.ShadowColor)).Add("sdwO", Percent(b.ShadowOpacity * b.Opacity))
+                    .Add("bvlT", DescNode.Enum("bvlT", b.Technique switch { BevelTechnique.ChiselHard => "PrBL", BevelTechnique.ChiselSoft => "Slmt", _ => "SfBL" }))
+                    .Add("bvlS", DescNode.Enum("BESl", b.Style switch { BevelStyle.OuterBevel => "OtrB", BevelStyle.Emboss => "Embs", BevelStyle.PillowEmboss => "PlEb", BevelStyle.StrokeEmboss => "strokeEmboss", _ => "InrB" }))
+                    .Add("uglg", DescNode.Bool_(false)).Add("lagl", Angle(b.Angle)).Add("Lald", DescNode.Unitf("#Ang", Exact(b.Altitude)))
+                    .Add("srgR", Percent(b.Depth)).Add("blur", Pixels(b.Size)).Add("bvlD", DescNode.Enum("BESs", b.Up ? "In  " : "Out "))
+                    .Add("TrnS", Contour(b.GlossContour)).Add("antialiasGloss", DescNode.Bool_(false)).Add("Sftn", Pixels(b.Soften))
+                    .Add("useShape", DescNode.Bool_(false)).Add("useTexture", DescNode.Bool_(false));
             case ColorOverlayEffect o:
                 return Begin("SoFi", o).Add("Md  ", Blend(o.Blend)).Add("Clr ", Color(o.Color)).Add("Opct", Percent(o.Opacity));
             case SatinEffect t:
@@ -293,6 +331,60 @@ internal static class EffectsWriter
             default:
                 throw new ImageOperationException($"The layer effect '{e.Name}' has no PSD equivalent.");
         }
+    }
+
+    // The settings shared by gradient overlays and gradient strokes.
+    private static void AddGradientFill(DescNode d, EffectGradientFill fill)
+    {
+        d.Add("Grad", Gradient(fill.Gradient));
+        if (fill.Gradient.LinearLight)
+        {
+            d.Add("gradientsInterpolationMethod", DescNode.Enum("gradientInterpolationMethodType", "Lnr "));
+        }
+
+        d.Add("Angl", Angle(fill.Angle))
+            .Add("Type", DescNode.Enum("GrdT", fill.Style switch
+            {
+                EffectGradientStyle.Radial => "Rdl ",
+                EffectGradientStyle.Angle => "Angl",
+                EffectGradientStyle.Reflected => "Rflc",
+                EffectGradientStyle.Diamond => "Dmnd",
+                EffectGradientStyle.ShapeBurst => "shapeburst",
+                _ => "Lnr ",
+            }))
+            .Add("Rvrs", DescNode.Bool_(fill.Reverse)).Add("Dthr", DescNode.Bool_(false)).Add("Algn", DescNode.Bool_(fill.AlignWithLayer))
+            .Add("Scl ", Percent(fill.Scale))
+            .Add("Ofst", Obj("Pnt ").Add("Hrzn", Percent(fill.OffsetX)).Add("Vrtc", Percent(fill.OffsetY)));
+    }
+
+    private static DescNode Gradient(EffectGradient g)
+    {
+        DescNode colors = DescNode.ListOf();
+        foreach (GradientColorStop c in g.Colors)
+        {
+            colors.List.Add(Obj("Clrt")
+                .Add("Clr ", Obj("RGBC").Add("Rd  ", DescNode.Dbl(Channel(c.Color.R))).Add("Grn ", DescNode.Dbl(Channel(c.Color.G))).Add("Bl  ", DescNode.Dbl(Channel(c.Color.B))))
+                .Add("Type", DescNode.Enum("Clry", "UsrS")).Add("Lctn", DescNode.Long_((long)Math.Round(c.Location * 4096.0))).Add("Mdpn", DescNode.Long_((long)Math.Round(c.Midpoint * 100.0))));
+        }
+
+        DescNode opacities = DescNode.ListOf();
+        foreach (GradientOpacityStop o in g.Opacities)
+        {
+            opacities.List.Add(Obj("TrnS").Add("Opct", Percent(o.Opacity)).Add("Lctn", DescNode.Long_((long)Math.Round(o.Location * 4096.0))).Add("Mdpn", DescNode.Long_((long)Math.Round(o.Midpoint * 100.0))));
+        }
+
+        return Obj("Grdn").Add("Nm  ", DescNode.Str("Custom")).Add("GrdF", DescNode.Enum("GrdF", "CstS")).Add("Intr", DescNode.Dbl(Math.Round(g.Smoothness * 4096.0)))
+            .Add("Clrs", colors).Add("Trns", opacities);
+    }
+
+    // A color channel from 0..1 to 0..255 the way a person would type it, so reading it back gives the same float.
+    private static double Channel(float v) => (double)((decimal)v * 255m);
+
+    private static DescNode PatternRef(EffectPattern pattern, List<EffectPattern>? patterns)
+    {
+        patterns?.Add(pattern);
+        string id = FillWriter.PatternId(pattern);
+        return Obj("Ptrn").Add("Nm  ", DescNode.Str("Pattern " + id[..8])).Add("Idnt", DescNode.Str(id));
     }
 
     private static DescNode Begin(string cls, LayerEffect e) =>

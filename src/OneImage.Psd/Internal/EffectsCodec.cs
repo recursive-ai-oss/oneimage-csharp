@@ -61,7 +61,7 @@ internal static class EffectsCodec
         return true;
     }
 
-    public static Result Read(ReadOnlySpan<byte> block, PsdLimits limits, ColorConverter colors, bool shapeFromMask, float? globalAngle)
+    public static Result Read(ReadOnlySpan<byte> block, PsdLimits limits, ColorConverter colors, bool shapeFromMask, float? globalAngle, PatternCache? patterns = null, Func<ImageRect?>? alignBox = null)
     {
         // Version 0, then the descriptor with its own version (16).
         Descriptor? d;
@@ -108,7 +108,7 @@ internal static class EffectsCodec
             }
         }
 
-        return new Result(effects.Count > 0 ? new LayerStyle(effects) { ShapeFromMask = shapeFromMask } : null, skipped, approximated, source);
+        return new Result(effects.Count > 0 ? new LayerStyle(effects) { ShapeFromMask = shapeFromMask, AlignBox = effects.Any(NeedsBox) ? alignBox?.Invoke() : null } : null, skipped, approximated, source);
 
         void Take(Descriptor item, string kind, string key, int index)
         {
@@ -136,8 +136,11 @@ internal static class EffectsCodec
                 "inner-shadow" => InnerShadow(item, colors, globalAngle, ref approximated),
                 "outer-glow" => OuterGlow(item, colors, ref approximated),
                 "inner-glow" => InnerGlow(item, colors, ref approximated),
-                "stroke" => Stroke(item, colors),
+                "stroke" => Stroke(item, colors, patterns),
                 "color-overlay" => ColorOverlay(item, colors),
+                "gradient-overlay" => GradientOverlay(item, colors),
+                "pattern-overlay" => PatternOverlay(item, patterns),
+                "bevel-emboss" => BevelEmboss(item, colors, globalAngle, ref approximated),
                 "satin" => Satin(item, colors),
                 _ => null,
             };
@@ -161,6 +164,15 @@ internal static class EffectsCodec
             }
         }
     }
+
+    // Gradients and patterns that are laid out on the layer need to know its shape's bounds.
+    private static bool NeedsBox(LayerEffect e) => e switch
+    {
+        GradientOverlayEffect g => g.Fill.AlignWithLayer,
+        PatternOverlayEffect p => p.Fill.LinkWithLayer,
+        StrokeEffect s => (s.Gradient is { AlignWithLayer: true }) || (s.PatternFill is { LinkWithLayer: true }),
+        _ => false,
+    };
 
     // Several effects of one kind (the "multi" lists of newer Photoshop) are drawn in file order. The single-effect keys come first.
     private static readonly (string Key, string Kind)[] Keys =
@@ -215,9 +227,7 @@ internal static class EffectsCodec
 
     private static OuterGlowEffect? OuterGlow(Descriptor d, ColorConverter colors, ref int approximated)
     {
-        // A glow filled with a gradient (a Grad entry instead of a color) is not reproduced.
-        if (d.Get("Grad") != null ||
-            !Common(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, ref approximated) ||
+        if (!Glow(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, out EffectGradient? gradient, ref approximated) ||
             !Number(d, "Ckmt", 0, 100, 0, out float spread) ||
             !Number(d, "blur", 0, LayerEffect.MaxSize, 0, out float size) ||
             !ReadContour(d.Get("TrnS"), out EffectContour? contour))
@@ -225,13 +235,12 @@ internal static class EffectsCodec
             return null;
         }
 
-        return Number(d, "Inpr", 0, 100, 50, out float range) ? new OuterGlowEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Spread = spread / 100f, Size = size, Range = range / 100f, Contour = contour } : null;
+        return Number(d, "Inpr", 0, 100, 50, out float range) ? new OuterGlowEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Spread = spread / 100f, Size = size, Range = range / 100f, Contour = contour, Gradient = gradient } : null;
     }
 
     private static InnerGlowEffect? InnerGlow(Descriptor d, ColorConverter colors, ref int approximated)
     {
-        if (d.Get("Grad") != null ||
-            !Common(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, ref approximated) ||
+        if (!Glow(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, out EffectGradient? gradient, ref approximated) ||
             !Number(d, "Ckmt", 0, 100, 0, out float choke) ||
             !Number(d, "blur", 0, LayerEffect.MaxSize, 0, out float size) ||
             !Number(d, "Inpr", 0, 100, 50, out float range) ||
@@ -243,20 +252,41 @@ internal static class EffectsCodec
         return new InnerGlowEffect
         {
             Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Choke = choke / 100f, Size = size, Range = range / 100f, Contour = contour,
-            Source = d.Get("glwS") is "SrcC" ? GlowSource.Center : GlowSource.Edge,
+            Source = d.Get("glwS") is "SrcC" ? GlowSource.Center : GlowSource.Edge, Gradient = gradient,
         };
     }
 
-    private static StrokeEffect? Stroke(Descriptor d, ColorConverter colors)
+    private static StrokeEffect? Stroke(Descriptor d, ColorConverter colors, PatternCache? patterns)
     {
-        // Only solid-color strokes; a gradient or pattern stroke keeps today's behavior.
+        // The paint: a solid color, a gradient or a pattern.
+        EffectGradientFill? gradient = null;
+        EffectPatternFill? pattern = null;
         if (d.Get("PntT") is string paint && paint != "SClr")
         {
-            return null;
+            if (paint == "GrFl")
+            {
+                gradient = ReadGradientFill(d, colors, allowShapeBurst: true);
+                if (gradient == null)
+                {
+                    return null;
+                }
+            }
+            else if (paint == "Ptrn")
+            {
+                pattern = ReadPatternFill(d, patterns, linkKey: "Lnkd");
+                if (pattern == null)
+                {
+                    return null;
+                }
+            }
+            else
+            {
+                return null;
+            }
         }
 
         int none = 0;
-        if (!Common(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, ref none) ||
+        if (!Common(d, colors, out BlendMode blend, out Rgba32 color, out float opacity, ref none, needColor: gradient == null && pattern == null) ||
             !Number(d, "Sz  ", 0, LayerEffect.MaxSize, 1, out float size))
         {
             return null;
@@ -278,7 +308,251 @@ internal static class EffectsCodec
                 return null;
         }
 
-        return new StrokeEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Size = size, Position = position };
+        return new StrokeEffect { Enabled = d.Get("enab") is true, Blend = blend, Color = color, Opacity = opacity, Size = size, Position = position, Gradient = gradient, PatternFill = pattern };
+    }
+
+    private static GradientOverlayEffect? GradientOverlay(Descriptor d, ColorConverter colors)
+    {
+        int none = 0;
+        if (!Common(d, colors, out BlendMode blend, out _, out float opacity, ref none, needColor: false) || ReadGradientFill(d, colors, allowShapeBurst: false) is not { } fill)
+        {
+            return null;
+        }
+
+        return new GradientOverlayEffect { Enabled = d.Get("enab") is true, Blend = blend, Opacity = opacity, Fill = fill };
+    }
+
+    private static PatternOverlayEffect? PatternOverlay(Descriptor d, PatternCache? patterns)
+    {
+        int none = 0;
+        if (!Common(d, null!, out BlendMode blend, out _, out float opacity, ref none, needColor: false) || ReadPatternFill(d, patterns, linkKey: "Algn") is not { } fill)
+        {
+            return null;
+        }
+
+        return new PatternOverlayEffect { Enabled = d.Get("enab") is true, Blend = blend, Opacity = opacity, Fill = fill };
+    }
+
+    // The gradient of a glow: a Grad entry instead of a color.
+    private static bool Glow(Descriptor d, ColorConverter colors, out BlendMode blend, out Rgba32 color, out float opacity, out EffectGradient? gradient, ref int approximated)
+    {
+        gradient = null;
+        if (d.Get("Grad") is Descriptor g)
+        {
+            if (ReadGradient(g, d, colors) is not { } gr)
+            {
+                blend = default;
+                color = default;
+                opacity = 0;
+                return false;
+            }
+
+            gradient = gr;
+            return Common(d, colors, out blend, out color, out opacity, ref approximated, needColor: false);
+        }
+
+        return Common(d, colors, out blend, out color, out opacity, ref approximated);
+    }
+
+    // Custom (stop) gradients only: noise gradients come from Photoshop's own random number generator.
+    private static EffectGradient? ReadGradient(Descriptor grad, Descriptor owner, ColorConverter colors)
+    {
+        if (grad.Get("GrdF") is not string form || form != "CstS" ||
+            grad.Get("Clrs") is not List<object?> clrs || clrs.Count == 0 || clrs.Count > EffectGradient.MaxStops ||
+            grad.Get("Trns") is not List<object?> trns || trns.Count == 0 || trns.Count > EffectGradient.MaxStops)
+        {
+            return null;
+        }
+
+        // Perceptual interpolation is another curve that is not reproduced; classic and the newer "smooth" name blend encoded values, linear blends light.
+        bool linear = false;
+        if (owner.Get("gradientsInterpolationMethod") is string method)
+        {
+            if (method == "Lnr ")
+            {
+                linear = true;
+            }
+            else if (method is not ("Gcls" or "Smoo"))
+            {
+                return null;
+            }
+        }
+
+        var cs = new List<GradientColorStop>(clrs.Count);
+        foreach (object? o in clrs)
+        {
+            if (o is not Descriptor stop || stop.Get("Type") is not string type || type != "UsrS" || stop.Get("Clr ") is not Descriptor clr ||
+                stop.Number("Lctn") is not { } loc || colors.ToRgb(clr) is not { } rgb || !(loc >= 0 && loc <= 4096))
+            {
+                return null;
+            }
+
+            cs.Add(new GradientColorStop((float)(loc / 4096.0), (float)Math.Clamp((stop.Number("Mdpn") ?? 50) / 100.0, 0, 1), new RgbaFloat(rgb.R, rgb.G, rgb.B, 1f)));
+        }
+
+        var os = new List<GradientOpacityStop>(trns.Count);
+        foreach (object? o in trns)
+        {
+            if (o is not Descriptor stop || stop.Number("Opct") is not { } opct || stop.Number("Lctn") is not { } loc || !(loc >= 0 && loc <= 4096))
+            {
+                return null;
+            }
+
+            os.Add(new GradientOpacityStop((float)(loc / 4096.0), (float)Math.Clamp((stop.Number("Mdpn") ?? 50) / 100.0, 0, 1), (float)Math.Clamp(opct / 100.0, 0, 1)));
+        }
+
+        return new EffectGradient(cs, os, (float)Math.Clamp((grad.Number("Intr") ?? 4096) / 4096.0, 0, 1), linear);
+    }
+
+    private static EffectGradientFill? ReadGradientFill(Descriptor d, ColorConverter colors, bool allowShapeBurst)
+    {
+        if (d.Get("Grad") is not Descriptor grad || ReadGradient(grad, d, colors) is not { } gradient)
+        {
+            return null;
+        }
+
+        EffectGradientStyle style;
+        switch (d.Get("Type") as string)
+        {
+            case "Lnr ":
+                style = EffectGradientStyle.Linear;
+                break;
+            case "Rdl ":
+                style = EffectGradientStyle.Radial;
+                break;
+            case "Angl":
+                style = EffectGradientStyle.Angle;
+                break;
+            case "Rflc":
+                style = EffectGradientStyle.Reflected;
+                break;
+            case "Dmnd":
+                style = EffectGradientStyle.Diamond;
+                break;
+            case "shapeburst" when allowShapeBurst:
+                style = EffectGradientStyle.ShapeBurst;
+                break;
+            default:
+                return null;
+        }
+
+        double dx = 0;
+        double dy = 0;
+        if (d.Get("Ofst") is Descriptor ofst)
+        {
+            dx = ofst.Number("Hrzn") ?? 0;
+            dy = ofst.Number("Vrtc") ?? 0;
+        }
+
+        double angle = d.Number("Angl") ?? 90;
+        double scale = (d.Number("Scl ") ?? 100) / 100.0;
+        if (!(Math.Abs(angle) <= 3600) || !(scale >= 0.1 && scale <= 10) || !(Math.Abs(dx) <= 10000) || !(Math.Abs(dy) <= 10000))
+        {
+            return null;
+        }
+
+        return new EffectGradientFill(gradient, style, (float)angle, (float)scale, d.Get("Rvrs") is true, d.Get("Algn") is not false, (float)(dx / 100.0), (float)(dy / 100.0));
+    }
+
+    private static EffectPatternFill? ReadPatternFill(Descriptor d, PatternCache? patterns, string linkKey)
+    {
+        if (patterns == null || d.Get("Ptrn") is not Descriptor ptrn || ptrn.Get("Idnt") is not string id)
+        {
+            return null;
+        }
+
+        id = id.TrimEnd('\0');
+        PatternImage? image = patterns.Find(id);
+        if (image == null)
+        {
+            return null;
+        }
+
+        double scale = (d.Number("Scl ") ?? 100) / 100.0;
+        double px = 0;
+        double py = 0;
+        if (d.Get("phase") is Descriptor phase)
+        {
+            px = phase.Number("Hrzn") ?? 0;
+            py = phase.Number("Vrtc") ?? 0;
+        }
+
+        if (!(scale >= 0.01 && scale <= 10) || !(Math.Abs(px) <= LayerEffect.MaxDistance) || !(Math.Abs(py) <= LayerEffect.MaxDistance))
+        {
+            return null;
+        }
+
+        return new EffectPatternFill(new EffectPattern(image.Width, image.Height, image.Rgba, id), (float)scale, d.Get(linkKey) is not false, (float)px, (float)py);
+    }
+
+    private static BevelEmbossEffect? BevelEmboss(Descriptor d, ColorConverter colors, float? globalAngle, ref int approximated)
+    {
+        if (MapBlend(d.Get("hglM")) is not { } hMode || MapBlend(d.Get("sdwM")) is not { } sMode ||
+            d.Get("hglC") is not Descriptor hc || colors.ToRgb(hc) is not { } hRgb ||
+            d.Get("sdwC") is not Descriptor sc || colors.ToRgb(sc) is not { } sRgb ||
+            !Number(d, "hglO", 0, 100, 75, out float hOpacity) || !Number(d, "sdwO", 0, 100, 75, out float sOpacity) ||
+            !Angle(d, globalAngle, out float angle) ||
+            !Number(d, "Lald", 0, 90, 30, out float altitude) ||
+            !Number(d, "srgR", 0, BevelEmbossEffect.MaxDepth * 100, 100, out float depth) ||
+            !Number(d, "blur", 0, LayerEffect.MaxSize, 5, out float size) ||
+            !Number(d, "Sftn", 0, BevelEmbossEffect.MaxSoften, 0, out float soften) ||
+            !ReadContour(d.Get("TrnS"), out EffectContour? gloss))
+        {
+            return null;
+        }
+
+        BevelStyle style;
+        switch (d.Get("bvlS") as string)
+        {
+            case "InrB":
+                style = BevelStyle.InnerBevel;
+                break;
+            case "OtrB":
+                style = BevelStyle.OuterBevel;
+                break;
+            case "Embs":
+                style = BevelStyle.Emboss;
+                break;
+            case "PlEb":
+                style = BevelStyle.PillowEmboss;
+                break;
+            case "strokeEmboss":
+                style = BevelStyle.StrokeEmboss;
+                break;
+            default:
+                return null;
+        }
+
+        BevelTechnique technique;
+        switch (d.Get("bvlT") as string)
+        {
+            case "SfBL":
+                technique = BevelTechnique.Smooth;
+                break;
+            case "PrBL":
+                technique = BevelTechnique.ChiselHard;
+                break;
+            case "Slmt":
+                technique = BevelTechnique.ChiselSoft;
+                break;
+            default:
+                return null;
+        }
+
+        // The bevel contour ("use shape") and the texture are not modelled; the effect is drawn without them.
+        if (d.Get("useShape") is true || d.Get("useTexture") is true)
+        {
+            approximated++;
+        }
+
+        return new BevelEmbossEffect
+        {
+            Enabled = d.Get("enab") is true, Style = style, Technique = technique, Depth = depth / 100f, Up = (d.Get("bvlD") as string)?.TrimEnd() is not "Out",
+            Size = size, Soften = soften, Angle = angle, Altitude = altitude,
+            HighlightBlend = hMode, HighlightColor = new Rgba32((byte)Math.Round(hRgb.R * 255), (byte)Math.Round(hRgb.G * 255), (byte)Math.Round(hRgb.B * 255), 255), HighlightOpacity = hOpacity / 100f,
+            ShadowBlend = sMode, ShadowColor = new Rgba32((byte)Math.Round(sRgb.R * 255), (byte)Math.Round(sRgb.G * 255), (byte)Math.Round(sRgb.B * 255), 255), ShadowOpacity = sOpacity / 100f,
+            GlossContour = gloss,
+        };
     }
 
     private static ColorOverlayEffect? ColorOverlay(Descriptor d, ColorConverter colors)
@@ -305,12 +579,23 @@ internal static class EffectsCodec
     }
 
     // Mode, color and opacity, shared by every effect. Grain (random noise) is dropped and counted as an approximation.
-    private static bool Common(Descriptor d, ColorConverter colors, out BlendMode blend, out Rgba32 color, out float opacity, ref int approximated)
+    private static bool Common(Descriptor d, ColorConverter colors, out BlendMode blend, out Rgba32 color, out float opacity, ref int approximated, bool needColor = true)
     {
         blend = BlendMode.Normal;
         color = default;
         opacity = 0;
-        if (MapBlend(d.Get("Md  ")) is not { } mode || d.Get("Clr ") is not Descriptor clr || colors.ToRgb(clr) is not { } rgb || !Number(d, "Opct", 0, 100, 100, out float pct))
+        (float R, float G, float B) rgb = default;
+        if (MapBlend(d.Get("Md  ")) is not { } mode || !Number(d, "Opct", 0, 100, 100, out float pct))
+        {
+            return false;
+        }
+
+        // A gradient or pattern paint has no single color; a stroke still stores one that is not used.
+        if (d.Get("Clr ") is Descriptor clr && colors?.ToRgb(clr) is { } found)
+        {
+            rgb = found;
+        }
+        else if (needColor)
         {
             return false;
         }

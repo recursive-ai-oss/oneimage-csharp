@@ -231,7 +231,7 @@ public class StyleWriteTests
                     if (l.Style != null && info.SourceFx?.Block != null)
                     {
                         edited.Add((l, DescNode.Parse(info.SourceFx.Block.Data.Span.Slice(8), PsdLimits.Default)));
-                        l.Style = new LayerStyle(l.Style.Effects) { ShapeFromMask = l.Style.ShapeFromMask };
+                        l.Style = new LayerStyle(l.Style.Effects) { ShapeFromMask = l.Style.ShapeFromMask, AlignBox = l.Style.AlignBox };
                     }
                 });
                 if (edited.Count == 0)

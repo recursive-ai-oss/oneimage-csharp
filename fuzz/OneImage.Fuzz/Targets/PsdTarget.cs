@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using OneImage;
 using OneImage.Drawing;
@@ -86,9 +88,26 @@ internal static class PsdTarget
         foreach (Layer l in group.Children)
         {
             LayerEffect[] kept = l.Style == null ? [] : [.. l.Style.Effects];
-            if (kept.Length < LayerStyle.MaxEffects - 1)
+            if (kept.Length < LayerStyle.MaxEffects - 4)
             {
-                l.Style = new LayerStyle([.. kept, new StrokeEffect { Size = 2 }]);
+                var extra = new List<LayerEffect> { new StrokeEffect { Size = 2 } };
+                var stops = new EffectGradient([new GradientColorStop(0, 0.5f, new RgbaFloat(1, 0, 0, 1)), new GradientColorStop(1, 0.5f, new RgbaFloat(0, 0, 1, 1))]);
+                if (!kept.Any(static e => e is BevelEmbossEffect))
+                {
+                    extra.Add(new BevelEmbossEffect { Style = BevelStyle.Emboss, Size = 4 });
+                }
+
+                if (!kept.Any(static e => e is GradientOverlayEffect))
+                {
+                    extra.Add(new GradientOverlayEffect { Fill = new EffectGradientFill(stops, EffectGradientStyle.Reflected) });
+                }
+
+                if (!kept.Any(static e => e is PatternOverlayEffect))
+                {
+                    extra.Add(new PatternOverlayEffect { Fill = new EffectPatternFill(new EffectPattern(2, 2, new byte[] { 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 9, 9, 255 })) });
+                }
+
+                l.Style = new LayerStyle([.. kept, .. extra]);
             }
 
             switch (l)

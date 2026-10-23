@@ -7,6 +7,12 @@ internal interface IFxSource
 {
     /// <summary>Writes the shape's alpha (0..1) for <paramref name="region"/> in document coordinates into <paramref name="dest"/>, row by row; zero where the layer has no pixels.</summary>
     void ReadAlpha(ImageRect region, float[] dest);
+
+    /// <summary>The layer's bounds, where a gradient or pattern that is aligned with the layer starts.</summary>
+    ImageRect Box { get; }
+
+    /// <summary>The whole document, where an unaligned gradient or pattern starts.</summary>
+    ImageRect Document { get; }
 }
 
 /// <summary>Which part of an effect an <see cref="FxItem"/> draws: all of it, or one side of a centered stroke.</summary>
@@ -30,11 +36,20 @@ internal enum FxInterior
     Shade,
 }
 
-internal readonly record struct FxItem(LayerEffect Effect, FxPart Part)
+internal readonly record struct FxItem(LayerEffect Effect, FxPart Part, int Sub = 0)
 {
-    public FxInterior Interior => Effect.BelowLayer || (Effect is StrokeEffect { Position: StrokePosition.Center } && Part == FxPart.OutsideHalf)
-        ? FxInterior.None
-        : Effect is ColorOverlayEffect ? FxInterior.Recolor : FxInterior.Shade;
+    // A bevel is drawn as two items, the highlight (Sub 0) and the shadow (Sub 1), each with its own mode, color and opacity.
+    public BlendMode Blend => Effect is BevelEmbossEffect b ? (Sub == 0 ? b.HighlightBlend : b.ShadowBlend) : Effect.Blend;
+
+    public Rgba32 Color => Effect is BevelEmbossEffect b ? (Sub == 0 ? b.HighlightColor : b.ShadowColor) : Effect.Color;
+
+    public float Opacity => Effect is BevelEmbossEffect b ? Effect.Opacity * (Sub == 0 ? b.HighlightOpacity : b.ShadowOpacity) : Effect.Opacity;
+
+    public FxInterior Interior => Effect is BevelEmbossEffect
+        ? (Part == FxPart.OutsideHalf ? FxInterior.None : FxInterior.Shade)
+        : Effect.BelowLayer || (Effect is StrokeEffect { Position: StrokePosition.Center } && Part == FxPart.OutsideHalf)
+            ? FxInterior.None
+            : Effect is ColorOverlayEffect or GradientOverlayEffect or PatternOverlayEffect ? FxInterior.Recolor : FxInterior.Shade;
 
     public bool Below => Interior == FxInterior.None;
 }
@@ -42,8 +57,9 @@ internal readonly record struct FxItem(LayerEffect Effect, FxPart Part)
 /// <summary>What a layer's tile job draws around its pixels: the enabled effects of its style, split by side.</summary>
 internal sealed class FxPlan
 {
-    private FxPlan(FxItem[] below, FxItem[] above, float opacity, float fillOpacity, int reach, bool shapeFromMask)
+    private FxPlan(FxItem[] below, FxItem[] above, float opacity, float fillOpacity, int reach, bool shapeFromMask, ImageRect? alignBox)
     {
+        AlignBox = alignBox;
         ShapeFromMask = shapeFromMask;
         FillOpacity = fillOpacity;
         Below = below;
@@ -66,6 +82,9 @@ internal sealed class FxPlan
 
     public int Reach { get; }
 
+    /// <summary>Where aligned gradients and patterns start, or null for the layer's bounds.</summary>
+    public ImageRect? AlignBox { get; }
+
     /// <summary>True when the shape is the mask alone.</summary>
     public bool ShapeFromMask { get; }
 
@@ -85,7 +104,25 @@ internal sealed class FxPlan
                 continue;
             }
 
-            if (e is StrokeEffect { Position: StrokePosition.Center })
+            if (e is BevelEmbossEffect bevel)
+            {
+                // The part of the slope that lies outside the shape is drawn over the backdrop below the layer's pixels, the part inside on them.
+                bool outside = bevel.Style is not BevelStyle.InnerBevel;
+                bool inside = bevel.Style is not BevelStyle.OuterBevel;
+                for (int sub = 0; sub < 2; sub++)
+                {
+                    if (outside)
+                    {
+                        below.Add(new FxItem(e, FxPart.OutsideHalf, sub));
+                    }
+
+                    if (inside)
+                    {
+                        above.Add(new FxItem(e, FxPart.InsideHalf, sub));
+                    }
+                }
+            }
+            else if (e is StrokeEffect { Position: StrokePosition.Center })
             {
                 // A centered stroke has an outer half under the layer's pixels and an inner half on them.
                 below.Add(new FxItem(e, FxPart.OutsideHalf));
@@ -99,7 +136,7 @@ internal sealed class FxPlan
         }
 
         // Stable: effects of one kind keep their list order.
-        return new FxPlan([.. below.OrderBy(static i => i.Effect.Order)], [.. above.OrderBy(static i => i.Effect.Order)], layerOpacity, fillOpacity, style.Reach, style.ShapeFromMask);
+        return new FxPlan([.. below.OrderBy(static i => i.Effect.Order)], [.. above.OrderBy(static i => i.Effect.Order)], layerOpacity, fillOpacity, style.Reach, style.ShapeFromMask, style.AlignBox);
     }
 }
 
@@ -108,7 +145,7 @@ internal sealed class FxPlan
 /// separable, over a window around the rectangle that is as large as the effect can reach, so a tile's result does not depend on how
 /// the document is cut into tiles.
 /// </summary>
-internal static class EffectRenderer
+internal static partial class EffectRenderer
 {
     // Photoshop's "size" is a blur extent, not a standard deviation. Fitted against the shadows, glows and inner shadows of the sample documents (mean error
     // 0.2 levels on the shadows; 0.38 gave 0.4, 0.46 gave 0.43, 0.5 gave 0.76): the Gaussian that matches it has sigma = 0.41 x size.
@@ -132,9 +169,11 @@ internal static class EffectRenderer
                 return Inner(source, rect, cov, 0, 0, ig.Choke, ig.Size, ig.Range, ig.Contour, ig.Source == GlowSource.Center);
             case StrokeEffect s:
                 return Stroke(s, item.Part, source, rect, cov);
-            case ColorOverlayEffect:
+            case ColorOverlayEffect or GradientOverlayEffect or PatternOverlayEffect:
                 source.ReadAlpha(rect, cov);
                 return true;
+            case BevelEmbossEffect bv:
+                return Bevel(bv, item, source, rect, cov);
             case SatinEffect sa:
                 return Satin(sa, source, rect, cov);
             default:
