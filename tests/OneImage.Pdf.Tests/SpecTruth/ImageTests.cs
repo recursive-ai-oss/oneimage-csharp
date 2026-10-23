@@ -250,7 +250,7 @@ public class ImageTests
     }
 
     // 8.9.5.3: with /Interpolate false (the default) an enlarged image shows crisp sample blocks, no smoothing.
-    [Fact(Skip = "Defect: the renderer smooths enlarged images (bilinear between sample centers) although /Interpolate is false; 8.9.5.3 says interpolation is off by default")]
+    [Fact]
     [Trait("Section", "8.9.5.3")]
     public void NoInterpolationWhenEnlarging()
     {

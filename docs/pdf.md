@@ -54,8 +54,9 @@ A pattern that paints with itself is bounded by the nesting limit. The tests bui
 
 ## Known approximations and limitations
 
-- A transparency group that is non-isolated and needs compositing (opacity below 1, a blend mode or a soft mask) is drawn as isolated; a non-isolated group with none of those is drawn straight onto its parent, which is exact. Knockout groups are drawn as non-knockout. Overprint is ignored.
-- Image edges are anti-aliased rather than snapped to the pixel grid. A picture enlarged to at least 2x on both axes is sampled nearest-neighbour unless it sets `/Interpolate true` (ISO 32000-2 8.9.5.3: interpolation is off by default); smaller enlargements are sampled bilinearly.
+- Transparency groups: a non-isolated group that needs compositing (opacity below 1, a blend mode or a soft mask) is painted on a copy of its backdrop with its own coverage tracked apart, so blend modes inside it see the page and the backdrop is not counted twice (11.4.5, 11.4.8); an opaque backdrop is assumed, a translucent one is approximated. A knockout group (11.4.6) replaces what is under each object instead of accumulating; blend modes of objects inside a knockout group are not applied. A non-isolated group with none of these needs is drawn straight onto its parent, which is exact. Overprint is ignored.
+- **Text and fill-and-stroke knockout need OnePDF.** The initial text knockout (9.3.8, `/TK` true) and the knockout group of `B`, `B*`, `b` and `b*` (11.7.4.4) are not applied: OnePDF's device interface does not report the `/TK` value or that a fill and a stroke came from one operator. Overlapping translucent glyphs of separate Type 3 glyph procedures, and a translucent fill with a translucent stroke over it, therefore accumulate. Glyphs of one run are already one shape. A full fix is a `/TK` flag on the graphics state and a combined fill-and-stroke device call (or a group bracket around `B`).
+- Image edges are anti-aliased rather than snapped to the pixel grid. A picture shown larger than its samples is drawn with square samples unless it sets `/Interpolate true` (8.9.5.3: interpolation is off by default); the references often smooth it anyway. A reduced picture is area-averaged, then sampled bilinearly.
 - Text is unhinted and drawn with exact-area coverage, which looks lighter than PDFium's and heavier than MuPDF's.
 
 ### Known limitations
@@ -85,15 +86,15 @@ Every flagged page gets a row in `tools/pdf-gate/verdicts.csv`: the page, a verd
 
 The unflagged pages stay unflagged only while the rule holds, so the gate is re-run after any renderer change and new flags get verdicts. A separate suite of generated PDFs with analytically known pixels (`tests/OneImage.Pdf.Tests/SpecTruth`) checks the specification directly, without any reference renderer.
 
-### Result: 33 of 307 pages flagged
+### Result: 34 of 307 pages flagged
 
 | verdict | pages |
 |---|---|
 | ambiguous | 24 |
 | ours-wrong | 9 |
-| ours-correct | 0 |
+| ours-correct | 1 |
 
-All 33 have a verdict. By cause:
+All 34 have a verdict. By cause:
 
 - **ambiguous, 10.7 scan conversion (edge anti-aliasing only), 10 pages:** cjk-03, cjk-05, math-02, math-04, math-08, multi-column-01, multi-column-02, old-08, report-08, table-02. No renderer is singled out: each differs from the others at glyph edges, PDFium furthest.
 - **ambiguous, 10.7 plus 9.6.2.2 and 9.8 (edge anti-aliasing plus non-embedded fonts whose substitutes differ), 7 pages:** cjk-01, cjk-06, rotated-08, rtl-04, rtl-05, table-09, table-05 (PDFium draws lighter, about 83% of our ink).
@@ -102,6 +103,7 @@ All 33 have a verdict. By cause:
 - **ambiguous, 8.9.5.3 (reduction filter of a bilevel scan), 1 page:** 378647; PDFium and MuPDF agree exactly, ours matches pdf.js.
 - **ambiguous, 12.5.5 (markup annotations without appearance streams), 2 pages:** raw-appearance-markup and raw-appearance-markup-needap; PDFium omits the shapes.
 - **ambiguous, 7.5.6 (damaged file), 1 page:** raw-broken-truncated-stream; all four renderers refuse it.
+- **ours-correct, 8.9.5.3 (no interpolation by default), 1 page:** slides-07-zen14027747. A 1536 x 864 noise texture with `/Interpolate false` is shown about 1.3 times enlarged; we draw square samples as the specification asks, and PDFium, MuPDF and pdf.js all smooth it.
 - **ours-wrong, 7.4.9 (JPEG 2000 images not drawn), 8 pages:** 966677 and the seven veraPDF `6-2-8-3-*` pages. The references agree with each other. Listed under the known limitations.
 - **ours-wrong, 9.6.4 (embedded TrueType outlines with missing strokes), 1 page:** cjk-04-zen2631893. Listed under the known limitations.
 
@@ -116,9 +118,9 @@ By source (flagged / pages; the last column is the strict count, information bel
 | generated-tex | 1 | 0 | 1 |
 | govdocs | 30 | 2 | 14 |
 | pdf20examples | 7 | 0 | 7 |
-| realworld | 92 | 21 | 34 |
+| realworld | 92 | 22 | 33 |
 | verapdf | 110 | 7 | 100 |
-| all | 307 | 33 | 217 |
+| all | 307 | 34 | 216 |
 
 ### SSIM tables (information only)
 
@@ -133,9 +135,9 @@ The strict rule (SSIM at least 0.98 to at least two of the other three renderers
 | generated-tex | 1 | 1 | 1 | 1 | 1 |
 | govdocs | 30 | 14 | 6 | 12 | 13 |
 | pdf20examples | 7 | 7 | 6 | 7 | 6 |
-| realworld | 92 | 34 | 12 | 39 | 32 |
+| realworld | 92 | 33 | 12 | 38 | 31 |
 | verapdf | 110 | 100 | 107 | 107 | 107 |
-| all | 307 | 217 | 190 | 216 | 219 |
+| all | 307 | 216 | 190 | 215 | 218 |
 
 By content class (`classify.py`), mean / min SSIM per pair of renderers:
 
@@ -143,11 +145,11 @@ By content class (`classify.py`), mean / min SSIM per pair of renderers:
 |---|---|---|---|---|---|---|---|---|
 | dense text | 103 | 22 | 0.945 / 0.783 | 0.968 / 0.856 | 0.977 / 0.891 | 0.948 / 0.788 | 0.938 / 0.786 | 0.970 / 0.843 |
 | forms | 21 | 0 | 0.958 / 0.868 | 0.981 / 0.935 | 0.981 / 0.885 | 0.958 / 0.857 | 0.951 / 0.860 | 0.976 / 0.885 |
-| images | 13 | 1 | 0.934 / 0.820 | 0.975 / 0.896 | 0.982 / 0.961 | 0.955 / 0.893 | 0.934 / 0.802 | 0.971 / 0.883 |
+| images | 13 | 2 | 0.926 / 0.787 | 0.965 / 0.877 | 0.975 / 0.895 | 0.955 / 0.893 | 0.934 / 0.802 | 0.971 / 0.883 |
 | sparse | 153 | 8 | 0.993 / 0.901 | 0.994 / 0.901 | 0.994 / 0.902 | 0.998 / 0.927 | 0.997 / 0.939 | 0.998 / 0.952 |
-| transparency | 16 | 2 | 0.977 / 0.946 | 0.967 / 0.865 | 0.909 / 0.349 | 0.954 / 0.812 | 0.900 / 0.350 | 0.901 / 0.313 |
+| transparency | 16 | 2 | 0.976 / 0.946 | 0.967 / 0.865 | 0.909 / 0.349 | 0.954 / 0.812 | 0.900 / 0.350 | 0.901 / 0.313 |
 | vector | 1 | 0 | 0.996 / 0.996 | 0.999 / 0.999 | 0.998 / 0.998 | 0.997 / 0.997 | 0.996 / 0.996 | 0.998 / 0.998 |
-| all | 307 | 33 | 0.971 / 0.783 | 0.982 / 0.856 | 0.982 / 0.349 | 0.974 / 0.788 | 0.966 / 0.350 | 0.981 / 0.313 |
+| all | 307 | 34 | 0.971 / 0.783 | 0.981 / 0.856 | 0.982 / 0.349 | 0.974 / 0.788 | 0.966 / 0.350 | 0.981 / 0.313 |
 
 On 67 pages no two references agree at 0.98, so a copy of any one reference would fail the strict rule there. The vector row has a single page and says little.
 

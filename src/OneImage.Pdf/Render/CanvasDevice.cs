@@ -125,7 +125,86 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
         }
 
         DrawingPath? user = PathConvert.ToPath(path, PdfMatrix.Identity, clamp: false);
-        return user is null ? null : StrokeUserPath(user, state, m, scale);
+        DrawingPath? outline = user is null ? null : StrokeUserPath(user, state, m, scale);
+        if (state.LineCap != 1)
+        {
+            return outline;
+        }
+
+        // 8.5.3.2: a subpath that never leaves its first point, stroked with round caps, paints a disc of the line width. The
+        // stroker has no direction to cap, so the discs are added here, as ellipses in user space (the CTM may be skewed).
+        DrawingPath? discs = ZeroLengthDiscs(path, state, m, scale);
+        if (discs is null)
+        {
+            return outline;
+        }
+
+        return outline is null ? discs : DrawingPath.Combine(outline, discs);
+    }
+
+    private static DrawingPath? ZeroLengthDiscs(in PdfPath path, in PdfGraphicsState state, in PdfMatrix m, double scale)
+    {
+        double width = Math.Max(state.LineWidth, 1.0 / scale);
+        if (!double.IsFinite(width) || width * scale > 1e7)
+        {
+            return null;
+        }
+
+        ReadOnlySpan<byte> verbs = path.VerbBytes.Span;
+        ReadOnlySpan<double> pts = path.Points.Span;
+        PathBuilder? b = null;
+        int p = 0;
+        double sx = 0, sy = 0;
+        bool inSub = false, moved = false, drawn = false;
+        void Flush()
+        {
+            if (inSub && drawn && !moved)
+            {
+                b ??= new PathBuilder();
+                b.AddPath(DrawingPath.Circle((float)sx, (float)sy, (float)(width / 2)));
+            }
+        }
+
+        for (int i = 0; i < verbs.Length; i++)
+        {
+            switch ((PdfPathVerb)verbs[i])
+            {
+                case PdfPathVerb.Move:
+                    Flush();
+                    if (p + 2 > pts.Length) { return Finish(b, m); }
+                    sx = pts[p]; sy = pts[p + 1]; p += 2;
+                    inSub = true; moved = false; drawn = false;
+                    break;
+                case PdfPathVerb.Line:
+                    if (p + 2 > pts.Length) { return Finish(b, m); }
+                    moved |= pts[p] != sx || pts[p + 1] != sy; drawn = true; p += 2;
+                    break;
+                case PdfPathVerb.Curve:
+                    if (p + 6 > pts.Length) { return Finish(b, m); }
+                    for (int k = 0; k < 6; k += 2) { moved |= pts[p + k] != sx || pts[p + k + 1] != sy; }
+                    drawn = true; p += 6;
+                    break;
+                case PdfPathVerb.Close:
+                    drawn = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        Flush();
+        return Finish(b, m);
+
+        static DrawingPath? Finish(PathBuilder? builder, in PdfMatrix map)
+        {
+            if (builder is null)
+            {
+                return null;
+            }
+
+            DrawingPath dev = builder.Build().Transform(PathConvert.ToMatrix(map));
+            return dev.IsEmpty ? null : dev;
+        }
     }
 
     private static DrawingPath? StrokeUserPath(DrawingPath user, in PdfGraphicsState state, in PdfMatrix m, double scale)
@@ -212,9 +291,17 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
         Canvas? layer = BeginMasked(state);
         Canvas canvas = layer ?? _target;
         BlendMode blend = layer is null ? ParseBlend(state.BlendMode) : BlendMode.Normal;
+        // 11.4.6: in a knockout group each object is composited against the group's initial backdrop, not against the objects
+        // before it, so inside the shape it replaces them (Src), weighted by coverage at the edges. Blend modes inside a knockout
+        // group are not applied (they would need the initial backdrop of a non-isolated group).
+        bool knock = layer is null && InKnockoutGroup;
         try
         {
-            canvas.Fill(brush, shape, true, rule, (float)Math.Min(alpha, 1), blend, AlphaComposition.SrcOver, false, null, _clip.Path, _clip.Rule);
+            canvas.Fill(brush, shape, true, rule, (float)Math.Min(alpha, 1), knock ? BlendMode.Normal : blend, knock ? AlphaComposition.Src : AlphaComposition.SrcOver, false, null, _clip.Path, _clip.Rule);
+            if (layer is null)
+            {
+                ShapeShadow?.Fill(brush, shape, true, rule, (float)Math.Min(alpha, 1), BlendMode.Normal, AlphaComposition.SrcOver, false, null, _clip.Path, _clip.Rule);
+            }
         }
         catch
         {

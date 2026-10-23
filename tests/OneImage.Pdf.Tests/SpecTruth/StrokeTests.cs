@@ -79,7 +79,7 @@ public class StrokeTests
         Assert.Equal(0, BlackArea(Pix(pdf), 20, 0, 0, 20, 20), 6);
     }
 
-    [Fact(Skip = "Defect: a zero-length subpath stroked with round caps paints nothing; 8.5.3.2 requires a filled circle at the point")]
+    [Fact]
     [Trait("Section", "8.5.3.2")]
     public void ZeroLengthSubpathWithRoundCapIsADisc()
     {

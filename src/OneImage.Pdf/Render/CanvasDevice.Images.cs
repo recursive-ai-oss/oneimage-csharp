@@ -39,9 +39,9 @@ internal sealed partial class CanvasDevice
             return;
         }
 
-        // A picture enlarged to at least twice its size keeps its pixels square unless it asks for interpolation (/Interpolate true): the
-        // reference viewers do, and smoothing would blur a pixel-art picture or a barcode. A smaller enlargement is sampled bilinearly.
-        bool magnified = devW >= 2 * raster.Width && devH >= 2 * raster.Height && !data.Interpolate;
+        // 8.9.5.3: interpolation is off by default, so a picture shown larger than its samples keeps square pixels unless it sets
+        // /Interpolate true. A reduced picture was already area-averaged to the device size and is sampled bilinearly.
+        bool magnified = (devW > raster.Width || devH > raster.Height) && !data.Interpolate;
 
         // Picture pixel (column, row) to the unit square: x = column / width, and row 0 is the top, at y = 1.
         var toUnit = new PdfMatrix(1.0 / raster.Width, 0, 0, -1.0 / raster.Height, 0, 1);

@@ -304,7 +304,7 @@ public class GroupTests
     }
 
     // Group opacity 0.5 over a non-isolated group: (1-a) Cb + a B(Cb, Cs), because the group result still contains the backdrop's influence.
-    [Fact(Skip = "Known gap: a non-isolated group that needs compositing (here group opacity) is drawn as isolated, so the inner Multiply loses the backdrop (docs/pdf.md, Known approximations)")]
+    [Fact]
     [Trait("Section", "11.6.6")]
     public void NonIsolatedGroupWithGroupOpacity()
     {
@@ -332,7 +332,7 @@ public class GroupTests
     }
 
     // Knockout (11.4.6): each object composites against the group's initial backdrop, so the later one replaces the earlier in the overlap.
-    [Theory(Skip = "Known gap: knockout groups are drawn as non-knockout (docs/pdf.md, Known approximations)")]
+    [Theory]
     [InlineData("/I false /K true")]
     [InlineData("/I true /K true")]
     [Trait("Section", "11.4.6")]

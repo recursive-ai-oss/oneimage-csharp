@@ -33,6 +33,11 @@ internal sealed partial class CanvasDevice
         public ClipState SavedClip { get; init; } = ClipState.None;
 
         public int SavedClipCount { get; init; }
+
+        public bool Knockout { get; init; }
+
+        /// <summary>For a non-isolated group painted on a copy of its backdrop: what the group's own objects cover (their union alpha).</summary>
+        public Canvas? Shape { get; set; }
     }
 
     private void CheckNesting()
@@ -56,9 +61,38 @@ internal sealed partial class CanvasDevice
 
         CheckNesting();
         var layer = new Canvas(_w, _h, PixelFormat.Rgba8);
-        _frames.Add(new Frame(FrameKind.Group, layer, _target, state.FillAlpha, blend, maskKnown ? state.SoftMaskId : 0));
+        Canvas? shape = null;
+        if (!group.Isolated && !group.Knockout)
+        {
+            // 11.4.5: a non-isolated group starts from its backdrop, so blend modes inside it see the page. The group's own coverage is
+            // tracked apart, and at the end only that part of the result is composited, so the backdrop is not counted twice (11.4.8).
+            // An opaque backdrop is assumed; a translucent one is approximated.
+            CopyBackdrop(layer, _target);
+            shape = new Canvas(_w, _h, PixelFormat.Rgba8);
+        }
+
+        _frames.Add(new Frame(FrameKind.Group, layer, _target, state.FillAlpha, blend, maskKnown ? state.SoftMaskId : 0) { Knockout = group.Knockout, Shape = shape });
         _target = layer;
     }
+
+    private void CopyBackdrop(Canvas layer, Canvas source)
+    {
+        var brush = new ImageBrush(source.View(), null, 0, 0, null, tile: false, pooled: true);
+        try
+        {
+            layer.Fill(brush, DrawingPath.Rectangle(0, 0, _w, _h), antialias: false, opacity: 1f, blend: BlendMode.Normal, composition: AlphaComposition.Src);
+        }
+        finally
+        {
+            brush.Release();
+        }
+    }
+
+    /// <summary>The coverage canvas of the non-isolated group being painted directly into the current target, if any.</summary>
+    private Canvas? ShapeShadow => _frames.Count > 0 && _frames[^1] is { Kind: FrameKind.Group, Shape: { } s } f && ReferenceEquals(f.Layer, _target) ? s : null;
+
+    /// <summary>True while painting directly into the layer of a knockout group, where each object replaces what is under it.</summary>
+    private bool InKnockoutGroup => _frames.Count > 0 && _frames[^1] is { Kind: FrameKind.Group, Knockout: true } f && ReferenceEquals(f.Layer, _target);
 
     public void EndGroup()
     {
@@ -78,16 +112,21 @@ internal sealed partial class CanvasDevice
         _target = f.Parent;
         Canvas layer = f.Layer!;
         f.Layer = null;
-        CompositeLayer(layer, f.Opacity, f.Blend, f.MaskId);
+        CompositeLayer(layer, f.Opacity, f.Blend, f.MaskId, f.Shape);
     }
 
     /// <summary>Composites a finished layer onto the current target with an opacity, blend mode and (known) soft mask, and releases it.</summary>
-    private void CompositeLayer(Canvas layer, double opacity, BlendMode blend, int maskId)
+    private void CompositeLayer(Canvas layer, double opacity, BlendMode blend, int maskId, Canvas? shape = null)
     {
         ImageBrush? brush = null;
         try
         {
             Image content = layer.View();
+            if (shape is not null)
+            {
+                content = content.ApplyMask(shape.View(), MaskChannel.Alpha);
+            }
+
             if (maskId != 0 && _masks.TryGetValue(maskId, out Canvas? mask))
             {
                 content = content.ApplyMask(mask.View(), MaskChannel.Alpha);
@@ -95,10 +134,12 @@ internal sealed partial class CanvasDevice
 
             brush = new ImageBrush(content, null, 0, 0, null, tile: false, pooled: true);
             _target.Fill(brush, DrawingPath.Rectangle(0, 0, _w, _h), antialias: false, opacity: (float)Math.Clamp(opacity, 0, 1), blend: blend, composition: AlphaComposition.SrcOver);
+            ShapeShadow?.Fill(brush, DrawingPath.Rectangle(0, 0, _w, _h), antialias: false, opacity: (float)Math.Clamp(opacity, 0, 1), blend: BlendMode.Normal, composition: AlphaComposition.SrcOver);
         }
         finally
         {
             brush?.Release();
+            shape?.Dispose();
             layer.Dispose();
         }
     }
