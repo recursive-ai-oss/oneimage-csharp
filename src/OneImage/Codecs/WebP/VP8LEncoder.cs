@@ -39,6 +39,7 @@ internal sealed class VP8LEncodeOptions
 /// <summary>Encoder for the WebP lossless bitstream (RFC 9649 section 3).</summary>
 internal static class VP8LEncoder
 {
+
     private static readonly float[] Log2Table = BuildLogTable();
 
     private static float[] BuildLogTable()
@@ -59,7 +60,7 @@ internal static class VP8LEncoder
     public static byte[] Encode(ReadOnlySpan<uint> argb, int width, int height, bool hasAlpha, VP8LEncodeOptions options, CancellationToken token) =>
         EncodeArray(argb.ToArray(), width, height, hasAlpha, options, token);
 
-    /// <summary>Encodes pixels the caller hands over: the encoder only reads the array.</summary>
+    /// <summary>Encodes pixels the caller hands over. The encoder transforms them in place to avoid whole-frame copies, so the array's contents are undefined afterwards.</summary>
     public static byte[] EncodeArray(uint[] pixels, int width, int height, bool hasAlpha, VP8LEncodeOptions options, CancellationToken token)
     {
         var enc = new Session(width, height, options, token);
@@ -79,11 +80,39 @@ internal static class VP8LEncoder
         return enc.EncodeBest(pixels, hasAlpha: false, header: false);
     }
 
-    private struct Tok
+    // A copy of Len pixels from Dist pixels back, starting at pixel Pos.
+    private struct Match
     {
-        public uint Value;
+        public int Pos;
+        public int Len;
         public int Dist;
-        public byte Kind; // 0 literal (Value = argb), 1 color cache index, 2 copy (Value = length, Dist = pixel distance)
+    }
+
+    private sealed class MatchList
+    {
+        public Match[] Items = [];
+        public int Count;
+
+        public void Add(Match m)
+        {
+            if (Count == Items.Length)
+            {
+                Array.Resize(ref Items, Math.Max(256, Items.Length * 2));
+            }
+
+            Items[Count++] = m;
+        }
+
+        public void AddRange(MatchList other)
+        {
+            if (Count + other.Count > Items.Length)
+            {
+                Array.Resize(ref Items, Count + other.Count);
+            }
+
+            Array.Copy(other.Items, 0, Items, Count, other.Count);
+            Count += other.Count;
+        }
     }
 
     private sealed class Session
@@ -114,12 +143,14 @@ internal static class VP8LEncoder
                 }
             }
 
+            // The plans transform the pixels in place; every plan but the last one works on a copy.
             if (palette != null)
             {
-                Consider(EncodePlan(pixels, hasAlpha, header, palette, false, false, false));
-                if (_o.Effort >= 5 && palette.Length > 16 && _o.Predictor != false)
+                bool second = _o.Effort >= 5 && palette.Length > 16 && _o.Predictor != false;
+                Consider(EncodePlan(pixels, hasAlpha, header, palette, false, false, false, consume: !second));
+                if (second)
                 {
-                    Consider(EncodePlan(pixels, hasAlpha, header, palette, false, true, false));
+                    Consider(EncodePlan(pixels, hasAlpha, header, palette, false, true, false, consume: true));
                 }
             }
             else
@@ -128,18 +159,19 @@ internal static class VP8LEncoder
                 bool cc = _o.CrossColor ?? _o.Effort > 0;
                 if (_o.SubtractGreen != null)
                 {
-                    Consider(EncodePlan(pixels, hasAlpha, header, null, _o.SubtractGreen.Value, pred, cc));
+                    Consider(EncodePlan(pixels, hasAlpha, header, null, _o.SubtractGreen.Value, pred, cc, consume: true));
                 }
                 else if (_o.Effort >= 5)
                 {
-                    Consider(EncodePlan(pixels, hasAlpha, header, null, true, pred, cc));
-                    Consider(EncodePlan(pixels, hasAlpha, header, null, false, pred, cc));
+                    Consider(EncodePlan(pixels, hasAlpha, header, null, true, pred, cc, consume: false));
+                    Consider(EncodePlan(pixels, hasAlpha, header, null, false, pred, cc, consume: true));
                 }
                 else
                 {
                     // Subtracting green helps most photos but hurts some synthetic or already decorrelated images:
                     // decide on a centered sample.
-                    Consider(EncodePlan(pixels, hasAlpha, header, null, _o.Effort < 3 || PreferSubtractGreen(pixels, pred, cc), pred, cc));
+                    bool green = _o.Effort < 3 || PreferSubtractGreen(pixels, pred, cc);
+                    Consider(EncodePlan(pixels, hasAlpha, header, null, green, pred, cc, consume: true));
                 }
             }
 
@@ -169,13 +201,13 @@ internal static class VP8LEncoder
             {
                 Parallel.Invoke(
                     new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = _token },
-                    () => withGreen = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, true, pred, cc).Length,
-                    () => without = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, false, pred, cc).Length);
+                    () => withGreen = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, true, pred, cc, consume: false).Length,
+                    () => without = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, false, pred, cc, consume: false).Length);
             }
             else
             {
-                withGreen = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, true, pred, cc).Length;
-                without = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, false, pred, cc).Length;
+                withGreen = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, true, pred, cc, consume: false).Length;
+                without = new Session(sw, sh, _o, _token).EncodePlan(sample, false, false, null, false, pred, cc, consume: true).Length;
             }
 
             return withGreen <= without;
@@ -207,9 +239,10 @@ internal static class VP8LEncoder
             return pal;
         }
 
-        private byte[] EncodePlan(uint[] source, bool hasAlpha, bool header, uint[]? palette, bool subtractGreen, bool predictor, bool crossColor)
+        // With consume the source array may be overwritten; without it the pixels are copied before any in-place step.
+        private byte[] EncodePlan(uint[] source, bool hasAlpha, bool header, uint[]? palette, bool subtractGreen, bool predictor, bool crossColor, bool consume)
         {
-            _bw = new VP8LBitWriter((_w * _h / 4) + 1024);
+            _bw = new VP8LBitWriter();
             if (header)
             {
                 _bw.Put(0x2f, 8);
@@ -225,26 +258,35 @@ internal static class VP8LEncoder
             {
                 cur = ApplyPalette(source, palette, out cw);
             }
-            else if (subtractGreen)
+            else
             {
-                cur = new uint[source.Length];
-                for (int i = 0; i < cur.Length; i++)
+                if (!consume && (subtractGreen || predictor || crossColor))
                 {
-                    uint p = source[i];
-                    uint g = (p >> 8) & 0xff;
-                    cur[i] = (p & 0xff00ff00) | (((p & 0xff0000) - (g << 16)) & 0xff0000) | (((p & 0xff) - g) & 0xff);
+                    cur = (uint[])source.Clone();
                 }
 
-                _bw.Put(1, 1);
-                _bw.Put(2, 2);
+                if (subtractGreen)
+                {
+                    for (int i = 0; i < cur.Length; i++)
+                    {
+                        uint p = cur[i];
+                        uint g = (p >> 8) & 0xff;
+                        cur[i] = (p & 0xff00ff00) | (((p & 0xff0000) - (g << 16)) & 0xff0000) | (((p & 0xff) - g) & 0xff);
+                    }
+
+                    _bw.Put(1, 1);
+                    _bw.Put(2, 2);
+                }
             }
+
+            // The palette's index image is a fresh array; the others work on the (owned) pixels in place.
             if (predictor)
             {
-                cur = ApplyPredictor(cur, cw);
+                ApplyPredictor(cur, cw);
             }
             if (crossColor && palette == null)
             {
-                cur = ApplyCrossColor(cur, cw);
+                ApplyCrossColor(cur, cw);
             }
             _bw.Put(0, 1); // no more transforms
             WriteImage(cur, cw, _h, isMain: true);
@@ -335,22 +377,40 @@ internal static class VP8LEncoder
 
         // ---- predictor transform ----
 
-        private uint[] ApplyPredictor(uint[] src, int w)
+        // Replaces the pixels by their prediction residuals, in place. A tile row reads its neighbors' original values from a
+        // private copy of its rows plus the row above, taken before anything of it is overwritten.
+        private void ApplyPredictor(uint[] px, int w)
         {
             int bits = TransformBitsFor(w, _h);
             int tw = (w + (1 << bits) - 1) >> bits;
             int th = (_h + (1 << bits) - 1) >> bits;
             uint[] modesImg = new uint[tw * th];
-            uint[] res = new uint[src.Length];
-            void Row(int ty, int[] hist)
+            uint[] above = new uint[(th - 1) * w];
+            for (int ty = 1; ty < th; ty++)
+            {
+                Array.Copy(px, ((ty << bits) - 1) * w, above, (ty - 1) * w, w);
+            }
+
+            int scratchRows = Math.Min(_h, (1 << bits) + 1);
+            void Row(int ty, PredictorScratch sc)
             {
                 _token.ThrowIfCancellationRequested();
+                int y0 = ty << bits;
+                int y1 = Math.Min(_h, y0 + (1 << bits));
+                int off = ty > 0 ? 1 : 0;
+                uint[] a = sc.Rows ??= new uint[scratchRows * w];
+                int[] hist = sc.Hist;
+                if (off != 0)
+                {
+                    Array.Copy(above, (ty - 1) * w, a, 0, w);
+                }
+
+                Array.Copy(px, y0 * w, a, off * w, (y1 - y0) * w);
+                int rows = y1 - y0 + off;
                 for (int tx = 0; tx < tw; tx++)
                 {
                     int x0 = tx << bits;
-                    int y0 = ty << bits;
                     int x1 = Math.Min(w, x0 + (1 << bits));
-                    int y1 = Math.Min(_h, y0 + (1 << bits));
                     int bestMode = 1;
                     if (_o.Effort > 0)
                     {
@@ -358,7 +418,7 @@ internal static class VP8LEncoder
                         for (int mode = 0; mode < 14; mode++)
                         {
                             // The histogram is all zero here: it starts that way and the scan below zeroes what it reads.
-                            Kernels.WebPPredictKernels.ScoreTile(src, w, _h, x0, y0, x1, y1, mode, hist, _o.Effort >= 5 ? 1 : 2);
+                            Kernels.WebPPredictKernels.ScoreTile(a, w, rows, x0, off, x1, rows, mode, hist, _o.Effort >= 5 ? 1 : 2);
                             float score = 0;
                             for (int i = 0; i < hist.Length; i++)
                             {
@@ -386,27 +446,34 @@ internal static class VP8LEncoder
                     {
                         for (int x = x0; x < x1; x++)
                         {
-                            res[(y * w) + x] = Residual(src, w, x, y, bestMode);
+                            px[(y * w) + x] = Residual(a, w, x, y - y0 + off, y == 0, bestMode);
                         }
                     }
                 }
             }
 
-            // Tiles read only the source and write only their own residuals and mode, so rows can run in any order.
-            ForRows(th, () => new int[4 * 256], Row);
+            // Tile rows read only their private copies and write only their own pixels, so rows can run in any order.
+            ForRows(th, () => new PredictorScratch(), Row);
 
             _bw.Put(1, 1);
             _bw.Put(0, 2);
             _bw.Put((uint)(bits - 2), 3);
             WriteImage(modesImg, tw, th, isMain: false);
-            return res;
         }
 
-        private static uint Residual(uint[] a, int w, int x, int y, int mode)
+        private sealed class PredictorScratch
+        {
+            public int[] Hist { get; } = new int[4 * 256];
+
+            public uint[]? Rows { get; set; }
+        }
+
+        // a holds the rows around the pixel; y is its row in a and firstRow whether that row is the top row of the image.
+        private static uint Residual(uint[] a, int w, int x, int y, bool firstRow, int mode)
         {
             int i = (y * w) + x;
             uint pred;
-            if (y == 0)
+            if (firstRow)
             {
                 pred = x == 0 ? 0xff000000 : a[i - 1];
             }
@@ -472,13 +539,13 @@ internal static class VP8LEncoder
 
         // ---- cross-color transform ----
 
-        private uint[] ApplyCrossColor(uint[] src, int w)
+        // In place: a tile reads only its own pixels, all of them before it overwrites any.
+        private void ApplyCrossColor(uint[] src, int w)
         {
             int bits = TransformBitsFor(w, _h);
             int tw = (w + (1 << bits) - 1) >> bits;
             int th = (_h + (1 << bits) - 1) >> bits;
             uint[] elems = new uint[tw * th];
-            uint[] res = new uint[src.Length];
             void Row(int ty, int[] hist)
             {
                 _token.ThrowIfCancellationRequested();
@@ -509,7 +576,7 @@ internal static class VP8LEncoder
                             int blue = (int)(p & 0xff);
                             int nr = (red - ((g2r * green) >> 5)) & 0xff;
                             int nb = (blue - ((g2b * green) >> 5) - ((r2b * (sbyte)red) >> 5)) & 0xff;
-                            res[(y * w) + x] = (p & 0xff00ff00) | ((uint)nr << 16) | (uint)nb;
+                            src[(y * w) + x] = (p & 0xff00ff00) | ((uint)nr << 16) | (uint)nb;
                         }
                     }
                 }
@@ -521,7 +588,6 @@ internal static class VP8LEncoder
             _bw.Put(1, 2);
             _bw.Put((uint)(bits - 2), 3);
             WriteImage(elems, tw, th, isMain: false);
-            return res;
         }
 
         // Coarse-to-fine search for one multiplier (units of 1/32): kind 0 = green-to-red, 1 = green-to-blue, 2 = red-to-blue.
@@ -599,18 +665,13 @@ internal static class VP8LEncoder
 
         private void WriteImage(uint[] px, int w, int h, bool isMain)
         {
-            Tok[] stream = Lz77(px, w, h, out int count);
-            try
-            {
-                WriteTokenImage(px, w, h, isMain, stream, count);
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<Tok>.Shared.Return(stream);
-            }
+            MatchList matches = Lz77(px, w);
+            WriteTokenImage(px, w, isMain, matches);
         }
 
-        private void WriteTokenImage(uint[] px, int w, int h, bool isMain, Tok[] stream, int count)
+        // The token stream is never stored: it is the pixels with the matches cut out of them (see Walk). That keeps the
+        // coder's state proportional to the number of matches rather than to the number of pixels.
+        private void WriteTokenImage(uint[] px, int w, bool isMain, MatchList matches)
         {
             int cacheBits = 0;
             if (isMain && _o.CacheBits != 0)
@@ -621,18 +682,18 @@ internal static class VP8LEncoder
                 }
                 else if (_o.Effort > 0)
                 {
-                    float bestCost = EstimateCost(stream, count, w);
+                    float bestCost = EstimateCacheCost(matches, px, 0, w);
                     ReadOnlySpan<int> candidates = [4, 7, 10];
                     float[] costs = new float[candidates.Length];
                     if (_o.Degree > 1)
                     {
-                        Parallel.For(0, costs.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(_o.Degree, costs.Length), CancellationToken = _token }, i => costs[i] = EstimateCacheCost(stream, count, px, i == 0 ? 4 : i == 1 ? 7 : 10, w));
+                        Parallel.For(0, costs.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(_o.Degree, costs.Length), CancellationToken = _token }, i => costs[i] = EstimateCacheCost(matches, px, i == 0 ? 4 : i == 1 ? 7 : 10, w));
                     }
                     else
                     {
                         for (int i = 0; i < costs.Length; i++)
                         {
-                            costs[i] = EstimateCacheCost(stream, count, px, candidates[i], w);
+                            costs[i] = EstimateCacheCost(matches, px, candidates[i], w);
                         }
                     }
 
@@ -645,12 +706,8 @@ internal static class VP8LEncoder
                         }
                     }
                 }
-
-                if (cacheBits > 0)
-                {
-                    ApplyCache(stream, count, px, cacheBits);
-                }
             }
+
             if (cacheBits > 0)
             {
                 _bw.Put(1, 1);
@@ -661,207 +718,262 @@ internal static class VP8LEncoder
                 _bw.Put(0, 1);
             }
 
-            int greenSize = 256 + 24 + (cacheBits > 0 ? 1 << cacheBits : 0);
-            int groups = 1;
-            int[]? tileGroup = null;
-            int histoBits = 0;
-            int tilesW = 0;
-            int tilesH = 0;
             if (isMain)
             {
-                if (_o.Cluster && _o.Effort > 0 && (long)w * h >= 1024)
-                {
-                    tileGroup = Cluster(stream, count, w, h, greenSize, out groups, out histoBits, out tilesW, out tilesH);
-                }
+                _bw.Put(0, 1); // a single prefix code group: no entropy image
+            }
 
-                if (groups > 1)
+            var hist = new Histogram(256 + 24 + (cacheBits > 0 ? 1 << cacheBits : 0));
+            var count = new CountSink(hist, w);
+            Walk(px, matches, cacheBits, ref count);
+
+            var codes = new HuffmanCode[5];
+            codes[0] = HuffmanCode.Build(hist.Green, 15);
+            codes[1] = HuffmanCode.Build(hist.Red, 15);
+            codes[2] = HuffmanCode.Build(hist.Blue, 15);
+            codes[3] = HuffmanCode.Build(hist.Alpha, 15);
+            codes[4] = HuffmanCode.Build(hist.Dist, 15);
+            for (int k = 0; k < 5; k++)
+            {
+                codes[k].Store(_bw);
+            }
+
+            if (isMain)
+            {
+                // The size of the token stream follows from the counts and the code lengths.
+                long bits = count.ExtraBits;
+                bits += codes[0].Cost(hist.Green) + codes[1].Cost(hist.Red) + codes[2].Cost(hist.Blue) + codes[3].Cost(hist.Alpha) + codes[4].Cost(hist.Dist);
+                _bw.Reserve(bits);
+            }
+
+            var write = new WriteSink(_bw, codes, w);
+            Walk(px, matches, cacheBits, ref write);
+        }
+
+        private interface ITokenSink
+        {
+            void Literal(uint argb);
+
+            void CacheHit(uint key);
+
+            void Copy(int length, int distance);
+        }
+
+        // Visits the tokens of an image: literals for the pixels outside the matches, color cache hits among them when
+        // cacheBits is set (a pixel is a hit when its slot already holds it; copied pixels enter the cache too, exactly as
+        // the decoder will see them), and the matches.
+        private static void Walk<TSink>(uint[] px, MatchList matches, int cacheBits, ref TSink sink)
+            where TSink : struct, ITokenSink
+        {
+            Match[] items = matches.Items;
+            int count = matches.Count;
+            uint[]? cache = cacheBits > 0 ? new uint[1 << cacheBits] : null;
+            int shift = 32 - cacheBits;
+            int pos = 0;
+            for (int k = 0; k <= count; k++)
+            {
+                int end = k < count ? items[k].Pos : px.Length;
+                if (cache == null)
                 {
-                    _bw.Put(1, 1);
-                    _bw.Put((uint)(histoBits - 2), 3);
-                    uint[] img = new uint[tilesW * tilesH];
-                    for (int i = 0; i < img.Length; i++)
+                    for (; pos < end; pos++)
                     {
-                        img[i] = 0xff000000u | ((uint)tileGroup![i] << 8);
+                        sink.Literal(px[pos]);
                     }
-
-                    WriteImage(img, tilesW, tilesH, isMain: false);
                 }
                 else
                 {
-                    _bw.Put(0, 1);
-                }
-            }
-
-            // Histograms per group.
-            var hists = new Histogram[groups];
-            for (int g = 0; g < groups; g++)
-            {
-                hists[g] = new Histogram(greenSize);
-            }
-
-            if (groups == 1)
-            {
-                AddTokens(hists[0], stream, 0, count, w);
-            }
-            else
-            {
-                ForEachTokenTile(stream, count, w, histoBits, tilesW, (ti, tokIndex) => AddToken(hists[tileGroup![ti]], stream[tokIndex], w));
-            }
-
-            var codes = new HuffmanCode[groups * 5];
-            for (int g = 0; g < groups; g++)
-            {
-                codes[(g * 5) + 0] = HuffmanCode.Build(hists[g].Green, 15);
-                codes[(g * 5) + 1] = HuffmanCode.Build(hists[g].Red, 15);
-                codes[(g * 5) + 2] = HuffmanCode.Build(hists[g].Blue, 15);
-                codes[(g * 5) + 3] = HuffmanCode.Build(hists[g].Alpha, 15);
-                codes[(g * 5) + 4] = HuffmanCode.Build(hists[g].Dist, 15);
-                for (int k = 0; k < 5; k++)
-                {
-                    codes[(g * 5) + k].Store(_bw);
-                }
-            }
-            if (groups == 1)
-            {
-                WriteTokens(stream, 0, count, codes, 0, w);
-            }
-            else
-            {
-                ForEachTokenTile(stream, count, w, histoBits, tilesW, (ti, tokIndex) => WriteTokens(stream, tokIndex, tokIndex + 1, codes, tileGroup![ti] * 5, w));
-            }
-        }
-
-        // Visits every token with the index of the tile its first pixel lies in.
-        private static void ForEachTokenTile(Tok[] stream, int count, int w, int histoBits, int tilesW, Action<int, int> visit)
-        {
-            int x = 0;
-            int y = 0;
-            for (int i = 0; i < count; i++)
-            {
-                visit(((y >> histoBits) * tilesW) + (x >> histoBits), i);
-                int len = stream[i].Kind == 2 ? (int)stream[i].Value : 1;
-                x += len;
-                while (x >= w)
-                {
-                    x -= w;
-                    y++;
-                }
-            }
-        }
-
-        private static void AddToken(Histogram h, Tok t, int w)
-        {
-            switch (t.Kind)
-            {
-                case 0:
-                    h.Green[(t.Value >> 8) & 0xff]++;
-                    h.Red[(t.Value >> 16) & 0xff]++;
-                    h.Blue[t.Value & 0xff]++;
-                    h.Alpha[t.Value >> 24]++;
-                    break;
-                case 1:
-                    h.Green[280 + t.Value]++;
-                    break;
-                default:
-                    PrefixEncode((int)t.Value, out int lc, out _, out _);
-                    h.Green[256 + lc]++;
-                    PrefixEncode(DistanceToCode(w, t.Dist), out int dc, out _, out _);
-                    h.Dist[dc]++;
-                    break;
-            }
-        }
-
-        private static void AddTokens(Histogram h, Tok[] s, int from, int to, int w)
-        {
-            for (int i = from; i < to; i++)
-            {
-                AddToken(h, s[i], w);
-            }
-        }
-
-        private void WriteTokens(Tok[] s, int from, int to, HuffmanCode[] codes, int cbase, int w)
-        {
-            HuffmanCode g = codes[cbase];
-            HuffmanCode r = codes[cbase + 1];
-            HuffmanCode b = codes[cbase + 2];
-            HuffmanCode a = codes[cbase + 3];
-            HuffmanCode d = codes[cbase + 4];
-            for (int i = from; i < to; i++)
-            {
-                Tok t = s[i];
-                switch (t.Kind)
-                {
-                    case 0:
-                        g.WriteSymbol(_bw, (int)((t.Value >> 8) & 0xff));
-                        r.WriteSymbol(_bw, (int)((t.Value >> 16) & 0xff));
-                        b.WriteSymbol(_bw, (int)(t.Value & 0xff));
-                        a.WriteSymbol(_bw, (int)(t.Value >> 24));
-                        break;
-                    case 1:
-                        g.WriteSymbol(_bw, 280 + (int)t.Value);
-                        break;
-                    default:
+                    for (; pos < end; pos++)
+                    {
+                        uint v = px[pos];
+                        uint key = (v * 0x1e35a7bdu) >> shift;
+                        if (cache[key] == v)
                         {
-                            PrefixEncode((int)t.Value, out int lc, out int lb, out int lv);
-                            g.WriteSymbol(_bw, 256 + lc);
-                            if (lb > 0)
-                            {
-                                _bw.Put((uint)lv, lb);
-                            }
-
-                            PrefixEncode(DistanceToCode(w, t.Dist), out int dc, out int db, out int dv);
-                            d.WriteSymbol(_bw, dc);
-                            if (db > 0)
-                            {
-                                _bw.Put((uint)dv, db);
-                            }
-
-                            break;
+                            sink.CacheHit(key);
                         }
+                        else
+                        {
+                            cache[key] = v;
+                            sink.Literal(v);
+                        }
+                    }
+                }
+
+                if (k == count)
+                {
+                    break;
+                }
+
+                Match m = items[k];
+                sink.Copy(m.Len, m.Dist);
+                if (cache != null)
+                {
+                    for (int j = 0; j < m.Len; j++)
+                    {
+                        uint v = px[pos + j];
+                        cache[(v * 0x1e35a7bdu) >> shift] = v;
+                    }
+                }
+
+                pos += m.Len;
+            }
+        }
+
+        private struct CountSink(Histogram h, int w) : ITokenSink
+        {
+            // Extra bits of the copies' length and distance codes.
+            public long ExtraBits;
+
+            public void Literal(uint argb)
+            {
+                h.Green[(argb >> 8) & 0xff]++;
+                h.Red[(argb >> 16) & 0xff]++;
+                h.Blue[argb & 0xff]++;
+                h.Alpha[argb >> 24]++;
+            }
+
+            public void CacheHit(uint key) => h.Green[280 + key]++;
+
+            public void Copy(int length, int distance)
+            {
+                PrefixEncode(length, out int lc, out int lb, out _);
+                h.Green[256 + lc]++;
+                PrefixEncode(DistanceToCode(w, distance), out int dc, out int db, out _);
+                h.Dist[dc]++;
+                ExtraBits += lb + db;
+            }
+        }
+
+        private struct WriteSink(VP8LBitWriter bw, HuffmanCode[] codes, int w) : ITokenSink
+        {
+            public void Literal(uint argb)
+            {
+                codes[0].WriteSymbol(bw, (int)((argb >> 8) & 0xff));
+                codes[1].WriteSymbol(bw, (int)((argb >> 16) & 0xff));
+                codes[2].WriteSymbol(bw, (int)(argb & 0xff));
+                codes[3].WriteSymbol(bw, (int)(argb >> 24));
+            }
+
+            public void CacheHit(uint key) => codes[0].WriteSymbol(bw, 280 + (int)key);
+
+            public void Copy(int length, int distance)
+            {
+                PrefixEncode(length, out int lc, out int lb, out int lv);
+                codes[0].WriteSymbol(bw, 256 + lc);
+                if (lb > 0)
+                {
+                    bw.Put((uint)lv, lb);
+                }
+
+                PrefixEncode(DistanceToCode(w, distance), out int dc, out int db, out int dv);
+                codes[4].WriteSymbol(bw, dc);
+                if (db > 0)
+                {
+                    bw.Put((uint)dv, db);
                 }
             }
+        }
+
+        // Entropy estimate of the token stream as it would look with a color cache of the given size (0: none).
+        private static float EstimateCacheCost(MatchList matches, uint[] px, int bits, int w)
+        {
+            var h = new Histogram(256 + 24 + (bits > 0 ? 1 << bits : 0));
+            var sink = new CountSink(h, w);
+            Walk(px, matches, bits, ref sink);
+            return h.EntropyBits();
         }
 
         // ---- LZ77 ----
 
-        // Images are parsed in independent bands of this many pixels: a match never crosses a band end, so the tokens do not
+        // Images are parsed in independent bands of this many pixels: a match never crosses a band end, so the matches do not
         // depend on how many threads parse the bands. The cost is at most one shortened match per band.
         private const int BandPixels = 1 << 18;
 
         // Positions without a match after which the match search gets shallow.
         private const int DrySpan = 4096;
 
-        private Tok[] Lz77(uint[] px, int w, int h, out int count)
+        // How far back a match may start.
+        private const int Window = (1 << 20) - 120;
+
+        // The hash chains (for each pixel, the previous pixel with the same hash) are built a few bands at a time and only
+        // the last Window entries are kept, so their memory does not grow with the image. Entries are the same as if one
+        // chain covered the whole image, so the matches do not change.
+        private MatchList Lz77(uint[] px, int w)
         {
             int n = px.Length;
-            Tok[] toks = System.Buffers.ArrayPool<Tok>.Shared.Rent(n);
             if (!_o.Lz77 || n < 4)
             {
-                int k = 0;
-                foreach (uint p in px)
-                {
-                    toks[k++] = new Tok { Kind = 0, Value = p };
-                }
-
-                count = k;
-                return toks;
+                return new MatchList();
             }
 
             const int HashBits = 18;
             int[] head = new int[1 << HashBits];
             Array.Fill(head, -1);
-            int[] chain = System.Buffers.ArrayPool<int>.Shared.Rent(n);
+            int bands = (n + BandPixels - 1) / BandPixels;
+            int degree = Math.Min(_o.Degree, bands);
+            int waveBands = Math.Max(8, 2 * degree);
+            int waveLen = (int)Math.Min(n, (long)waveBands * BandPixels);
+            int[] chain = System.Buffers.ArrayPool<int>.Shared.Rent((int)Math.Min(n, (long)Window + waveLen));
             try
             {
-                for (int i = 0; i < n - 1; i++)
+                var perBand = new MatchList[bands];
+                int chainBase = 0; // chain[i - chainBase] belongs to pixel i
+                for (int ws = 0; ws < n; ws += waveLen)
                 {
-                    uint hv = ((px[i] * 0x1e35a7bdu) ^ (px[i + 1] * 0x9e3779b1u)) >> (32 - HashBits);
-                    chain[i] = head[hv];
-                    head[hv] = i;
+                    int we = Math.Min(n, ws + waveLen);
+                    int newBase = Math.Max(0, ws - Window);
+                    if (newBase != chainBase)
+                    {
+                        Array.Copy(chain, newBase - chainBase, chain, 0, ws - newBase);
+                        chainBase = newBase;
+                    }
+
+                    for (int i = ws; i < Math.Min(we, n - 1); i++)
+                    {
+                        uint hv = ((px[i] * 0x1e35a7bdu) ^ (px[i + 1] * 0x9e3779b1u)) >> (32 - HashBits);
+                        chain[i - chainBase] = head[hv];
+                        head[hv] = i;
+                    }
+
+                    if (we == n)
+                    {
+                        chain[n - 1 - chainBase] = -1;
+                    }
+
+                    int b0 = ws / BandPixels;
+                    int b1 = (we + BandPixels - 1) / BandPixels;
+                    void Band(int band)
+                    {
+                        int start = band * BandPixels;
+                        var list = new MatchList();
+                        ParseBand(px, chain, chainBase, w, start, Math.Min(n, start + BandPixels), list);
+                        perBand[band] = list;
+                    }
+
+                    if (degree <= 1)
+                    {
+                        for (int band = b0; band < b1; band++)
+                        {
+                            Band(band);
+                        }
+                    }
+                    else
+                    {
+                        Parallel.For(b0, b1, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = _token }, Band);
+                    }
                 }
 
-                chain[n - 1] = -1;
-                return ParseBands(px, chain, w, toks, out count);
+                if (bands == 1)
+                {
+                    return perBand[0];
+                }
+
+                var all = new MatchList();
+                foreach (MatchList l in perBand)
+                {
+                    all.AddRange(l);
+                }
+
+                return all;
             }
             finally
             {
@@ -869,50 +981,13 @@ internal static class VP8LEncoder
             }
         }
 
-        private Tok[] ParseBands(uint[] px, int[] chain, int w, Tok[] toks, out int count)
-        {
-            int n = px.Length;
-            int bands = (n + BandPixels - 1) / BandPixels;
-            int[] bandCount = new int[bands];
-            void Band(int band)
-            {
-                int start = band * BandPixels;
-                bandCount[band] = ParseBand(px, chain, w, start, Math.Min(n, start + BandPixels), toks);
-            }
-
-            int degree = Math.Min(_o.Degree, bands);
-            if (degree <= 1)
-            {
-                for (int band = 0; band < bands; band++)
-                {
-                    Band(band);
-                }
-            }
-            else
-            {
-                Parallel.For(0, bands, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = _token }, Band);
-            }
-
-            // Each band wrote its tokens at the start of its own pixel range; close the gaps.
-            int nt = bandCount[0];
-            for (int band = 1; band < bands; band++)
-            {
-                Array.Copy(toks, band * BandPixels, toks, nt, bandCount[band]);
-                nt += bandCount[band];
-            }
-
-            count = nt;
-            return toks;
-        }
-
-        // Greedy (lazy at higher effort) parse of the pixels start..end-1, writing tokens from toks[start] on; returns their number.
-        private int ParseBand(uint[] px, int[] chain, int w, int start, int end, Tok[] toks)
+        // Greedy (lazy at higher effort) parse of the pixels start..end-1; the pixels between matches stay literals.
+        private void ParseBand(uint[] px, int[] chain, int chainBase, int w, int start, int end, MatchList matches)
         {
             const int MaxLen = 4096;
-            int window = (1 << 20) - 120;
+            const int window = Window;
             int maxChain = _o.Effort switch { 0 => 4, 1 => 8, 2 => 16, 3 => 24, 4 => 16, 5 => 96, _ => 256 };
             bool lazy = _o.Effort >= 2;
-            int nt = start;
 
             (int len, int dist) Find(int i)
             {
@@ -945,7 +1020,7 @@ internal static class VP8LEncoder
                     return (bestLen, bestDist);
                 }
 
-                int j = chain[i];
+                int j = chain[i - chainBase];
                 int steps = 0;
                 while (j >= 0 && i - j <= window && steps++ < maxChain)
                 {
@@ -963,7 +1038,7 @@ internal static class VP8LEncoder
                         }
                     }
 
-                    j = chain[j];
+                    j = chain[j - chainBase];
                 }
 
                 return (bestLen, bestDist);
@@ -1000,7 +1075,6 @@ internal static class VP8LEncoder
                         (int len, int dist) m2 = Find(pos + 1);
                         if (m2.len > m.len + 1)
                         {
-                            toks[nt++] = new Tok { Kind = 0, Value = px[pos] };
                             pos++;
                             m = m2;
                             have = true;
@@ -1008,114 +1082,14 @@ internal static class VP8LEncoder
                         }
                     }
 
-                    toks[nt++] = new Tok { Kind = 2, Value = (uint)m.len, Dist = m.dist };
+                    matches.Add(new Match { Pos = pos, Len = m.len, Dist = m.dist });
                     pos += m.len;
                 }
                 else
                 {
-                    toks[nt++] = new Tok { Kind = 0, Value = px[pos] };
                     pos++;
                 }
             }
-
-            return nt - start;
-        }
-
-        // Replaces literals found in a color cache by cache indices, in place.
-        private static void ApplyCache(Tok[] toks, int count, uint[] px, int bits)
-        {
-            uint[] cache = new uint[1 << bits];
-            int shift = 32 - bits;
-            int pos = 0;
-            for (int i = 0; i < count; i++)
-            {
-                ref Tok t = ref toks[i];
-                if (t.Kind == 0)
-                {
-                    uint key = (t.Value * 0x1e35a7bdu) >> shift;
-                    if (cache[key] == t.Value)
-                    {
-                        t = new Tok { Kind = 1, Value = key };
-                    }
-                    else
-                    {
-                        cache[key] = t.Value;
-                    }
-
-                    pos++;
-                }
-                else
-                {
-                    // Copied pixels enter the cache too, exactly as the decoder will see them.
-                    int len = (int)t.Value;
-                    for (int k = 0; k < len; k++)
-                    {
-                        uint v = px[pos + k];
-                        cache[(v * 0x1e35a7bdu) >> shift] = v;
-                    }
-
-                    pos += len;
-                }
-            }
-        }
-
-        // Entropy estimate of the token stream as it would look with a color cache of the given size, without building it.
-        private static float EstimateCacheCost(Tok[] toks, int count, uint[] px, int bits, int w)
-        {
-            var h = new Histogram(256 + 24 + (1 << bits));
-            uint[] cache = new uint[1 << bits];
-            int shift = 32 - bits;
-            int pos = 0;
-            for (int i = 0; i < count; i++)
-            {
-                Tok t = toks[i];
-                if (t.Kind == 0)
-                {
-                    uint key = (t.Value * 0x1e35a7bdu) >> shift;
-                    if (cache[key] == t.Value)
-                    {
-                        h.Green[280 + key]++;
-                    }
-                    else
-                    {
-                        cache[key] = t.Value;
-                        AddToken(h, t, w);
-                    }
-
-                    pos++;
-                }
-                else
-                {
-                    int len = (int)t.Value;
-                    for (int k = 0; k < len; k++)
-                    {
-                        uint v = px[pos + k];
-                        cache[(v * 0x1e35a7bdu) >> shift] = v;
-                    }
-
-                    pos += len;
-                    AddToken(h, t, w);
-                }
-            }
-
-            return h.EntropyBits();
-        }
-
-        private static float EstimateCost(Tok[] stream, int count, int w)
-        {
-            var h = new Histogram(256 + 24);
-            AddTokens(h, stream, 0, count, w);
-            return h.EntropyBits();
-        }
-
-        // ---- histogram clustering ----
-
-        private static int[]? Cluster(Tok[] stream, int count, int w, int h, int greenSize, out int groups, out int histoBits, out int tilesW, out int tilesH)
-        {
-            groups = 1;
-            histoBits = 0;
-            tilesW = tilesH = 0;
-            return null;
         }
 
         private sealed class Histogram

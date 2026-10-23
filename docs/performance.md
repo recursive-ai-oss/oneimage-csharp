@@ -340,16 +340,55 @@ at 24 MP); all rows are quality 75, effort 4:
 | Task | Before | After | SkiaSharp | Magick.NET | NetVips | ImageSharp |
 |---|--:|--:|--:|--:|--:|--:|
 | webp-encode-24mp (lossy) | 303.5 MB (±1.0) | 101.6 MB (±6.5) | 86.3 (±0.5) | 173.6 (±1.0) | 241.0 (±14.5) | 1450 (±1) |
-| webp-encode-lossless-24mp | 1055.8 MB (±2.4) | 850.3 MB (±2.3) | | | | |
+| webp-encode-lossless-24mp | 1055.8 MB (±2.4) | 377.1 MB (±1.0) | 663.4 (±1.2) | 736.5 (±1.8) | | |
 | webp-encode (lossy-2000x1500) | 22.2 MB (±2.9) | 4.6 MB (±0.2) | 0.7 | 1.3 | 107.9 | 98.1 |
 | png-to-webp (photo) | 43.4 MB (±1.5) | 22.6 MB (±4.9) | 38.3 | 26.0 | 203.7 | 87.6 |
 | thumb-webp | 4.7 MB (±0.6) | 4.6 MB (±0.3) | 0.7 | 1.9 | 83.2 | 9.9 |
 
-The lossless encoder's remaining 850 MB is the coder's own state (histograms,
-match tables, the transformed copies of the pixels), not input copies; it is
-untouched by this change. SkiaSharp and Magick.NET encode straight from the
-caller's pixel buffer; we convert to YUV first, which is the 36 MB of planes
-at 24 MP.
+SkiaSharp and Magick.NET encode straight from the caller's pixel buffer; the
+lossy encoder converts to YUV first, which is the 36 MB of planes at 24 MP.
+
+### Lossless encoder state
+
+The lossless encoder used to hold, at 24 MP, the packed pixels plus one
+full-size copy for each transform (subtract green, predictor, cross-color), a
+12-byte token for every pixel, a 4-byte hash-chain entry for every pixel, and
+a bit-writer array that doubled and was then copied. Now:
+
+- the transforms run in place on the packed pixels (the encoder owns them; a
+  first plan at effort 5 and 6 works on a copy). The predictor reads its
+  neighbors' original values from a private copy of its tile row plus the row
+  above, so tile rows still run in any order;
+- there is no token array: the token stream is the pixels with the matches cut
+  out, so state grows with the number of matches. The color cache is simulated
+  as the tokens are visited, once for each cache-size estimate and once for
+  each of the counting and writing passes;
+- hash chains are built a few bands at a time and only the last 2^20 entries
+  are kept (about 13 MB at degree 4, 38 MB at degree 16), with the same entries
+  as one whole-image chain;
+- the size of the main token stream follows from the symbol counts and code
+  lengths, so the output is written into one array of exactly its final size
+  and returned without a copy.
+
+Output bytes are unchanged: 1011 SHA-256 hashes of lossless encodes (photo-like
+RGB and RGBA at 703x499, 256x256, 17x33, 1x1, 3x2 and 1024x700, palette images
+of 2, 3, 12 and 200 colors, a repeating image and a 33x16000 one; effort 0 to
+6, degrees 1/4/16, Exact on and off) plus the animated lossless encodes match
+the previous build on default hardware, `DOTNET_EnableAVX512=0`,
+`DOTNET_EnableAVX2=0` and `DOTNET_EnableHWIntrinsic=0`.
+
+Peak working memory, gate-peak method (median of three processes, spread in
+parentheses, AVX-512 off, on the development host; resident memory does not
+depend on load). The 2000x1500 row is the new `webp-encode-lossless` task:
+
+| Task | Before | After | SkiaSharp | Magick.NET |
+|---|--:|--:|--:|--:|
+| webp-encode-lossless-24mp | 851.7 MB (±0.9) | 377.1 MB (±1.0) | 663.4 (±1.2) | 736.5 (±1.8) |
+| webp-encode-lossless (2000x1500) | 106.7 MB (±5.4) | 46.0 MB (±1.5) | 62.4 (±1.4) | 81.9 (±1.1) |
+
+What is left at 24 MP is the packed pixels (96 MB), the source rows the core
+materializes while packing, the output (67 MB for this noisy image) and the
+output stream the benchmark writes to.
 
 Time and allocation, BenchmarkDotNet ShortRun, AVX-512 off, on the worker
 (Ryzen 9 7950X3D, 32 logical CPUs, .NET SDK 10.0.402, load 2 to 3.2 before,
@@ -362,6 +401,16 @@ during and after), base and new alternating, two rounds, mean per call:
 | lossy 6000x4000 | 777 / 781 ms | 784 / 788 ms | 252.4 MB | 66.5 MB |
 | lossless 2000x1500 | 141.5 / 141.6 ms | 138.5 / 138.5 ms | 117.8 MB | 100.1 MB |
 | lossless 6000x4000 | 1097 / 1107 ms | 1073 / 1071 ms | 1034 MB | 817 MB |
+
+The lossless coder state change, same method (worker under the benchmark
+lock: Ryzen 9 7950X3D, 32 logical CPUs, .NET SDK 10.0.402, load 0.1 before,
+2 to 5 during, 3.5 after), base and new alternating, mean per call:
+
+| Case | Before | After | Allocated before | Allocated after |
+|---|--:|--:|--:|--:|
+| lossless 2000x1500 | 132.8 / 135.6 ms | 131.2 / 129.7 / 127.7 ms | 100.1 MB | 53.7 MB |
+| lossless 6000x4000 | 1072 / 1076 ms | 949 / 980 / 957 ms | 817 MB | 369 MB |
+| lossy 2000x1500 (unchanged) | 104.5 / 104.7 ms | 104.9 / 104.4 / 106.0 ms | 9.3 MB | 9.3 MB |
 
 ## Drawing and clipping exceptions
 

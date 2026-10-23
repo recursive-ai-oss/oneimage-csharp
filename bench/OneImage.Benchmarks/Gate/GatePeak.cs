@@ -185,6 +185,15 @@ internal static class GatePeak
                 return new() { ["oneimage"] = () => b.OneImageLib(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => g.MagickEncode() };
             }
 
+            case "webp-encode-lossless":
+            {
+                var b = new WebPEncodeBenchmarks { Case = "lossless-2000x1500" };
+                b.Setup();
+                var g = new WebPEncodeGateBenchmarks { Case = "lossless-2000x1500" };
+                g.Setup();
+                return new() { ["oneimage"] = () => b.OneImageLib(), ["skia"] = () => b.SkiaSharp(), ["imagesharp"] = () => b.ImageSharp(), ["netvips"] = () => b.NetVips(), ["magick"] = () => g.MagickEncode() };
+            }
+
             case "webp-encode-lossless-24mp":
             {
                 var b = new WebPEncodeBenchmarks { Case = "lossless-6000x4000" };

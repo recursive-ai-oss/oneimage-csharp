@@ -5,14 +5,16 @@ namespace OneImage.Codecs.WebP;
 /// <summary>Least-significant-bit-first bit writer for VP8L streams.</summary>
 internal sealed class VP8LBitWriter
 {
-    private byte[] _buf;
+    // Output grows by whole chunks instead of by doubling one array, so a large stream never exists twice at once
+    // except for the final copy.
+    private const int MaxChunk = 1 << 22;
+
+    private readonly List<byte[]> _full = [];
+    private byte[] _buf = new byte[4096];
     private int _len;
+    private long _fullBytes;
     private ulong _acc;
     private int _nacc;
-
-    public VP8LBitWriter(int capacity = 4096) => _buf = new byte[Math.Max(16, capacity)];
-
-    public int ByteLength => _len + ((_nacc + 7) >> 3);
 
     /// <summary>Appends the low <paramref name="nbits"/> bits (at most 32) of <paramref name="value"/>.</summary>
     public void Put(uint value, int nbits)
@@ -23,7 +25,7 @@ internal sealed class VP8LBitWriter
         {
             if (_len + 4 > _buf.Length)
             {
-                Array.Resize(ref _buf, _buf.Length * 2);
+                NextChunk();
             }
 
             System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(_buf.AsSpan(_len), (uint)_acc);
@@ -33,21 +35,74 @@ internal sealed class VP8LBitWriter
         }
     }
 
+    // Chunk lengths are multiples of 4, so a word never straddles two chunks.
+    private void NextChunk()
+    {
+        byte[] done = _len == _buf.Length ? _buf : _buf.AsSpan(0, _len).ToArray();
+        _full.Add(done);
+        _fullBytes += done.Length;
+        _buf = new byte[Math.Min(MaxChunk, _buf.Length * 2)];
+        _len = 0;
+    }
+
+    /// <summary>
+    /// Makes the output so far, plus <paramref name="moreBits"/> more, fit one array of exactly its final size, so that
+    /// <see cref="Finish"/> hands it back without another copy. A wrong count only costs that copy.
+    /// </summary>
+    public void Reserve(long moreBits)
+    {
+        long bits = ((_fullBytes + _len) * 8) + _nacc + moreBits;
+        long bytes = (bits + 7) >> 3;
+        if (bytes > Array.MaxLength)
+        {
+            return;
+        }
+
+        byte[] big = GC.AllocateUninitializedArray<byte>((int)bytes);
+        int at = 0;
+        foreach (byte[] chunk in _full)
+        {
+            chunk.CopyTo(big, at);
+            at += chunk.Length;
+        }
+
+        _buf.AsSpan(0, _len).CopyTo(big.AsSpan(at));
+        _len += at;
+        _full.Clear();
+        _fullBytes = 0;
+        _buf = big;
+    }
+
     /// <summary>Pads to a byte boundary and returns the bytes.</summary>
     public byte[] Finish()
     {
         int tail = (_nacc + 7) >> 3;
-        if (_len + tail > _buf.Length)
+        if (_full.Count == 0 && _len + tail == _buf.Length)
         {
-            Array.Resize(ref _buf, _len + tail);
+            for (int i = 0; i < tail; i++)
+            {
+                _buf[_len + i] = (byte)(_acc >> (8 * i));
+            }
+
+            return _buf;
         }
 
+        byte[] result = new byte[checked(_fullBytes + _len + tail)];
+        int at = 0;
+        foreach (byte[] chunk in _full)
+        {
+            chunk.CopyTo(result, at);
+            at += chunk.Length;
+        }
+
+        _full.Clear();
+        _buf.AsSpan(0, _len).CopyTo(result.AsSpan(at));
+        at += _len;
         for (int i = 0; i < tail; i++)
         {
-            _buf[_len + i] = (byte)(_acc >> (8 * i));
+            result[at + i] = (byte)(_acc >> (8 * i));
         }
 
-        byte[] result = _buf.AsSpan(0, _len + tail).ToArray();
         return result;
     }
 }

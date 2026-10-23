@@ -118,6 +118,34 @@ public sealed class WebPLosslessEncodeTests
         CheckRoundTrip(src, 120, 80, new VP8LEncodeOptions { Palette = true });
     }
 
+    // Several 2^18-pixel bands and more than one wave of bands, so the sliding hash chains and matches that reach far back
+    // (the image repeats every 1400 rows) are exercised, with every plan the effort levels try.
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(4, 4)]
+    [InlineData(5, 4)]
+    [InlineData(6, 16)]
+    public void RoundTripsLargeRepeatingImage(int effort, int degree)
+    {
+        const int W = 700;
+        const int H = 3200;
+        byte[] src = new byte[W * H * 4];
+        uint s = 12345;
+        byte[] tile = new byte[W * 1400 * 4];
+        for (int i = 0; i < tile.Length; i++)
+        {
+            s = (s * 1664525u) + 1013904223u;
+            tile[i] = (byte)((i & 3) == 3 ? 255 : (s >> 24) & 0xf0);
+        }
+
+        for (int y = 0; y < H; y++)
+        {
+            Array.Copy(tile, (y % 1400) * W * 4, src, y * W * 4, W * 4);
+        }
+
+        CheckRoundTrip(src, W, H, new VP8LEncodeOptions { Effort = effort, Degree = degree });
+    }
+
     internal static void CheckRoundTrip(byte[] src, int w, int h, VP8LEncodeOptions opts)
     {
         bool hasAlpha = false;
