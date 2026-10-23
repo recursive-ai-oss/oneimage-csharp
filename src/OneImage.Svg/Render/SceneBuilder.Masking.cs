@@ -392,6 +392,11 @@ internal sealed partial class SceneBuilder
                 return Path.Empty;
             }
 
+            if (cp.Prop("transform-origin") is { } origin)
+            {
+                t = AroundOrigin(t, origin, vp.X, vp.Y, vp.Width, vp.Height, cpStyle);
+            }
+
             m = m.Multiply(t);
         }
 

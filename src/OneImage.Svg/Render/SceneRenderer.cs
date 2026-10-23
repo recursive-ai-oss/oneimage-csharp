@@ -141,7 +141,7 @@ internal static class SceneRenderer
                     }
 
                     Path? clip = layer.ClipPath?.Transform(dev.ToMatrix3x2());
-                    canvas.Fill(Brush.FromImage(snapshot, offsetX: ox, offsetY: oy, tile: false), Path.Rectangle(ox, oy, lw, lh), opacity: layer.Opacity, blend: layer.Blend, clip: clip);
+                    canvas.Fill(Brush.FromImage(snapshot, offsetX: ox, offsetY: oy, tile: false), Path.Rectangle(ox, oy, lw, lh), opacity: layer.Opacity, blend: layer.Blend, composition: layer.Plus ? AlphaComposition.Plus : AlphaComposition.SrcOver, clip: clip);
                 }
 
                 break;

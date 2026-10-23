@@ -127,6 +127,12 @@ public enum AlphaComposition
 
     /// <summary>Either one, but not both: <c>Fa = 1 − αb</c>, <c>Fb = 1 − αs</c>.</summary>
     Xor,
+
+    /// <summary>
+    /// The sum of both, clamped at 1: <c>Fa = 1</c>, <c>Fb = 1</c>, and each premultiplied channel and the alpha are limited to 1
+    /// (Porter–Duff "plus", CSS <c>plus-lighter</c>). Lightens where both have color; an empty overlay leaves the backdrop unchanged.
+    /// </summary>
+    Plus,
 }
 
 /// <summary>
@@ -147,7 +153,7 @@ internal static class BlendNames
 
     private static readonly string[] Compositions =
     [
-        "src-over", "clear", "src", "dest", "dest-over", "src-in", "dest-in", "src-out", "dest-out", "src-atop", "dest-atop", "xor",
+        "src-over", "clear", "src", "dest", "dest-over", "src-in", "dest-in", "src-out", "dest-out", "src-atop", "dest-atop", "xor", "plus",
     ];
 
     public static bool IsDefined(BlendMode mode) => Name(mode) is not null;
@@ -185,12 +191,13 @@ internal static class BlendNames
         AlphaComposition.DestOut => (0f, 0f, 1f, -1f),
         AlphaComposition.SrcAtop => (0f, 1f, 1f, -1f),
         AlphaComposition.DestAtop => (1f, -1f, 0f, 1f),
+        AlphaComposition.Plus => (1f, 0f, 1f, 0f),
         _ => (1f, -1f, 1f, -1f), // Xor
     };
 
     /// <summary>True when an opaque backdrop stays opaque, so the result still fits a format without alpha.</summary>
     public static bool KeepsOpaqueBackdropOpaque(AlphaComposition alpha) =>
-        alpha is AlphaComposition.SrcOver or AlphaComposition.Dest or AlphaComposition.DestOver or AlphaComposition.SrcAtop;
+        alpha is AlphaComposition.SrcOver or AlphaComposition.Dest or AlphaComposition.DestOver or AlphaComposition.SrcAtop or AlphaComposition.Plus;
 
     /// <summary>True when a fully transparent overlay leaves the backdrop untouched.</summary>
     public static bool EmptyOverlayKeepsBackdrop(AlphaComposition alpha) => KeepsOpaqueBackdropOpaque(alpha);

@@ -16,6 +16,9 @@ internal sealed partial class SceneBuilder
 
         public required Affine Transform { get; init; }
 
+        // The transform-origin of the element that gave the gradientTransform (null = none).
+        public string? TransformOrigin { get; init; }
+
         public required GradientRepetition Spread { get; init; }
 
         public required ColorStop[] Stops { get; init; }
@@ -198,9 +201,11 @@ internal sealed partial class SceneBuilder
         }
 
         Affine transform = Affine.Identity;
+        string? transformOrigin = null;
         if (Attr("gradientTransform", false) is { } ts && SvgValues.TryTransform(ts, out Affine t) && t.IsInvertible)
         {
             transform = t;
+            transformOrigin = chain.Find(c => c.Attr("gradientTransform") is not null)?.Prop("transform-origin");
         }
 
         string? spread = Attr("spreadMethod", false);
@@ -209,6 +214,7 @@ internal sealed partial class SceneBuilder
             Radial = e.Name == "radialGradient",
             BBoxUnits = Attr("gradientUnits", false)?.Trim() != "userSpaceOnUse",
             Transform = transform,
+            TransformOrigin = transformOrigin,
             Spread = spread?.Trim() switch { "reflect" => GradientRepetition.Reflect, "repeat" => GradientRepetition.Repeat, _ => GradientRepetition.None },
             Stops = [.. stops],
             X1 = Attr("x1", true),
@@ -326,6 +332,14 @@ internal sealed partial class SceneBuilder
 
         bool u = g.BBoxUnits;
         BBoxHolder? holder = u ? bbox : null;
+
+        // The gradient transform acts in the unit square of the box for bounding-box units, else in the user space (CSS Transforms 2
+        // origin, with the viewBox as the reference box).
+        Affine gradientTransform = g.Transform;
+        if (g.TransformOrigin is not null)
+        {
+            gradientTransform = u ? AroundOrigin(g.Transform, g.TransformOrigin, 0, 0, 1, 1, st) : AroundOrigin(g.Transform, g.TransformOrigin, vp.X, vp.Y, vp.Width, vp.Height, st);
+        }
         if (!g.Radial)
         {
             double x1 = GradientLength(g.X1, 0, Axis.X, u, st, vp), y1 = GradientLength(g.Y1, 0, Axis.Y, u, st, vp);
@@ -342,7 +356,7 @@ internal sealed partial class SceneBuilder
                 return ResolvedPaint.Solid(lastColor);
             }
 
-            return ResolvedPaint.FromServer(new RGradientPaint { Radial = false, Stops = g.Stops, Spread = g.Spread, BaseCtm = ctm, GradientTransform = g.Transform, BBox = holder, X1 = x1, Y1 = y1, X2 = x2, Y2 = y2 });
+            return ResolvedPaint.FromServer(new RGradientPaint { Radial = false, Stops = g.Stops, Spread = g.Spread, BaseCtm = ctm, GradientTransform = gradientTransform, BBox = holder, X1 = x1, Y1 = y1, X2 = x2, Y2 = y2 });
         }
 
         double cx = GradientLength(g.Cx, 50, Axis.X, u, st, vp), cy = GradientLength(g.Cy, 50, Axis.Y, u, st, vp);
@@ -361,7 +375,7 @@ internal sealed partial class SceneBuilder
             return ResolvedPaint.Solid(lastColor);
         }
 
-        return ResolvedPaint.FromServer(new RGradientPaint { Radial = true, Stops = g.Stops, Spread = g.Spread, BaseCtm = ctm, GradientTransform = g.Transform, BBox = holder, X1 = cx, Y1 = cy, R = r, Fx = fx, Fy = fy, Fr = Math.Max(fr, 0) });
+        return ResolvedPaint.FromServer(new RGradientPaint { Radial = true, Stops = g.Stops, Spread = g.Spread, BaseCtm = ctm, GradientTransform = gradientTransform, BBox = holder, X1 = cx, Y1 = cy, R = r, Fx = fx, Fy = fy, Fr = Math.Max(fr, 0) });
     }
 
     private static bool AllFinite(params ReadOnlySpan<double> v)
@@ -433,6 +447,10 @@ internal sealed partial class SceneBuilder
         if (Attr("patternTransform") is { } ts && SvgValues.TryTransform(ts, out Affine t) && t.IsInvertible)
         {
             patternTransform = t;
+            if (chain.Find(c => c.Attr("patternTransform") is not null)?.Prop("transform-origin") is { } origin)
+            {
+                patternTransform = AroundOrigin(t, origin, vp.X, vp.Y, vp.Width, vp.Height, st);
+            }
         }
 
         if (hasViewBox && (!(vw > 0) || !(vh > 0) || !AllFinite(vx, vy, vw, vh)))

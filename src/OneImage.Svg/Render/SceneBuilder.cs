@@ -199,7 +199,7 @@ internal sealed partial class SceneBuilder
         RLayer? layer = null;
         if (st.NeedsLayer || rootDeco is not null)
         {
-            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend };
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend, Plus = st.Plus };
             output = layer.Children;
         }
 
@@ -396,9 +396,9 @@ internal sealed partial class SceneBuilder
             }
 
             // transform-origin moves the point the transform acts around; its reference box is the nearest viewBox.
-            if (e.Prop("transform-origin") is { } origin && TryOrigin(origin, vp.X, vp.Y, vp.Width, vp.Height, st, out double ox, out double oy) && (ox != 0 || oy != 0))
+            if (e.Prop("transform-origin") is { } origin)
             {
-                t = Affine.Translate(ox, oy).Multiply(t).Multiply(Affine.Translate(-ox, -oy));
+                t = AroundOrigin(t, origin, vp.X, vp.Y, vp.Width, vp.Height, st);
             }
 
             ctm = ctm.Multiply(t);
@@ -421,7 +421,7 @@ internal sealed partial class SceneBuilder
                 throw new ImageLimitException($"Groups with opacity are nested more than {maxLayers} deep.");
             }
 
-            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend };
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend, Plus = st.Plus };
             output = layer.Children;
             depth++;
         }
@@ -657,6 +657,12 @@ internal sealed partial class SceneBuilder
     }
 
     // ---- transform-origin ----
+
+    // The transform t acting around the point transform-origin names in the reference box (unchanged when the value is invalid or zero).
+    private Affine AroundOrigin(Affine t, string origin, double rx, double ry, double rw, double rh, in SvgStyle st) =>
+        TryOrigin(origin, rx, ry, rw, rh, st, out double ox, out double oy) && (ox != 0 || oy != 0)
+            ? Affine.Translate(ox, oy).Multiply(t).Multiply(Affine.Translate(-ox, -oy))
+            : t;
 
     private enum OriginKind
     {
@@ -966,7 +972,7 @@ internal sealed partial class SceneBuilder
             return;
         }
 
-        bool layered = markers is not null ? (st.Opacity < 1 || st.Blend != BlendMode.Normal || deco is not null) : ((st.Opacity < 1 && fill && stroke) || st.Blend != BlendMode.Normal || deco is not null);
+        bool layered = markers is not null ? (st.Opacity < 1 || (st.Blend != BlendMode.Normal || st.Plus) || deco is not null) : ((st.Opacity < 1 && fill && stroke) || (st.Blend != BlendMode.Normal || st.Plus) || deco is not null);
         float groupOpacity = layered ? 1f : (float)st.Opacity;
         RPath? node = new RPath
         {
@@ -1034,7 +1040,7 @@ internal sealed partial class SceneBuilder
         }
         else if (layered)
         {
-            var layer = new RLayer { Children = [node!], Opacity = (float)st.Opacity, Blend = st.Blend, X0 = node!.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1, ContentX1 = node.ContentX1, ContentY1 = node.ContentY1 };
+            var layer = new RLayer { Children = [node!], Opacity = (float)st.Opacity, Blend = st.Blend, Plus = st.Plus, X0 = node!.X0, Y0 = node.Y0, X1 = node.X1, Y1 = node.Y1, ContentX1 = node.ContentX1, ContentY1 = node.ContentY1 };
             if (deco is not null)
             {
                 FinishLayer(stack, layer, deco, f.Out, f.LayerDepth + 1);

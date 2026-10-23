@@ -94,11 +94,14 @@ internal struct SvgStyle
     /// <summary><c>mix-blend-mode</c>: how the element's group blends with what is behind it.</summary>
     public BlendMode Blend;
 
+    /// <summary><c>mix-blend-mode: plus-lighter</c>: the group adds to what is behind it (Porter-Duff plus) instead of blending.</summary>
+    public bool Plus;
+
     /// <summary><c>isolation: isolate</c>: the element's group is composited on its own, so blend modes inside it only see the group.</summary>
     public bool Isolate;
 
     /// <summary>Gets whether the element's content has to be painted into a group of its own and composited as one.</summary>
-    public readonly bool NeedsLayer => Opacity < 1 || Blend != BlendMode.Normal || Isolate;
+    public readonly bool NeedsLayer => Opacity < 1 || Blend != BlendMode.Normal || Plus || Isolate;
 
     public static SvgStyle Initial => new()
     {
@@ -134,6 +137,7 @@ internal struct SvgStyle
         s.Opacity = 1;
         s.Displayed = true;
         s.Blend = BlendMode.Normal;
+        s.Plus = false;
         s.Isolate = false;
         if (e.Props.Count == 0)
         {
@@ -300,9 +304,15 @@ internal struct SvgStyle
                     s.Displayed = value != "none";
                     break;
                 case "mix-blend-mode":
-                    if (TryBlend(value, out BlendMode bm))
+                    if (value == "plus-lighter")
+                    {
+                        s.Blend = BlendMode.Normal;
+                        s.Plus = true;
+                    }
+                    else if (TryBlend(value, out BlendMode bm))
                     {
                         s.Blend = bm;
+                        s.Plus = false;
                     }
 
                     break;
@@ -387,7 +397,7 @@ internal struct SvgStyle
             case "marker-mid": s.Markers = (s.Markers ?? MarkerRefs.None) with { Mid = p.Markers?.Mid }; break;
             case "marker-end": s.Markers = (s.Markers ?? MarkerRefs.None) with { End = p.Markers?.End }; break;
             case "marker": s.Markers = p.Markers; break;
-            case "mix-blend-mode": s.Blend = p.Blend; break;
+            case "mix-blend-mode": s.Blend = p.Blend; s.Plus = p.Plus; break;
             case "isolation": s.Isolate = p.Isolate; break;
             case "font-size": s.FontSize = p.FontSize; break;
         }
@@ -469,7 +479,7 @@ internal struct SvgStyle
             case "marker-mid": s.Markers = (s.Markers ?? MarkerRefs.None) with { Mid = null }; break;
             case "marker-end": s.Markers = (s.Markers ?? MarkerRefs.None) with { End = null }; break;
             case "marker": s.Markers = null; break;
-            case "mix-blend-mode": s.Blend = BlendMode.Normal; break;
+            case "mix-blend-mode": s.Blend = BlendMode.Normal; s.Plus = false; break;
             case "isolation": s.Isolate = false; break;
             case "display": s.Displayed = true; break;
             case "font-size": s.FontSize = i.FontSize; break;
@@ -477,7 +487,7 @@ internal struct SvgStyle
         }
     }
 
-    // CSS Compositing: the blend modes of mix-blend-mode. plus-lighter is the additive blend.
+    // CSS Compositing: the blend modes of mix-blend-mode (plus-lighter is handled apart: it is a Porter-Duff operator).
     private static bool TryBlend(string value, out BlendMode mode)
     {
         mode = value switch
@@ -498,7 +508,6 @@ internal struct SvgStyle
             "saturation" => BlendMode.Saturation,
             "color" => BlendMode.Color,
             "luminosity" => BlendMode.Luminosity,
-            "plus-lighter" => BlendMode.Add,
             _ => (BlendMode)(-1),
         };
         return mode >= 0;

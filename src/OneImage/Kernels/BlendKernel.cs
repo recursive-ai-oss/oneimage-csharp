@@ -387,5 +387,15 @@ internal static class BlendKernel
             case BlendMode.Luminosity: NonSeparableRow<LuminosityBlend>(backdrop, overlay, destination, colors, opacity, f); break;
             default: throw new ArgumentOutOfRangeException(nameof(mode));
         }
+
+        if (composition == AlphaComposition.Plus)
+        {
+            // Plus is the one operator whose sum can leave the premultiplied range.
+            destination = destination[..(destination.Length / (colors + 1) * (colors + 1))];
+            for (int i = 0; i < destination.Length; i++)
+            {
+                destination[i] = Math.Min(destination[i], 1f);
+            }
+        }
     }
 }

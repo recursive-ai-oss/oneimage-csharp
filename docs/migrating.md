@@ -292,7 +292,7 @@ Image.Load(input).Composite(Image.Load(mark), x: 20, y: 20, opacity: 0.8f, blend
 | ImageSharp | OneImage |
 |---|---|
 | `PixelColorBlendingMode` Normal, Multiply, Add, Subtract, Screen, Darken, Lighten, Overlay, HardLight | `BlendMode` with the same names. The values agree with ImageSharp within a few levels at 8 bits (ImageSharp rounds through 8-bit intermediates). |
-| `PixelAlphaCompositionMode` SrcOver, Clear, Src, SrcAtop, SrcIn, SrcOut, Dest, DestAtop, DestIn, DestOut, DestOver, Xor | `AlphaComposition` with the same names. Like `DrawImage`, only the pixels under the overlay change. A base without alpha accepts only the operators that keep it opaque (SrcOver, SrcAtop, Dest, DestOver). |
+| `PixelAlphaCompositionMode` SrcOver, Clear, Src, SrcAtop, SrcIn, SrcOut, Dest, DestAtop, DestIn, DestOut, DestOver, Xor (and `Plus`, which ImageSharp lacks) | `AlphaComposition` with the same names. Like `DrawImage`, only the pixels under the overlay change. A base without alpha accepts only the operators that keep it opaque (SrcOver, SrcAtop, Dest, DestOver). |
 | (not in ImageSharp) | Also ColorDodge, ColorBurn, SoftLight, Difference, Exclusion, LinearBurn, LinearDodge, VividLight, LinearLight, PinLight, HardMix, Divide, Hue, Saturation, Color and Luminosity. |
 
 ### Metadata

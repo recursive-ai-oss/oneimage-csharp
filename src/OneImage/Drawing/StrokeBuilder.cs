@@ -13,6 +13,12 @@ namespace OneImage.Drawing;
 /// vertex, which keeps the winding right (the body of the stroke is covered by both segments' rectangles anyway). Round joins and
 /// caps are cubic arcs of at most 90°; a corner too slight to show a difference from a bevel is emitted as one.
 /// </para>
+/// <para>
+/// The rasterizer adds the partial coverage of overlapping contours at an edge pixel, so where contours lie on top of each
+/// other along an edge (a path that doubles back on itself, a two-point closed figure, a cusp) the edge would come out too
+/// dark. Such an outline is merged into a union (<c>Path.Resolve</c>) so that overlaps count once.
+/// Everything else keeps the cheap outline.
+/// </para>
 /// </summary>
 internal sealed class StrokeBuilder : IDashSink
 {
@@ -20,6 +26,12 @@ internal sealed class StrokeBuilder : IDashSink
     private const int MaxVerbs = 1 << 23;
     private const int MaxCoords = 1 << 25;
     private const double Eps = 1e-9;
+
+    // Turns sharper than this (cosine of the angle between directions) put the two edges of the stroke on top of each other.
+    private const double HairpinDot = -0.99;
+
+    // Outlines longer than this are left as they are (merging them would cost more than the pixels at the doubled edges are worth).
+    private const int MaxMergeVerbs = 1 << 20;
 
     private readonly double _r;
     private readonly StrokeJoin _join;
@@ -31,6 +43,7 @@ internal sealed class StrokeBuilder : IDashSink
     private float[] _coords = new float[256];
     private int _vn, _cn;
     private bool _pendingMove;
+    private bool _overlaps;
 
     private double[] _pts = new double[64];
     private double[] _ux = new double[32], _uy = new double[32], _len = new double[32];
@@ -69,7 +82,8 @@ internal sealed class StrokeBuilder : IDashSink
             begin = end;
         }
 
-        return new Path(b._verbs.AsSpan(0, b._vn).ToArray(), b._coords.AsSpan(0, b._cn).ToArray());
+        var outline = new Path(b._verbs.AsSpan(0, b._vn).ToArray(), b._coords.AsSpan(0, b._cn).ToArray());
+        return b._overlaps && b._vn <= MaxMergeVerbs ? outline.Resolve(IntersectionRule.NonZero, (float)tolerance) : outline;
     }
 
     void IDashSink.Dash(double[] xy, int count, bool closed, double dirX, double dirY)
@@ -254,6 +268,11 @@ internal sealed class StrokeBuilder : IDashSink
         double n1x = -u1y * _r, n1y = u1x * _r, n2x = -u2y * _r, n2y = u2x * _r;
         double cross = (u1x * u2y) - (u1y * u2x);
         double dot = (u1x * u2x) + (u1y * u2y);
+        if (dot < HairpinDot)
+        {
+            _overlaps = true;
+        }
+
         bool straight = Math.Abs(cross) < Eps;
         if (straight && dot > 0)
         {

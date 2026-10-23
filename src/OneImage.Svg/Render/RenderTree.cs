@@ -152,6 +152,9 @@ internal sealed class RLayer : RNode
 
     /// <summary>How the finished group blends with what is behind it (<c>mix-blend-mode</c>); normal is plain source-over.</summary>
     public BlendMode Blend { get; init; }
+
+    /// <summary>Gets a value indicating whether the group adds to what is behind it (<c>mix-blend-mode: plus-lighter</c>).</summary>
+    public bool Plus { get; init; }
 }
 
 /// <summary>

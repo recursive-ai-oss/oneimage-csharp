@@ -378,7 +378,7 @@ internal sealed partial class SceneBuilder
                 throw new ImageLimitException($"Groups with opacity are nested more than {_limits.MaxLayerDepth} deep.");
             }
 
-            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend };
+            layer = new RLayer { Children = [], Opacity = (float)st.Opacity, Blend = st.Blend, Plus = st.Plus };
             target = layer.Children;
             depth++;
         }

@@ -220,6 +220,23 @@ public class BlendModeTests
     }
 
     [Fact]
+    public void PlusAddsPremultipliedValuesAndClampsAtOne()
+    {
+        Rgba32[] back = [new(255, 0, 0, 200), new(0, 0, 255, 100), new(10, 20, 30, 255), new(9, 8, 7, 0)];
+        Rgba32[] over = [new(255, 0, 0, 200), new(0, 255, 0, 100), new(0, 0, 0, 0), new(100, 50, 25, 90)];
+        Rgba32[] got = Image.FromPixels<Rgba32>(back, 4, 1).Composite(Image.FromPixels<Rgba32>(over, 4, 1), 0, 0, 1f, false, BlendMode.Normal, AlphaComposition.Plus).ToArray<Rgba32>();
+
+        Assert.Equal(new Rgba32(255, 0, 0, 255), got[0]);
+        Assert.InRange(got[1].R, 0, 0);
+        Assert.InRange(got[1].G, 127, 129);
+        Assert.InRange(got[1].B, 127, 129);
+        Assert.InRange(got[1].A, 199, 201);
+        Assert.Equal(back[2], got[2]);
+        Assert.Equal(over[3], got[3]);
+        Assert.Equal("plus", BlendNames.Name(AlphaComposition.Plus));
+    }
+
+    [Fact]
     public void NormalSourceOverKernelIsBitIdenticalToTheDirectFormula()
     {
         var rnd = new Random(5);

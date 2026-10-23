@@ -33,6 +33,27 @@ public class StrokeTests
     }
 
     [Fact]
+    public void OutlinesThatLieOnEachOtherCountOnce()
+    {
+        // A one-pixel line centered on a pixel boundary covers half of the pixels on either side. A figure that doubles back
+        // (a closed two-point figure, or a path that returns along itself) must not add the halves of its two passes.
+        Path closed = new PathBuilder().MoveTo(10, 20).LineTo(50, 20).Close().Build();
+        byte[] a = Alpha(closed, P(1));
+        Assert.Equal(128, At(a, 30, 19));
+        Assert.Equal(128, At(a, 30, 20));
+        Assert.Equal(0, At(a, 30, 21));
+
+        Path back = new PathBuilder().MoveTo(10, 20).LineTo(50, 20).LineTo(10, 20).Build();
+        byte[] b = Alpha(back, P(1));
+        Assert.Equal(128, At(b, 30, 19));
+        Assert.Equal(128, At(b, 30, 20));
+
+        // A plain polyline is unchanged by the merge.
+        byte[] c = Alpha(Path.Polyline([new(10, 20), new(50, 20)]), P(1));
+        Assert.Equal(a[(20 * 100) + 30], c[(20 * 100) + 30]);
+    }
+
+    [Fact]
     public void LineBetweenPixelCentersHasHalfCoverageEdges()
     {
         byte[] a = Alpha(Path.Polyline([new(10, 20), new(50, 20)]), P(1));

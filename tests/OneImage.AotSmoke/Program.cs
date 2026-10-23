@@ -279,7 +279,8 @@ foreach (bool lossless in new[] { true, false })
     Rgb24[] lin = bg.Composite(wm, 5, 5, 0.25f, linear: true).ToArray<Rgb24>();
     Rgb24[] mult = bg.Composite(wm.Invert(), 10, 10, 0.5f, blend: BlendMode.Multiply).ToArray<Rgb24>();
     Rgb24[] hue = bg.Composite(wm.Invert(), 10, 10, 1f, blend: BlendMode.Hue, alpha: AlphaComposition.SrcAtop).ToArray<Rgb24>();
-    if (mult.Length != 300 * 200 || hue.Length != 300 * 200)
+    Rgb24[] plusMix = bg.Composite(wm.Invert(), 10, 10, 1f, alpha: AlphaComposition.Plus).ToArray<Rgb24>();
+    if (mult.Length != 300 * 200 || hue.Length != 300 * 200 || plusMix.Length != 300 * 200)
     {
         Console.Error.WriteLine("blend smoke failed");
         return 1;
@@ -526,6 +527,17 @@ foreach (bool lossless in new[] { true, false })
     if (markedPixels[(18 * 40) + 5].R != 255 || markedPixels[(18 * 40) + 5].G != 0 || markedPixels[(35 * 40) + 10].R is < 60 or > 70 || markedPixels[(35 * 40) + 30].R is < 125 or > 131)
     {
         Console.Error.WriteLine("svg marker smoke failed");
+        return 1;
+    }
+
+    // plus-lighter adds to what is behind it: two 50% grays make 100% white.
+    byte[] plus = System.Text.Encoding.UTF8.GetBytes(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' width='10' height='10'>"
+        + "<rect width='10' height='10' fill='#808080'/><rect width='10' height='10' fill='#808080' style='mix-blend-mode:plus-lighter'/></svg>");
+    Rgba32 plusPixel = Image.Load(plus, new LoadOptions { Configuration = svgConfig }).ToArray<Rgba32>()[55];
+    if (plusPixel.R < 254 || plusPixel.A != 255)
+    {
+        Console.Error.WriteLine("svg plus-lighter smoke failed");
         return 1;
     }
 
