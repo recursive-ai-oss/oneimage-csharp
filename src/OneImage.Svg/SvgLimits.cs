@@ -85,4 +85,10 @@ public sealed class SvgLimits
 
     /// <summary>Gets how deep filters may nest (an <c>feImage</c> that draws an element which itself has a filter ...). Default 4.</summary>
     public int MaxFilterDepth { get; init; } = 4;
+
+    /// <summary>
+    /// Gets how many characters of text one document may hold in its text elements, counted as they are read and again for every copy
+    /// <c>use</c> instantiates. A document past this fails with <see cref="ImageLimitException"/> before the text is laid out. Default 1,000,000.
+    /// </summary>
+    public int MaxTextCharacters { get; init; } = 1_000_000;
 }

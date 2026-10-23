@@ -97,6 +97,7 @@ internal sealed partial class SceneBuilder
     {
         public int Instances;
         public long ImageBytes;
+        public long TextChars;
     }
 
     private static readonly string[] DefaultLanguages = ["en"];
@@ -110,14 +111,16 @@ internal sealed partial class SceneBuilder
     private readonly IReadOnlyList<string> _languages;
     private readonly int _imageDepth;
     private readonly Budget _budget;
+    private readonly SvgFontSelector _fonts;
     private readonly Dictionary<SvgElement, Picture?> _pictures = [];
     private HashSet<SvgElement> _active = [];
     private readonly Dictionary<SvgElement, (Path? Path, Path? Dotted)> _pathCache = [];
     private double _rootFontSize = SvgStyle.DefaultFontSize;
     private bool _hasContent;
 
-    private SceneBuilder(SvgDocument doc, SvgLimits limits, ImageLimits imageLimits, IReadOnlyList<string> languages, int imageDepth, Budget budget, CancellationToken cancel)
+    private SceneBuilder(SvgDocument doc, SvgLimits limits, ImageLimits imageLimits, IReadOnlyList<string> languages, int imageDepth, Budget budget, SvgFontSelector fonts, CancellationToken cancel)
     {
+        _fonts = fonts;
         _doc = doc;
         _limits = limits;
         _cancel = cancel;
@@ -135,8 +138,9 @@ internal sealed partial class SceneBuilder
     /// <param name="cancel">Cancellation.</param>
     /// <param name="imageLimits">The limits that bound the decoding of embedded raster images; the defaults when <see langword="null"/>.</param>
     /// <param name="languages">The languages <c>systemLanguage</c> is matched against; <c>en</c> when <see langword="null"/>.</param>
-    public static SvgScene Build(SvgDocument doc, SvgLimits limits, CancellationToken cancel, ImageLimits? imageLimits = null, IReadOnlyList<string>? languages = null) =>
-        new SceneBuilder(doc, limits, imageLimits ?? ImageLimits.Default, languages ?? DefaultLanguages, 0, new Budget(), cancel).BuildRoot();
+    /// <param name="fonts">The fonts text is drawn with; installed fonts only when <see langword="null"/>.</param>
+    public static SvgScene Build(SvgDocument doc, SvgLimits limits, CancellationToken cancel, ImageLimits? imageLimits = null, IReadOnlyList<string>? languages = null, SvgFontOptions? fonts = null) =>
+        new SceneBuilder(doc, limits, imageLimits ?? ImageLimits.Default, languages ?? DefaultLanguages, 0, new Budget(), new SvgFontSelector(fonts), cancel).BuildRoot();
 
     private SvgScene BuildRoot()
     {
@@ -369,6 +373,10 @@ internal sealed partial class SceneBuilder
             case "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon" or "path":
                 Count();
                 EmitShape(stack, f, e);
+                break;
+            case "text":
+                Count();
+                EmitText(stack, f, e);
                 break;
         }
     }
@@ -903,7 +911,7 @@ internal sealed partial class SceneBuilder
             byte[] bytes = SvgSource.Read(stream, _limits, _imageLimits, 0, out _);
             Xml.XmlDocument xml = Xml.XmlParser.Parse(bytes, _limits);
             SvgDocument doc = SvgDocument.Build(xml, _limits);
-            return new SceneBuilder(doc, _limits, _imageLimits, _languages, _imageDepth + 1, _budget, _cancel).BuildRoot();
+            return new SceneBuilder(doc, _limits, _imageLimits, _languages, _imageDepth + 1, _budget, _fonts, _cancel).BuildRoot();
         }
         catch (ImageFormatException)
         {

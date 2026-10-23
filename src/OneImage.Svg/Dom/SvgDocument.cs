@@ -72,10 +72,16 @@ internal sealed class SvgElement
 
     public List<SvgElement> Children { get; } = [];
 
+    /// <summary>Gets the character data and child elements of a text content element (<c>text</c>, <c>tspan</c>, <c>textPath</c>, <c>tref</c>, <c>a</c>) in document order; <see langword="null"/> for every other element.</summary>
+    public List<TextNode>? TextContent { get; set; }
+
     public string? Attr(string name) => Attrs.TryGetValue(name, out string? v) ? v : null;
 
     public string? Prop(string name) => Props.TryGetValue(name, out string? v) ? v : null;
 }
+
+/// <summary>One item of a text content element: a run of character data, or a child element.</summary>
+internal readonly record struct TextNode(string? Text, SvgElement? Element);
 
 /// <summary>The typed document: SVG-namespace elements with their attributes and declared properties, and an id index.</summary>
 internal sealed class SvgDocument
@@ -91,7 +97,7 @@ internal sealed class SvgDocument
         "marker-end", "marker-mid", "marker-start", "mask", "mask-type", "opacity", "overflow", "paint-order", "pointer-events",
         "shape-rendering", "stop-color", "stop-opacity", "stroke", "stroke-dasharray", "stroke-dashoffset", "stroke-linecap", "stroke-linejoin",
         "stroke-miterlimit", "stroke-opacity", "stroke-width", "text-anchor", "text-decoration", "text-rendering", "transform-box",
-        "transform-origin", "unicode-bidi", "vector-effect", "visibility", "word-spacing", "writing-mode",
+        "transform-origin", "unicode-bidi", "vector-effect", "visibility", "word-spacing", "writing-mode", "font", "font-kerning", "font-variant-caps", "white-space",
     };
 
     private SvgDocument(SvgElement root, Dictionary<string, SvgElement> ids, int count)
@@ -144,6 +150,11 @@ internal sealed class SvgDocument
                 anySheet |= text.Length > 0;
             }
 
+            if (e.Name is "text" or "tspan" or "textPath" or "tref" or "a")
+            {
+                e.TextContent = [];
+            }
+
             foreach (XmlNode node in x.Children)
             {
                 if (node is XmlElement child && child.Namespace == SvgSize.SvgNamespace)
@@ -154,6 +165,11 @@ internal sealed class SvgDocument
                     e.Children.Add(c);
                     all.Add(c);
                     stack.Push((child, c));
+                    e.TextContent?.Add(new TextNode(null, c));
+                }
+                else if (node is XmlText text && e.TextContent is not null)
+                {
+                    e.TextContent.Add(new TextNode(text.Value, null));
                 }
             }
         }
@@ -172,6 +188,10 @@ internal sealed class SvgDocument
         foreach (SvgElement e in all)
         {
             Cascade(e, matcher);
+            if (e.Props.ContainsKey("font"))
+            {
+                TextFont.ExpandShorthand(e);
+            }
         }
 
         // Selectors look at other elements' attributes, so the parsed tree is only let go once every element has been matched.
@@ -340,9 +360,9 @@ internal sealed class SvgDocument
                 // SVG 2: a plain href wins over xlink:href when both are present.
                 e.Attrs.TryAdd("href", a.Value);
             }
-            else if (a.Namespace == XmlParser.XmlNamespace && a.LocalName == "space")
+            else if (a.Namespace == XmlParser.XmlNamespace && a.LocalName is "space" or "lang")
             {
-                e.Attrs["xml:space"] = a.Value;
+                e.Attrs["xml:" + a.LocalName] = a.Value;
             }
         }
 

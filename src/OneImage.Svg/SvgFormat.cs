@@ -23,8 +23,13 @@ public sealed class SvgFormat : IImageFormat
     /// A tag in the attribute matches a language that equals it or is a prefix of it before a hyphen, so <c>en</c> matches <c>en-GB</c>.
     /// <see langword="null"/> means <c>en</c>.
     /// </param>
-    public SvgFormat(SvgLimits? limits = null, IEnumerable<string>? languages = null)
+    /// <param name="fonts">
+    /// The fonts SVG text is drawn with (see <see cref="SvgFontOptions"/>); the options are read now. <see langword="null"/> uses the installed
+    /// fonts only. Text whose font cannot be found draws nothing.
+    /// </param>
+    public SvgFormat(SvgLimits? limits = null, IEnumerable<string>? languages = null, SvgFontOptions? fonts = null)
     {
+        Fonts = fonts is null ? null : new SvgFontOptions(fonts);
         Limits = limits ?? SvgLimits.Default;
         Languages = languages is null ? ["en"] : [.. languages];
         Decoder = new SvgDecoder(this);
@@ -35,6 +40,8 @@ public sealed class SvgFormat : IImageFormat
 
     /// <summary>Gets the languages <c>systemLanguage</c> is matched against.</summary>
     public IReadOnlyList<string> Languages { get; }
+
+    internal SvgFontOptions? Fonts { get; }
 
     /// <summary>Gets the document limits of this registration.</summary>
     public SvgLimits Limits { get; }

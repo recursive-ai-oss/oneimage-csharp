@@ -467,6 +467,10 @@ internal sealed partial class SceneBuilder
                 return null;
             }
         }
+        else if (child.Name == "text")
+        {
+            return TextClipPiece(child, parentStyle, m, vp, depth);
+        }
         else
         {
             if (!IsShape(child) || !BeginIn(parentStyle, m, vp, child, out st, out cm, false))

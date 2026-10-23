@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using OneImage.Svg;
+using OneImage.Text;
 using Xunit;
 
 namespace OneImage.Svg.Tests;
@@ -25,7 +26,50 @@ public sealed partial class ResvgConformance
     /// <summary>Fraction of pixels allowed to differ by more than the tolerance.</summary>
     public const double MaxDifferingFraction = 0.0025;
 
-    private static readonly ImageConfiguration Config = new ImageConfiguration().Add(SvgFormat.Instance);
+    private static readonly Dictionary<string, ImageConfiguration> Configs = [];
+
+    /// <summary>
+    /// The configuration for a collection: the SVG format with the collection's own fonts when it has a <c>fonts</c> folder (the full collection
+    /// does; the committed subset does not), with the generic families the reference images were made with and no installed fonts.
+    /// </summary>
+    private static ImageConfiguration ConfigFor(string root)
+    {
+        lock (Configs)
+        {
+            if (Configs.TryGetValue(root, out ImageConfiguration? cached))
+            {
+                return cached;
+            }
+
+            string fonts = Path.Combine(root, "fonts");
+            SvgFormat format = SvgFormat.Instance;
+            if (Directory.Exists(fonts))
+            {
+                var options = new SvgFontOptions { UseSystemFonts = false };
+                foreach (string file in Directory.GetFiles(fonts, "*.*").Where(f => f.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".otf", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.Ordinal))
+                {
+                    try
+                    {
+                        options.AddFont(file);
+                    }
+                    catch (FontFormatException)
+                    {
+                        // A font the library cannot read (a bitmap-only color font): the tests that need it fail on their own.
+                    }
+                }
+
+                options.SetGenericFamily("serif", "Noto Serif");
+                options.SetGenericFamily("sans-serif", "Noto Sans");
+                options.SetGenericFamily("monospace", "Noto Mono");
+                options.SetGenericFamily("cursive", "Yellowtail");
+                options.SetGenericFamily("fantasy", "Sedgwick Ave Display");
+                options.FallbackFamilies.Add("Noto Sans");
+                format = new SvgFormat(fonts: options);
+            }
+
+            return Configs[root] = new ImageConfiguration().Add(format);
+        }
+    }
 
     /// <summary>Outcome of one test file.</summary>
     internal sealed record Result(string Category, string Name, string Outcome, string Detail);
@@ -116,11 +160,11 @@ public sealed partial class ResvgConformance
             Rgba32[] expected = reference.ToArray<Rgba32>();
 
             // Render at the reference size, the way a thumbnail request would.
-            Image svg = Image.Load(svgPath, new LoadOptions { Configuration = Config });
+            Image svg = Image.Load(svgPath, new LoadOptions { Configuration = ConfigFor(root) });
             Image sized = svg.Resize(w, h, Fit.Stretch);
             Rgba32[] actual = sized.ToArray<Rgba32>();
             double bad = DifferingFraction(actual, expected);
-            if (bad > MaxDifferingFraction && Environment.GetEnvironmentVariable("ONEIMAGE_SVG_DUMP") is { Length: > 0 } dump)
+            if ((bad > MaxDifferingFraction || Environment.GetEnvironmentVariable("ONEIMAGE_SVG_DUMP_ALL") is { Length: > 0 }) && Environment.GetEnvironmentVariable("ONEIMAGE_SVG_DUMP") is { Length: > 0 } dump)
             {
                 Directory.CreateDirectory(dump);
                 sized.Save(Path.Combine(dump, name.Replace('/', '_') + ".png"));
@@ -140,6 +184,11 @@ public sealed partial class ResvgConformance
     {
         string[] files = Directory.GetFiles(Path.Combine(root, "tests"), "*.svg", SearchOption.AllDirectories);
         Array.Sort(files, StringComparer.Ordinal);
+        if (Environment.GetEnvironmentVariable("ONEIMAGE_RESVG_ONLY") is { Length: > 0 } rx)
+        {
+            files = [.. files.Where(f => Regex.IsMatch(f, rx, RegexOptions.CultureInvariant))];
+        }
+
         if (Environment.GetEnvironmentVariable("ONEIMAGE_SVG_ONLY") is { Length: > 0 } only)
         {
             // A path prefix below tests/, for example "filters/feOffset", to iterate on one area.
@@ -222,7 +271,7 @@ public sealed partial class ResvgConformance
         string root = RootFolder();
         Assert.True(Directory.Exists(Path.Combine(root, "tests")), $"test files not found in {root}");
         IReadOnlyList<Result> results = RunAll(root);
-        Assert.True(results.Count > 1000 || Environment.GetEnvironmentVariable("ONEIMAGE_SVG_ONLY") is { Length: > 0 }, $"only {results.Count} test files found");
+        Assert.True(results.Count > 1000 || Environment.GetEnvironmentVariable("ONEIMAGE_SVG_ONLY") is { Length: > 0 } || Environment.GetEnvironmentVariable("ONEIMAGE_RESVG_ONLY") is { Length: > 0 }, $"only {results.Count} test files found");
 
         string table = Table(results);
         Console.WriteLine(table);
