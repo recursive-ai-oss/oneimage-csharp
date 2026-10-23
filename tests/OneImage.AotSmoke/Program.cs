@@ -878,5 +878,16 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// JPEG 2000: the internal decoder reads a one-pixel codestream (this keeps its code in the analysed set).
+{
+    byte[] j2k = Convert.FromBase64String("/0//UQApAAAAAAABAAAAAQAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAABBwEB/1IADAAAAAEAAAQEAAH/XAAEQED/ZAAlAAFDcmVhdGVkIGJ5IE9wZW5KUEVHIHZlcnNpb24gMi41LjT/kAAKAAAAAAASAAH/k8B0EAn/2Q==");
+    OneImage.Codecs.Jpx.JpxImage jpx = OneImage.Codecs.Jpx.JpxCodec.Decode(j2k);
+    if (jpx.Width != 1 || jpx.Height != 1 || jpx.ChannelCount != 1)
+    {
+        Console.Error.WriteLine("jpx smoke failed");
+        return 1;
+    }
+}
+
 Console.WriteLine("smoke ok: " + Library.Name);
 return 0;
