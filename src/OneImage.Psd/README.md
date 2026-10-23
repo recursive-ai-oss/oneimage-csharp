@@ -31,8 +31,8 @@ file.Save("edited.psd");
 
 ## Known limitations
 
-- **Saving after a layer style was edited or added throws `ImageOperationException`.** Writing layer styles from the model is not built yet. A style still unchanged from the file is written back byte for byte.
-- **Saving after a gradient or pattern fill's brush was replaced throws `ImageOperationException`** (the new brush has no PSD equivalent here). Unchanged fills are written back from their original block.
+- **Edited layer styles are written from the model;** effect items the model does not carry (gradient overlays, bevel and emboss, gradient strokes and glows) are kept from the file, not edited. Written files are checked with independent readers, not with Photoshop itself.
+- **Fills with no PSD equivalent are written as pixels** (anything but linear or radial gradients and bitmap patterns or hatches, and fills in gray or 32-bit documents).
 - Text, smart objects, vector strokes and the effects that are not drawn render from their stored pixels.
 
 ## What is covered

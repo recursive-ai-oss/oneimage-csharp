@@ -115,9 +115,9 @@ errors appear, how sources are held, limits and threading.
   used, gradient and pattern fills are drawn from their settings, and common
   layer effects (shadows, glows, strokes, overlays, satin) are drawn; text,
   smart objects and the other effects are kept as their stored pixels plus
-  untouched blocks, and multichannel documents are refused. Saving after
-  editing a layer style, or after replacing a gradient or pattern fill's
-  brush, throws; the page lists what is modelled and the known limitations.
+  untouched blocks, and multichannel documents are refused. Edited layer
+  styles and fills are written back; the page lists what is modelled and the
+  known limitations.
 - **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
   registers SVG and `.svgz` as an image format that is drawn at the size you
   ask for; it depends on the core package and OneImage.Text.

@@ -16,8 +16,8 @@ file.Save("edited.psd");                       // PSB when the document is wider
 
 ## Known limitations
 
-- **Saving after editing a layer style throws.** If a layer's `Style` was changed, replaced, set to `null`, or added to a layer that had none, `PsdFile.Save` throws `ImageOperationException` naming the layer. Writing layer styles from the model is not built yet. A layer whose `Style` is still the object read from the file is written back byte for byte. Styles can be inspected, edited and rendered; they cannot yet be saved. See [Layer effects](#layer-effects).
-- **Saving after replacing a gradient or pattern fill's brush throws.** A fill layer whose brush was replaced (and that has no PSD equivalent, such as an image brush) throws `ImageOperationException` on `Save` instead of being dropped. An unchanged fill is written back from its original block. See [Writing](#writing).
+- **Edited layer styles are written from the model.** Gradient overlays, bevel and emboss, gradient strokes and glows and any other effect items the model does not carry are kept from the block that was read, not edited. Written files are checked against independent readers (ImageMagick, and psd-tools used as a black box), not against Photoshop itself. Effects come back grouped by kind, so their order across kinds is not preserved. See [Layer effects](#layer-effects).
+- **Fills with no PSD equivalent are written as pixels.** Linear and radial gradients become gradient fill settings and bitmap patterns or hatches pattern fill settings (RGB documents, 8 or 16 bits); any other brush, and fills in gray or 32-bit documents, are written as a pixel layer of what they draw. See [Writing](#writing).
 - Text, smart objects, vector strokes and the layer effects that are not drawn render from their stored pixels. Multichannel documents are refused. Other fidelity gaps are listed under [What is covered](#what-is-covered).
 
 ## What is covered
