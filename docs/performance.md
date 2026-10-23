@@ -59,7 +59,7 @@ in the last digit from a division of the rounded milliseconds below.
 | gif-decode | 2.3 | 6.1 | 2.65× faster | skia 1.0 | 2.23× | 0.3 (±0.0) | 0.4 (±0.0) | - | lower |
 | gif-encode | 13.3 | 16.8 | 1.26× faster | magick 70.3 | 0.19× | 1.2 (±0.1) | 2.0 (±1.1) | - | lower |
 | gif-resize | 40.4 | 47.1 | 1.17× faster | magick 802.4 | 0.05× | 2.4 (±0.3) | 2.6 (±0.0) | 81.6 | lower |
-| tiff-multipage-decode | 84.3 | 586.7 | 6.96× faster | netvips 28.1 | 3.00× | 2.5 (±0.2) | 54.7 (±0.1) | 85.1 | lower |
+| tiff-multipage-decode | 52.3 | 620.3 | 11.87× faster | netvips 26.6 | 1.96× | 2.5 (±0.2) | 54.7 (±0.1) | 85.1 | lower |
 | tiff-encode | 44.4 | 134.6 | 3.03× faster | magick 68.5 | 0.65× | 28.5 (±0.3) | 32.1 (±0.6) | 40.3 | lower |
 | bmp-decode | 0.4 | 0.7 | 1.75× faster | skia 1.2 | 0.32× | 0.1 (±0.0) | 0.1 (±0.0) | - | tie |
 | bmp-encode | 2.8 | 4.9 | 1.75× faster | magick 7.1 | 0.39× | 7.0 (±0.4) | 21.6 (±0.8) | - | lower |
@@ -111,7 +111,7 @@ native wrapper. These are the rows that are not:
 
 | Task | OneImage | Fastest | Ratio |
 |---|--:|---|--:|
-| tiff-multipage-decode, default degree | 84.3 ms | netvips 28.1 ms | 3.00× |
+| tiff-multipage-decode, default degree | 52.3 ms | netvips 26.6 ms | 1.96× |
 | png-encode (natural) | 219.6 ms | netvips 96.0 ms | 2.29× |
 | gif-decode | 2.3 ms | skia 1.0 ms | 2.23× |
 | jpeg-encode | 87.4 ms | netvips 55.3 ms | 1.58× |
@@ -121,9 +121,21 @@ Notes:
 - **TIFF multi-page.** OneImage limits a single call to min(4, cores)
   threads by default, so a server does not oversubscribe its cores;
   NetVips uses every core. With the per-call degree raised the same read
-  takes 59.3 ms at 8 threads and 51.8 ms on all cores (2.11× and 1.84×
+  takes 51.4 ms at 8 threads and 46.5 ms on all cores (1.93× and 1.75×
   NetVips). The raised rows are shown for information; the default row is
-  the one that counts. The floor is LZW decoding in safe code.
+  the one that counts. The 10 strips of a page are the units of parallel
+  work (an LZW stream cannot be split), so four threads need three rounds
+  per page and more than ten cannot help. Each strip costs about 1.3 ms of
+  LZW decoding and 0.06 ms of predictor undo, and a copy-out of about 0.25
+  ms per strip comes on top.
+  The row and these figures were re-measured on the worker after the LZW
+  and predictor work (only these rows; the peak columns are from the
+  earlier full run). Same worker, same configuration, baseline and new
+  build alternated three times under load 2 to 11 from other jobs: the
+  gate row went from 60.3 to 54.6 ms (means; best runs 59.3 and 51.4 ms).
+  On a local run of the same two builds (another job was running) the read went from 188 to
+  160 ms at one thread and from 61 to 51 ms at four. The gap to NetVips is
+  still about 2×; the floor is LZW decoding in safe code.
 - **Resize.** The thumbnail rows are where resize cost shows: thumb-jpeg
   is 37.5 ms against NetVips's 49.5 ms and thumb-webp 46.9 against 55.1,
   and 2× upscale is 6.3 ms against 9.7 ms. Those rows are decode-bound (the
@@ -317,7 +329,7 @@ and
 | gif-decode | 2.3 | 2.3 | 6.1 | 2.65× faster |
 | gif-encode | 13.3 | 13.6 | 19.5 | 1.43× faster |
 | gif-resize | 40.4 | 39.1 | 47.5 | 1.21× faster |
-| tiff-multipage-decode | 84.3 | 87.5 | 583.7 | 6.67× faster |
+| tiff-multipage-decode† | 84.3 | 87.5 | 583.7 | 6.67× faster |
 | tiff-encode | 44.4 | 43.8 | 131.2 | 3.00× faster |
 | bmp-decode | 0.4 | 0.4 | 0.7 | 1.89× faster |
 | bmp-encode | 2.8 | 2.7 | 4.8 | 1.78× faster |
@@ -325,6 +337,8 @@ and
 | watermark | 4.9 | 4.9 | 5.7 | 1.16× faster |
 | cmyk-jpeg-to-srgb | 243.4 | 241.2 | 149.4 | 1.61× slower (ImageSharp skips the ICC conversion) |
 | jpeg-decode-rgba | 43.4 | 44.2 | 79.5 | 1.80× faster |
+
+† Measured before the TIFF LZW and predictor work. The AVX2 gate figure is now 52.3 ms (table above); the AVX-512 columns were not re-run.
 
 ## Vector kernels on AVX2 and SSE
 
