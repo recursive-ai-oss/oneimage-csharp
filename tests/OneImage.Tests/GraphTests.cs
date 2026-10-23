@@ -2,6 +2,11 @@ using OneImage.Kernels;
 
 namespace OneImage.Tests;
 
+/// <summary>
+/// Counts tiles through the process-wide counters (and, for some tests, the global cache and its budget), which any test running at
+/// the same time also moves, so this class runs alone with the other measuring tests.
+/// </summary>
+[Collection(MemoryMeasurement.Name)]
 public class GraphTests
 {
     private static RenderContext Ctx(int degree = 1, TileCache? cache = null, CancellationToken ct = default) =>

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using OneImage.Drawing;
 using Path = OneImage.Drawing.Path;
 
@@ -75,13 +76,21 @@ public class CanvasTileLifetimeTests
     {
         Settle();
         long baseline = Outstanding;
+        ReadSnapshotOfDisposedCanvas(baseline);
+        Settle();
+        Assert.Equal(baseline, Outstanding);
+    }
+
+    // The snapshot lives only in this frame. A test method's own locals stay reachable until it returns when the JIT does not
+    // optimize (a Debug build, which is what `dotnet test` runs by default), so "the snapshot is dropped" has to mean "the frame
+    // that held it is gone", not "the local was set to null".
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ReadSnapshotOfDisposedCanvas(long baseline)
+    {
         Image snap = KeepOne(out Rgba32[] expected);
         Settle();
         Assert.Equal(expected, snap.ToArray<Rgba32>());
         Assert.True(Outstanding > baseline);
-        snap = null!;
-        Settle();
-        Assert.Equal(baseline, Outstanding);
     }
 
     private static Image KeepOne(out Rgba32[] expected)

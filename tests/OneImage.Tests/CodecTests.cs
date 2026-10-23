@@ -2,6 +2,11 @@ using System.Buffers;
 
 namespace OneImage.Tests;
 
+/// <summary>
+/// Counts tiles through the process-wide counters (and, for some tests, the global cache and its budget), which any test running at
+/// the same time also moves, so this class runs alone with the other measuring tests.
+/// </summary>
+[Collection(MemoryMeasurement.Name)]
 public sealed class CodecTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "oneimage-tests-" + Guid.NewGuid().ToString("N"));
