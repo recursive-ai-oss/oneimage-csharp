@@ -462,6 +462,33 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// TrueType hinting (the font's own instructions run at the drawing size), COLR version 1 paint graphs and vertical layout.
+{
+    string dir = Path.Combine(AppContext.BaseDirectory, "fonts");
+    var fonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily hintedFamily = fonts.Add(Path.Combine(dir, "NotoSans-Hinted-Subset.ttf"));
+    var plainOptions = new OneImage.Text.TextOptions(hintedFamily.CreateFont(11)) { Origin = new System.Numerics.Vector2(2, 2) };
+    var hintedOptions = new OneImage.Text.TextOptions(hintedFamily.CreateFont(11)) { Origin = new System.Numerics.Vector2(2, 2), HintingMode = OneImage.Text.HintingMode.Standard };
+    var whitePx = new Rgba32[120 * 24];
+    Array.Fill(whitePx, new Rgba32(255, 255, 255, 255));
+    Rgba32[] unhinted = Image.FromPixels<Rgba32>(whitePx, 120, 24).DrawText("Hamburgefonstiv", plainOptions, new Rgba32(0, 0, 0, 255)).ToArray<Rgba32>();
+    Rgba32[] hinted = Image.FromPixels<Rgba32>(whitePx, 120, 24).DrawText("Hamburgefonstiv", hintedOptions, new Rgba32(0, 0, 0, 255)).ToArray<Rgba32>();
+
+    OneImage.Text.FontFamily colr1 = fonts.Add(Path.Combine(dir, "ColrV1-TestGlyphs.ttf"));
+    var colorOptions = new OneImage.Text.TextOptions(colr1.CreateFont(64)) { Origin = new System.Numerics.Vector2(4, 4) };
+    var colorPx = new Rgba32[100 * 100];
+    Array.Fill(colorPx, new Rgba32(255, 255, 255, 255));
+    Rgba32[] color = Image.FromPixels<Rgba32>(colorPx, 100, 100).DrawText(char.ConvertFromUtf32(0xF0B01), colorOptions, new Rgba32(0, 0, 0, 255)).ToArray<Rgba32>();
+
+    var vertical = new OneImage.Text.TextOptions(hintedFamily.CreateFont(20)) { LayoutMode = OneImage.Text.LayoutMode.VerticalMixedRightLeft };
+    System.Drawing.SizeF column = OneImage.Text.TextMeasurer.Measure("Hag", vertical).Advance;
+    if (!unhinted.Where((p, i) => p.R != hinted[i].R).Any() || !color.Any(p => Math.Abs(p.R - p.B) > 40) || !(column.Height > column.Width))
+    {
+        Console.Error.WriteLine("hinting, COLR v1 and vertical layout smoke failed");
+        return 1;
+    }
+}
+
 // Rich text: runs with decorations and attributes, font fallback, text along a path and the installed-font scan.
 {
     string dir = Path.Combine(AppContext.BaseDirectory, "fonts");
