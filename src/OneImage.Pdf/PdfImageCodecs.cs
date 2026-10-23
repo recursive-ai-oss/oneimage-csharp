@@ -1,3 +1,4 @@
+using OneImage.Codecs.Jbig2;
 using OneImage.Codecs.Jpeg;
 using OneImage.Pdf.Render;
 using OnePdf;
@@ -5,13 +6,13 @@ using OnePdf;
 namespace OneImage.Pdf;
 
 /// <summary>
-/// Registers the image decoders OnePDF calls for the image codecs it does not implement itself. DCT (JPEG) is OneImage's own decoder; the
-/// JPEG 2000 and JBIG2 decoders attach through <see cref="Jpx"/> and <see cref="Jbig2"/> when OneImage has them.
+/// Registers the image decoders OnePDF calls for the image codecs it does not implement itself. DCT (JPEG) and JBIG2 are OneImage's own
+/// decoders; the JPEG 2000 decoder attaches through <see cref="Jpx"/> when OneImage has one.
 /// </summary>
 public static class PdfImageCodecs
 {
     private static IPdfImageDecoder? s_jpx;
-    private static IPdfImageDecoder? s_jbig2;
+    private static IPdfImageDecoder? s_jbig2 = Jbig2ImageDecoder.Instance;
 
     /// <summary>
     /// Gets or sets the decoder used for <c>JPXDecode</c> images. <see langword="null"/> (the default) draws no JPEG 2000 images: OnePDF hands
@@ -24,7 +25,10 @@ public static class PdfImageCodecs
         set => Volatile.Write(ref s_jpx, value);
     }
 
-    /// <summary>Gets or sets the decoder used for <c>JBIG2Decode</c> images; see <see cref="Jpx"/>.</summary>
+    /// <summary>
+    /// Gets or sets the decoder used for <c>JBIG2Decode</c> images. The default is OneImage's own JBIG2 decoder; a stream that is damaged
+    /// is not drawn (see <see cref="PdfFormat"/>) and the rest of the page is. Setting <see langword="null"/> draws no JBIG2 images.
+    /// </summary>
     public static IPdfImageDecoder? Jbig2
     {
         get => Volatile.Read(ref s_jbig2);
@@ -188,6 +192,35 @@ internal sealed class DctImageDecoder : IPdfImageDecoder
 
             rows[..(rowCount * rowBytes)].CopyTo(Data.AsSpan(y * rowBytes));
             Rows += rowCount;
+        }
+    }
+}
+
+/// <summary>
+/// OneImage's JBIG2 decoder behind OnePDF's decoder contract. It returns the page as the standard stores it, one bit per pixel with 1 for
+/// black: OnePDF applies the PDF inversion, <c>/Decode</c> and <c>/ImageMask</c> rules afterwards. The <c>/JBIG2Globals</c> segments are passed
+/// separately. A damaged stream makes the decoder throw rather than give a partial page; here that is a null result, which OnePDF records as a
+/// diagnostic, and the image is left out while the page carries on.
+/// </summary>
+internal sealed class Jbig2ImageDecoder : IPdfImageDecoder
+{
+    public static Jbig2ImageDecoder Instance { get; } = new();
+
+    public PdfDecodedImage? Decode(in PdfImageDecodeRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            Jbig2Page page = Jbig2Codec.Decode(request.Data, request.Globals, ImageLimits.Default, null, cancellationToken);
+            if (page.Width < 1 || page.Height < 1)
+            {
+                return null;
+            }
+
+            return new PdfDecodedImage(page.Width, page.Height, 1, 1, page.Data);
+        }
+        catch (ImageException)
+        {
+            return null;
         }
     }
 }
