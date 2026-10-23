@@ -883,4 +883,125 @@ public class LzwTests
             }
         }
     }
+
+    // A random but valid TIFF code stream: literals, references to old and to the newest entries (long strings), the code being
+    // defined right now, clear codes, and long stretches without a clear so the table fills up and stays full.
+    private static byte[] RandomValidStream(Random rnd, int codes, int clearPercent)
+    {
+        var bits = new List<(int Code, int Width)>();
+        int width = 9;
+        int next = 258;
+        bool first = true;
+        bits.Add((256, 9));
+        for (int i = 0; i < codes; i++)
+        {
+            int code;
+            if (rnd.Next(100) < clearPercent && !first)
+            {
+                bits.Add((256, width));
+                width = 9;
+                next = 258;
+                first = true;
+                continue;
+            }
+
+            if (first)
+            {
+                code = rnd.Next(256);
+            }
+            else
+            {
+                int pick = rnd.Next(100);
+                if (pick < 30)
+                {
+                    code = rnd.Next(256);
+                }
+                else if (pick < 60 && next > 259)
+                {
+                    code = Math.Max(258, next - 1 - rnd.Next(3));
+                }
+                else if (pick < 75 && next < Lzw.MaxCodes)
+                {
+                    code = next;
+                }
+                else if (next > 258)
+                {
+                    code = rnd.Next(258, next);
+                }
+                else
+                {
+                    code = rnd.Next(256);
+                }
+            }
+
+            bits.Add((code, width));
+            if (first)
+            {
+                first = false;
+            }
+            else if (next < Lzw.MaxCodes)
+            {
+                next++;
+                if (next + 1 == (1 << width) && width < 12)
+                {
+                    width++;
+                }
+            }
+        }
+
+        bits.Add((257, width));
+        var bytes = new List<byte>();
+        ulong acc = 0;
+        int n = 0;
+        foreach ((int c, int w) in bits)
+        {
+            acc = (acc << w) | (uint)c;
+            n += w;
+            while (n >= 8)
+            {
+                bytes.Add((byte)(acc >> (n - 8)));
+                n -= 8;
+            }
+        }
+
+        if (n > 0)
+        {
+            bytes.Add((byte)(acc << (8 - n)));
+        }
+
+        return bytes.ToArray();
+    }
+
+    [Theory]
+    [InlineData(1, 300, 0)]
+    [InlineData(2, 3000, 0)]
+    [InlineData(3, 12000, 0)]
+    [InlineData(4, 12000, 1)]
+    [InlineData(5, 30000, 0)]
+    [InlineData(6, 5000, 5)]
+    public void DecodeBlockMatchesIncrementalOnRandomValidCodeStreams(int seed, int codes, int clearPercent)
+    {
+        var rnd = new Random(seed);
+        byte[] comp = RandomValidStream(rnd, codes, clearPercent);
+
+        // The full decoded length, from the incremental decoder with room to spare.
+        var dec = new LzwDecoder(LzwVariant.Tiff, 8);
+        byte[] big = new byte[64 << 20];
+        InflateStatus st = dec.Decode(comp, big, out _, out int total);
+        Assert.Equal(InflateStatus.Done, st);
+
+        foreach (int size in new[] { total, total - 1, total - 7, total - 17, total / 2, total / 7, 1, 15, 16, 17 })
+        {
+            if (size < 1)
+            {
+                continue;
+            }
+
+            var (want, wo) = Incremental(comp, size, 0);
+            var (got, go) = Block(comp, size, 0);
+            Assert.Equal("ok", wo);
+            Assert.Equal("ok", go);
+            Assert.Equal(want, got);
+        }
+    }
 }

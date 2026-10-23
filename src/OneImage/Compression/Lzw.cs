@@ -321,17 +321,18 @@ internal sealed class LzwDecoder
         return InflateStatus.Done;
     }
 
-    // Table of the whole-block decoder, four words per entry: the first 16 bytes of the string (words 0 and 1, zero beyond its
-    // length), then bits 0-31 = an output offset where the whole string occurs and bits 32-63 = its length (word 2; word 3 pads
-    // the entry to 32 bytes). Entries 0-255 are the literals and never change.
+    // Table of the whole-block decoder, four words per entry. Words 0 and 1 hold the first 16 bytes of the string (zero beyond its
+    // length), so a string of up to 16 bytes is one entry read and two 8-byte stores. Word 2 holds the length (bits 0-31) and, for
+    // strings longer than 16 bytes, the index + 1 of the entry for the string without its last 1-8 bytes (bits 32-63), always a
+    // multiple of 8 long; word 3 holds those last bytes. Entries 0-255 are the literals and never change.
     private BlockEntry[]? _blk;
 
     private struct BlockEntry
     {
         public ulong Lo;
         public ulong Hi;
-        public ulong PosLen;
-        public ulong Pad;
+        public ulong Meta;
+        public ulong Tail;
     }
 
     // TIFF 6.0 fixes the symbol size at 8 bits: clear = 256, end of information = 257, first free code = 258, 9-bit codes to begin with.
@@ -346,11 +347,10 @@ internal sealed class LzwDecoder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Same strings and output bytes as <see cref="Decode"/>. The entry added after a code is the string of the previous code
-    /// plus the first byte of the current one, and those two are adjacent in the output, so an entry only needs the offset where
-    /// its string already occurs. Strings of up to 16 bytes (nearly all of them in photographic data) are also kept inline in
-    /// the table and emitted with two 8-byte stores and no loop or table walk; longer ones are copied from earlier output.
-    /// The previous string stays in registers, so adding an entry reads nothing back from memory.
+    /// Same strings and output bytes as <see cref="Decode"/>. Strings of up to 16 bytes (nearly all of them in photographic data)
+    /// are kept inline in their table entry and emitted with two 8-byte stores and no loop; longer ones are written as 8-byte
+    /// chunks along a chain of entries, as <see cref="Decode"/> does. The string of the previous code stays in registers, so
+    /// adding an entry reads nothing back from memory, and up to four codes are taken per 8-byte refill.
     /// </para>
     /// </remarks>
     public int DecodeBlock(ReadOnlySpan<byte> input, Span<byte> output)
@@ -370,7 +370,7 @@ internal sealed class LzwDecoder
         int bitcount = 0;
         int codeSize = TiffMinBits;
         int next = TiffFirst;
-        int prevStart = 0;
+        int prev = 0; // table index of the previous string
         int pLen = 0; // 0: no previous string (start of stream or just after a clear code)
         ulong pLo = 0;
         ulong pHi = 0;
@@ -384,7 +384,7 @@ internal sealed class LzwDecoder
             if (ip <= inFast)
             {
                 // Branch-free refill; it also loads copies of upcoming bits, which the next refill ORs in again at the same place.
-                bitbuf |= BinaryPrimitives.ReadUInt64BigEndian(input.Slice(ip)) >> bitcount;
+                bitbuf |= BinaryPrimitives.ReadUInt64BigEndian(input.Slice(ip, 8)) >> bitcount;
                 ip += (63 - bitcount) >> 3;
                 bitcount |= 56;
                 codes = 4; // 4 x 12 bits fit in the 56 bits that are now valid
@@ -414,28 +414,33 @@ internal sealed class LzwDecoder
                 ulong cLo;
                 ulong cHi;
                 int cLen;
-                int cPos;
-                bool kwkwk = false;
-                if ((uint)(code - TiffFirst) < (uint)(next - TiffFirst) && next < Lzw.MaxCodes)
+                if ((((uint)(code - TiffFirst) < (uint)(next - TiffFirst)) | ((uint)code < TiffClear)) && next < Lzw.MaxCodes)
                 {
-                    // The common case: an entry made earlier in this run of codes, with room for one more.
+                    // The common case: a literal or an entry made earlier, with room for one more. Right after a clear code
+                    // (pLen == 0) the entry written below is scratch: 'next' does not move, so the next code overwrites it.
                     ref BlockEntry c = ref t[code & (Lzw.MaxCodes - 1)];
                     cLo = c.Lo;
                     cHi = c.Hi;
-                    ulong pl = c.PosLen;
-                    cPos = (int)pl;
-                    cLen = (int)(pl >> 32);
+                    cLen = (int)c.Meta;
                     ulong ch = cLo & 0xFF;
+
+                    // New entry: the previous string plus the first byte of this one, which lands at byte pLen of the 16 kept inline.
                     ulong sh = ch << (8 * (pLen & 7));
                     ulong mLo = (ulong)((long)(pLen - 8) >> 63);
                     ulong mHi = ~mLo & (ulong)((long)(pLen - 16) >> 63);
                     ref BlockEntry n = ref t[next & (Lzw.MaxCodes - 1)];
-                    ulong nLo = pLo | (sh & mLo);
-                    ulong nHi = pHi | (sh & mHi);
-                    n.Lo = nLo;
-                    n.Hi = nHi;
-                    n.PosLen = (uint)prevStart | ((ulong)(pLen + 1) << 32);
-                    next++;
+                    n.Lo = pLo | (sh & mLo);
+                    n.Hi = pHi | (sh & mHi);
+                    if (pLen < 16)
+                    {
+                        n.Meta = (uint)(pLen + 1);
+                    }
+                    else
+                    {
+                        MakeLongEntry(t, ref n, prev, pLen, ch);
+                    }
+
+                    next += (int)((uint)(-pLen) >> 31);
                     if (next + 1 == (1 << codeSize) && codeSize < Lzw.MaxBits)
                     {
                         codeSize++;
@@ -458,82 +463,73 @@ internal sealed class LzwDecoder
 
                     if (pLen == 0)
                     {
-                        if (code > 255)
-                        {
-                            ThrowNoLiteral();
-                        }
+                        ThrowNoLiteral();
+                    }
 
-                        cLo = (ulong)code;
-                        cHi = 0;
-                        cLen = 1;
-                        cPos = op;
+                    if (code > next)
+                    {
+                        ThrowBadCode();
+                    }
+
+                    // Table full (the code is an existing entry) or the code being defined right now (the previous string plus
+                    // its own first byte, which is the entry made here).
+                    ulong ch;
+                    cLo = 0;
+                    cHi = 0;
+                    cLen = 0;
+                    if (code < next)
+                    {
+                        ref BlockEntry c = ref t[code & (Lzw.MaxCodes - 1)];
+                        cLo = c.Lo;
+                        cHi = c.Hi;
+                        cLen = (int)c.Meta;
+                        ch = cLo & 0xFF;
                     }
                     else
                     {
-                        if (code > next)
+                        ch = pLo & 0xFF;
+                    }
+
+                    if (next < Lzw.MaxCodes)
+                    {
+                        ulong nLo = pLo;
+                        ulong nHi = pHi;
+                        if (pLen < 8)
                         {
-                            ThrowBadCode();
+                            nLo |= ch << (8 * pLen);
+                        }
+                        else if (pLen < 16)
+                        {
+                            nHi |= ch << (8 * (pLen - 8));
                         }
 
-                        ulong ch;
-                        cLo = 0;
-                        cHi = 0;
-                        cLen = 0;
-                        cPos = 0;
-                        if (code < next)
+                        ref BlockEntry n = ref t[next & (Lzw.MaxCodes - 1)];
+                        n.Lo = nLo;
+                        n.Hi = nHi;
+                        if (pLen < 16)
                         {
-                            ref BlockEntry c = ref t[code & (Lzw.MaxCodes - 1)];
-                            cLo = c.Lo;
-                            cHi = c.Hi;
-                            ulong pl = c.PosLen;
-                            cPos = (int)pl;
-                            cLen = (int)(pl >> 32);
-                            ch = cLo & 0xFF;
+                            n.Meta = (uint)(pLen + 1);
                         }
                         else
                         {
-                            ch = pLo & 0xFF;
+                            MakeLongEntry(t, ref n, prev, pLen, ch);
                         }
 
-                        if (next < Lzw.MaxCodes)
+                        if (code == next)
                         {
-                            ulong nLo = pLo;
-                            ulong nHi = pHi;
-                            if (pLen < 8)
-                            {
-                                nLo |= ch << (8 * pLen);
-                            }
-                            else if (pLen < 16)
-                            {
-                                nHi |= ch << (8 * (pLen - 8));
-                            }
+                            cLo = nLo;
+                            cHi = nHi;
+                            cLen = pLen + 1;
+                        }
 
-                            ref BlockEntry n = ref t[next & (Lzw.MaxCodes - 1)];
-                            n.Lo = nLo;
-                            n.Hi = nHi;
-                            n.PosLen = (uint)prevStart | ((ulong)(pLen + 1) << 32);
-                            if (code == next)
-                            {
-                                cLo = nLo;
-                                cHi = nHi;
-                                cLen = pLen + 1;
-                                cPos = prevStart;
-                                kwkwk = true;
-                            }
-
-                            next++;
-                            if (next + 1 == (1 << codeSize) && codeSize < Lzw.MaxBits)
-                            {
-                                codeSize++;
-                            }
+                        next++;
+                        if (next + 1 == (1 << codeSize) && codeSize < Lzw.MaxBits)
+                        {
+                            codeSize++;
                         }
                     }
                 }
 
-                prevStart = op;
-                pLen = cLen;
-                pLo = cLo;
-                pHi = cHi;
                 if (op + cLen + 16 <= stop)
                 {
                     Span<byte> dst = output.Slice(op, 16);
@@ -541,20 +537,25 @@ internal sealed class LzwDecoder
                     BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(8), cHi);
                     if (cLen > 16)
                     {
-                        CopyLong(output, op, cPos, cLen, kwkwk);
+                        EmitChain(t, code, output, op, cLen);
                     }
 
                     op += cLen;
                 }
                 else
                 {
-                    op = EmitCareful(cLo, cHi, cLen, cPos, kwkwk, output, op, ip, ref limit);
+                    op = EmitCareful(t, code, cLen, output, op, ip, ref limit);
                     stop = (int)Math.Min(outLen, limit);
                     if (op >= outLen)
                     {
                         goto Done;
                     }
                 }
+
+                prev = code;
+                pLen = cLen;
+                pLo = cLo;
+                pHi = cHi;
             }
         }
 
@@ -563,35 +564,52 @@ internal sealed class LzwDecoder
         return op;
     }
 
-    // Copies the part of a string beyond its first 16 bytes (already stored) from where it occurs earlier in the output, 16 bytes at
-    // a time; the last step may write up to 15 bytes past the string, which the caller has left room for and the next string
-    // overwrites. Every source byte that counts lies before 'op', so a step never reads what it wrote. For the string being
-    // defined by the current code (previous string plus its own first byte) the last byte comes from the start of the string.
+    // The entry for a string of more than 16 bytes made from the previous string (entry 'prev', length pLen >= 16) and one more byte.
+    // The last chunk of 8 is full when the length is a multiple of 8; the new byte then starts a chunk of its own, linked to the
+    // previous string.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void CopyLong(Span<byte> output, int op, int src, int len, bool kwkwk)
+    private static void MakeLongEntry(BlockEntry[] t, ref BlockEntry n, int prev, int pLen, ulong ch)
     {
-        int copy = kwkwk ? len - 1 : len;
-        int s = src + 16;
-        int d = op + 16;
-        int end = op + copy;
-        while (d < end)
+        ref BlockEntry p = ref t[prev & (Lzw.MaxCodes - 1)];
+        if ((pLen & 7) == 0)
         {
-            BinaryPrimitives.WriteUInt64LittleEndian(output.Slice(d), BinaryPrimitives.ReadUInt64LittleEndian(output.Slice(s)));
-            BinaryPrimitives.WriteUInt64LittleEndian(output.Slice(d + 8), BinaryPrimitives.ReadUInt64LittleEndian(output.Slice(s + 8)));
-            s += 16;
-            d += 16;
+            n.Tail = ch;
+            n.Meta = ((ulong)(uint)(prev + 1) << 32) | (uint)(pLen + 1);
         }
-
-        if (kwkwk)
+        else
         {
-            output[op + copy] = output[src];
+            n.Tail = p.Tail | (ch << (8 * (pLen & 7)));
+            n.Meta = (p.Meta & 0xFFFF_FFFF_0000_0000UL) | (uint)(pLen + 1);
+        }
+    }
+
+    // Writes the part of the string of entry 'code' beyond its first 16 bytes (already stored): 8 bytes at a time from its end, down
+    // to the entry that is exactly 16 long.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void EmitChain(BlockEntry[] t, int code, Span<byte> output, int op, int len)
+    {
+        ref BlockEntry s = ref t[code & (Lzw.MaxCodes - 1)];
+        int pos = op + len - (((len - 1) & 7) + 1);
+        BinaryPrimitives.WriteUInt64LittleEndian(output.Slice(pos, 8), s.Tail);
+        int ci = (int)(s.Meta >> 32) - 1;
+        while (true)
+        {
+            ref BlockEntry e = ref t[ci & (Lzw.MaxCodes - 1)];
+            if ((int)e.Meta == 16)
+            {
+                break;
+            }
+
+            pos -= 8;
+            BinaryPrimitives.WriteUInt64LittleEndian(output.Slice(pos, 8), e.Tail);
+            ci = (int)(e.Meta >> 32) - 1;
         }
     }
 
     // Emission for the rare cases: the string may cross the output limit or the end of the output. Checks the output cap and
     // expansion ratio (raising 'limit' with the input read so far), then copies what fits; returns the new output position.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private int EmitCareful(ulong lo, ulong hi, int len, int pos, bool kwkwk, Span<byte> output, int op, int ip, ref long limit)
+    private int EmitCareful(BlockEntry[] t, int code, int len, Span<byte> output, int op, int ip, ref long limit)
     {
         if (op + (long)len > limit)
         {
@@ -603,22 +621,18 @@ internal sealed class LzwDecoder
             }
         }
 
-        int n = Math.Min(len, output.Length - op);
+        // Build the string aside (the 8-byte stores run past its end), then copy what fits.
+        ref BlockEntry s = ref t[code & (Lzw.MaxCodes - 1)];
         Span<byte> aside = _scratch;
-        BinaryPrimitives.WriteUInt64LittleEndian(aside, lo);
-        BinaryPrimitives.WriteUInt64LittleEndian(aside.Slice(8), hi);
-        aside.Slice(0, Math.Min(n, 16)).CopyTo(output.Slice(op));
-        if (n > 16)
+        BinaryPrimitives.WriteUInt64LittleEndian(aside, s.Lo);
+        BinaryPrimitives.WriteUInt64LittleEndian(aside.Slice(8), s.Hi);
+        if (len > 16)
         {
-            // Exact: the source ends before 'op' except for the one byte of a string being defined right now.
-            int copy = Math.Min(n, kwkwk ? len - 1 : len);
-            output.Slice(pos + 16, copy - 16).CopyTo(output.Slice(op + 16));
-            if (kwkwk && n == len)
-            {
-                output[op + len - 1] = output[pos];
-            }
+            EmitChain(t, code, aside, 0, len);
         }
 
+        int n = Math.Min(len, output.Length - op);
+        aside.Slice(0, n).CopyTo(output.Slice(op));
         return op + n;
     }
 
@@ -632,7 +646,7 @@ internal sealed class LzwDecoder
         for (int i = 0; i < 256; i++)
         {
             t[i].Lo = (ulong)i;
-            t[i].PosLen = 1UL << 32;
+            t[i].Meta = 1;
         }
 
         return t;
