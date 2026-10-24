@@ -32,6 +32,6 @@ Known limitations:
 - Check boxes, radio buttons and push buttons under `/NeedAppearances true` keep their stored appearance.
 - Overprint is ignored, and blend modes inside a knockout group are not applied.
 
-See the [PDF page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/pdf.md) for the options, limits, the render-gate method and verdicts (PDFium, MuPDF and pdf.js are used as a signal against ISO 32000-2), and the full list of approximations.
+See the [PDF page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/pdf.md) for the options, limits, the render-gate method and verdicts (PDFium, MuPDF and pdf.js are used as a signal against ISO 32000-2), and the full list of approximations.
 
 Licensed under MIT or Apache-2.0.

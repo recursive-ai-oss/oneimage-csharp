@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-24
+
 ### Added
 
 - `ImageEngine.RegionCacheBytes` (default 64 MiB per frame, 0 = off) and `Image.ReleaseDecodedPixels()`: repeated `CopyPixelsTo` region reads (bands, random rectangles) of a large JPEG or PNG no longer decode the image again. See the guide's pixel-access section.
@@ -165,7 +167,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.4.0...v1.5.0

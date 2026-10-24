@@ -13,9 +13,9 @@ How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (log scale, higher is better; slower tasks and ties are
 marked):
 
-![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.7.0/docs/img/oneimage-hero-light.svg)
+![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.8.0/docs/img/oneimage-hero-light.svg)
 
-[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/performance.md)
+[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/performance.md)
 
 ## Install
 
@@ -49,29 +49,30 @@ Image.Load("in.png").Save("out.jpg", new SaveOptions { EncoderOptions = new Jpeg
 The format of `Save` follows the file extension. For streams and buffer
 writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
-## What is new in 1.7.0
+## What is new in 1.8.0
 
-- **Allocation-free resizing for loops.** `PixelResizer` resizes from a span to a span and keeps its working memory between calls, so after warm-up it allocates nothing per call, even when every call has a new size. Output is byte for byte what `Image.Resize(w, h, Fit.Stretch, ...)` gives for every filter and mode. A 2300x60 gray strip to height 32 (Lanczos3, linear light) takes about 75 us instead of 255 us.
-- `Image.Resize` allocates less when it meets a size it has not seen (140 KB to 77 KB per call in that case), and 8-bit gray resizes are faster, with identical output.
+- **Repeated region reads no longer decode again.** From the second `CopyPixelsTo` of a sub-rectangle of a large JPEG or PNG, the rows read so far are kept in a bounded per-image plane in the requested format, so further band and region reads are copies. Load plus 20 random region reads of an A4 page: JPEG 47 to 26 ms, PNG 94 to 42 ms, with peak memory 31 to 10 MB above baseline. `ImageEngine.RegionCacheBytes` (64 MiB per frame, 0 turns it off) bounds it and `Image.ReleaseDecodedPixels()` gives it back.
+- **The first `Load` costs less memory.** The first PNG load in a process adds 2.3 MB instead of 11 MB, and the first JPEG load 2.5 MB instead of 6.1 MB.
+- Output is byte for byte the same as 1.7.0.
 
 ## Learn more
 
-- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/guide.md): the lazy model, errors, operations,
+- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/guide.md): the lazy model, errors, operations,
   `Canvas`, metadata, color, animation, limits, AOT and trimming.
-- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/layers.md): layered documents that render on demand, with
+- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/layers.md): layered documents that render on demand, with
   incremental re-rendering and an optional disk-spill store. Photoshop files
   load into them through the separate `RecursiveAI.OneImage.Psd` package
-  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/psd.md)).
-- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/migrating.md)
-- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/comparison.md), including where the
+  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/psd.md)).
+- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/migrating.md)
+- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/comparison.md), including where the
   others are the better fit
-- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/docs/performance.md)
-- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/CHANGELOG.md) and
-  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/SECURITY.md)
+- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/docs/performance.md)
+- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/CHANGELOG.md) and
+  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/SECURITY.md)
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/LICENSE-MIT) or
-[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.7.0/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/LICENSE-MIT) or
+[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.8.0/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.
