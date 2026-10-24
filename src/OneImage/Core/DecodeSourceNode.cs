@@ -136,14 +136,13 @@ internal sealed class DecodeSourceNode : Node
 
     /// <summary>
     /// Prepares for a read that will work through the frame from the top: a sliding-window pass that already moved on is dropped so
-    /// the read starts a fresh one, instead of missing its first row and counting a restart. A pass that retains rows is kept: it
-    /// still holds the top.
+    /// the read starts a fresh one, instead of missing its first row and counting a restart. A pass that retains rows, or a window that still holds the top, is kept.
     /// </summary>
     public void BeginForwardPass()
     {
         lock (_gate)
         {
-            if (_grid == null && _stream != null && !_stream.Session.Retaining)
+            if (_grid == null && _stream != null && !_stream.Session.Retaining && !_stream.Session.HoldsTop)
             {
                 _stream.Dispose();
                 _stream = null;

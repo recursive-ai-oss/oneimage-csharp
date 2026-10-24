@@ -417,6 +417,8 @@ ImageConfiguration.Default.Limits = new ImageLimits { MaxPixelsPerFrame = 50_000
   ImageEngine.CacheBudgetBytes = 64L * 1024 * 1024;
   ```
 - Large images from sequential decoders (16 MiB of pixel data and up) stream through a window of tile rows instead of being held whole. An operation that needs rows out of order (rotate by 90° or 270°, a vertical flip) makes the engine decode the whole frame once.
+- **Region reads of large JPEG and PNG files.** Such a frame streams through a window of rows, so `CopyPixelsTo` of a rectangle behind the window would have to decode again. The first region read keeps only the window. From the second on, the rows read are kept in a plane in the pixel format you ask for (`Gray8`, `Rgb24`, ...), filled from the top down only as far as needed, so reading 44 bands or 20 random rectangles costs about one decode plus the copies, even when the image is rotated by its EXIF orientation. The plane is capped by `ImageEngine.RegionCacheBytes` (default 64 MiB per frame, 0 turns it off); a frame whose plane does not fit behaves as before. The trade-off is memory held while the `Image` lives: about 8.7 MB for a Gray8 plane of an A4 page at 300 dpi and 26 MB for Rgb24 (one plane per format used, least recently used dropped). Call `image.ReleaseDecodedPixels()` when you are done reading regions; later reads decode again. Pixels read never depend on the cache.
+- `Image.Load(Stream)` copies the compressed file into pooled memory, once per image; `Image.Load(path)` and `Load(ReadOnlyMemory<byte>)` do not.
 - `Image` instances are safe for concurrent reads. A `Canvas` is not.
 
 ## AOT and trimming

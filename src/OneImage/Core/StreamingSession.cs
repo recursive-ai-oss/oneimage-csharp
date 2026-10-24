@@ -36,6 +36,7 @@ internal sealed class StreamingSession : ITileRowReceiver
     private readonly bool _retain;
     private int _maxRequested;
     private int _lowest;
+    private readonly int _startRow;
     private int _nextPublish;
     private volatile bool _aborted;
     private ExceptionDispatchInfo? _fault;
@@ -52,6 +53,7 @@ internal sealed class StreamingSession : ITileRowReceiver
         _format = format;
         _tilesY = (height + Tile.Size - 1) >> Tile.Shift;
         _maxRequested = startRow;
+        _startRow = startRow;
         Interlocked.Increment(ref s_liveThreads);
         new Thread(Run) { IsBackground = true, Name = "OneImage sequential decode" }.Start();
     }
@@ -61,6 +63,18 @@ internal sealed class StreamingSession : ITileRowReceiver
     /// window. The decoder still runs only as far as the furthest row asked for.
     /// </summary>
     public bool Retaining => _retain;
+
+    /// <summary>Gets a value indicating whether the first tile row is still in the window of a pass that began at the top (a forward reader can continue it).</summary>
+    public bool HoldsTop
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return !_aborted && _startRow == 0 && _lowest == 0;
+            }
+        }
+    }
 
     /// <summary>Gets the number of decode threads currently running (test statistic).</summary>
     public static int LiveThreads => Volatile.Read(ref s_liveThreads);

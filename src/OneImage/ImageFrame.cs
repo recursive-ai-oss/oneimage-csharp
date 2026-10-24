@@ -55,6 +55,12 @@ public sealed partial class ImageFrame
     /// format differs (round half up, clamped to range). Tiles are computed in parallel; the result does not depend on the degree.
     /// The first whole-frame read of a small image from a sequential decoder (PNG, GIF, WebP, ...) decodes straight into
     /// <paramref name="destination"/> without keeping tiles, so a second read of the same image decodes once more and then keeps them.
+    /// Regions of a large JPEG or PNG (16 MiB or more of pixels in its own format) are read from a sliding window of decoded rows. The first
+    /// region read keeps nothing beyond that window. From the second region read on, the rows read are kept in a plane in the requested
+    /// pixel format, filled from the top down only as far as the reads need, so any number of bands or rectangles costs about one decode
+    /// plus the copies. The plane is at most <see cref="ImageEngine.RegionCacheBytes"/> (default 64 MiB) per frame; a frame whose plane
+    /// would not fit decodes again for reads behind the window, as before. That is the memory cost: a Gray8 plane of an A4 page at 300 dpi
+    /// is about 8.7 MB, an Rgb24 plane about 26 MB. <see cref="Image.ReleaseDecodedPixels"/> gives it back. The bytes read never depend on the cache.
     /// </summary>
     /// <typeparam name="T">The pixel struct.</typeparam>
     /// <param name="destination">Receives <c>rect.Width * rect.Height</c> tightly packed pixels.</param>

@@ -101,7 +101,7 @@ internal static class RegionScenarios
 
     public static readonly string[] Names =
     [
-        "load", "whole-gray", "bands44-gray", "bands44-rgb", "random20-gray", "bands44-twice-gray", "random20-twice-gray",
+        "load", "whole-gray", "whole-rgb", "bands44-gray", "bands44-rgb", "random20-gray", "bands44-twice-gray", "random20-twice-gray",
     ];
 
     public static ImageRect[] Bands(int width, int height)
@@ -140,6 +140,9 @@ internal static class RegionScenarios
                 return image.Width + image.Height;
             case "whole-gray":
                 image.CopyPixelsTo<Gray8>(Gray(buffer), new ImageRect(0, 0, image.Width, image.Height));
+                return buffer[buffer.Length / 2];
+            case "whole-rgb":
+                image.CopyPixelsTo<Rgb24>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Rgb24>(buffer.AsSpan()), new ImageRect(0, 0, image.Width, image.Height));
                 return buffer[buffer.Length / 2];
             case "bands44-gray":
             case "bands44-twice-gray":
@@ -434,10 +437,10 @@ public class RegionReadBenchmarks
     private byte[] _buffer = null!;
     private Image _loaded = null!;
 
-    [Params("a4-baseline.jpg", "a4-progressive.jpg", "a4-png.png")]
+    [Params("a4-baseline.jpg", "a4-progressive.jpg", "a4-png.png", "phone-orient6.jpg")]
     public string Input { get; set; } = "";
 
-    [Params("load", "whole-gray", "bands44-gray", "random20-gray")]
+    [Params("load", "whole-gray", "whole-rgb", "bands44-gray", "random20-gray")]
     public string Scenario { get; set; } = "";
 
     [GlobalSetup]

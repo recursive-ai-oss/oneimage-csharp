@@ -4,6 +4,15 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `ImageEngine.RegionCacheBytes` (default 64 MiB per frame, 0 = off) and `Image.ReleaseDecodedPixels()`: repeated `CopyPixelsTo` region reads (bands, random rectangles) of a large JPEG or PNG no longer decode the image again. See the guide's pixel-access section.
+
+### Changed
+
+- Region reads of large JPEG/PNG frames: from the second region read on, the rows read are kept in a plane in the requested pixel format (at most `RegionCacheBytes` per frame, released by `ReleaseDecodedPixels()` or when the image is collected). Reading 44 Gray8 bands or 20 random rectangles of an A4 page now costs about one decode instead of up to three, and a rotated (EXIF) image no longer restarts decoding for each output row. The price is memory: a Gray8 plane of an A4 page is about 8.7 MB and an Rgb24 plane about 26 MB, kept while the image is alive. Set `RegionCacheBytes = 0` for the previous behaviour. Pixel values are unchanged.
+- The first `Image.Load` of a PNG or JPEG costs less resident memory (about +2.5 MB instead of +6 to +11 MB): the header parsers are split so the JIT compiles small methods instead of one large one.
+
 ## [1.7.0] - 2026-10-23
 
 ### Added
