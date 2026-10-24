@@ -178,7 +178,7 @@ public sealed partial class Canvas : IDisposable
         }
 
         int count = checked(rect.Width * rect.Height);
-        T[] staging = ArrayPool<T>.Shared.Rent(Math.Max(count, 1));
+        T[] staging = Pools<T>.Pool.Rent(Math.Max(count, 1));
         try
         {
             if (access == LockAccess.Write || rect.IsEmpty)
@@ -192,7 +192,7 @@ public sealed partial class Canvas : IDisposable
         }
         catch
         {
-            ArrayPool<T>.Shared.Return(staging);
+            Pools<T>.Pool.Return(staging);
             throw;
         }
 

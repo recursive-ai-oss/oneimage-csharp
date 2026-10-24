@@ -52,7 +52,7 @@ internal sealed class TiffChunkSink : IBufferWriter<byte>, IDisposable
             _full.Add((_current, _used));
         }
 
-        _current = ArrayPool<byte>.Shared.Rent(Math.Max(ChunkSize, need));
+        _current = Pools<byte>.Pool.Rent(Math.Max(ChunkSize, need));
         _used = 0;
     }
 
@@ -73,13 +73,13 @@ internal sealed class TiffChunkSink : IBufferWriter<byte>, IDisposable
     {
         foreach ((byte[] buffer, _) in _full)
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            Pools<byte>.Pool.Return(buffer);
         }
 
         _full.Clear();
         if (_current is not null)
         {
-            ArrayPool<byte>.Shared.Return(_current);
+            Pools<byte>.Pool.Return(_current);
             _current = null;
         }
 

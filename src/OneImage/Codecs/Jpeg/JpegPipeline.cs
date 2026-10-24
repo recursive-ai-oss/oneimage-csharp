@@ -214,7 +214,7 @@ internal sealed class JpegPipeline<T> : IDisposable
 
     private static T[] Rent(int length)
     {
-        T[] a = ArrayPool<T>.Shared.Rent(length);
+        T[] a = Pools<T>.Pool.Rent(length);
         a.AsSpan(0, length).Clear();
         return a;
     }
@@ -223,11 +223,11 @@ internal sealed class JpegPipeline<T> : IDisposable
     {
         foreach (Plane p in _planes)
         {
-            ArrayPool<T>.Shared.Return(p.Ring);
-            ArrayPool<T>.Shared.Return(p.Tmp);
+            Pools<T>.Pool.Return(p.Ring);
+            Pools<T>.Pool.Return(p.Tmp);
         }
 
-        ArrayPool<T>.Shared.Return(_outBuf);
+        Pools<T>.Pool.Return(_outBuf);
     }
 
     /// <summary>

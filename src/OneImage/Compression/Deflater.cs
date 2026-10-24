@@ -121,8 +121,8 @@ internal sealed class Deflater : IDisposable
     {
         ArgumentNullException.ThrowIfNull(sink);
         _sink = sink;
-        _out = ArrayPool<byte>.Shared.Rent(OutSize);
-        _window = ArrayPool<byte>.Shared.Rent(WindowAlloc);
+        _out = Pools<byte>.Pool.Rent(OutSize);
+        _window = Pools<byte>.Pool.Rent(WindowAlloc);
         Reset(level, zlib);
     }
 
@@ -188,8 +188,8 @@ internal sealed class Deflater : IDisposable
         {
             if (_head.Length == 0)
             {
-                _head = ArrayPool<ushort>.Shared.Rent(1 << HashBits);
-                _prev = ArrayPool<ushort>.Shared.Rent(WSize);
+                _head = Pools<ushort>.Pool.Rent(1 << HashBits);
+                _prev = Pools<ushort>.Pool.Rent(WSize);
             }
 
             Array.Clear(_head, 0, 1 << HashBits);
@@ -233,12 +233,12 @@ internal sealed class Deflater : IDisposable
         }
 
         _disposed = true;
-        ArrayPool<byte>.Shared.Return(_window);
-        ArrayPool<byte>.Shared.Return(_out);
+        Pools<byte>.Pool.Return(_window);
+        Pools<byte>.Pool.Return(_out);
         if (_head.Length != 0)
         {
-            ArrayPool<ushort>.Shared.Return(_head);
-            ArrayPool<ushort>.Shared.Return(_prev);
+            Pools<ushort>.Pool.Return(_head);
+            Pools<ushort>.Pool.Return(_prev);
         }
 
         _window = Array.Empty<byte>();

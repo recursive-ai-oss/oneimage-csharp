@@ -121,9 +121,9 @@ internal static class Resize
     public static Rgba32[] Area(Rgba32[] src, int sw, int sh, int dw, int dh, bool stencil, CancellationToken ct)
     {
         var dst = new Rgba32[(long)dw * dh];
-        float[] rowAcc = ArrayPool<float>.Shared.Rent(dw * 4);
-        float[] acc0 = ArrayPool<float>.Shared.Rent(dw * 4);
-        float[] acc1 = ArrayPool<float>.Shared.Rent(dw * 4);
+        float[] rowAcc = Pools<float>.Pool.Rent(dw * 4);
+        float[] acc0 = Pools<float>.Pool.Rent(dw * 4);
+        float[] acc1 = Pools<float>.Pool.Rent(dw * 4);
         try
         {
             Array.Clear(acc0, 0, dw * 4);
@@ -168,9 +168,9 @@ internal static class Resize
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(rowAcc);
-            ArrayPool<float>.Shared.Return(acc0);
-            ArrayPool<float>.Shared.Return(acc1);
+            Pools<float>.Pool.Return(rowAcc);
+            Pools<float>.Pool.Return(acc0);
+            Pools<float>.Pool.Return(acc1);
         }
 
         return dst;

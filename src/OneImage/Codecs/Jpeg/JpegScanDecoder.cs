@@ -48,7 +48,7 @@ internal sealed class JpegCoefficientStore : IDisposable
 
     private static short[] Rent(int length)
     {
-        short[] a = ArrayPool<short>.Shared.Rent(length);
+        short[] a = Pools<short>.Pool.Rent(length);
         a.AsSpan(0, length).Clear();
         return a;
     }
@@ -103,7 +103,7 @@ internal sealed class JpegCoefficientStore : IDisposable
             short[]? a = _rows[c.Index][blockRow];
             if (a is not null)
             {
-                ArrayPool<short>.Shared.Return(a);
+                Pools<short>.Pool.Return(a);
                 _rows[c.Index][blockRow] = null;
                 _allocated -= (long)c.BlocksPerLine * 64 * sizeof(short);
             }
@@ -118,7 +118,7 @@ internal sealed class JpegCoefficientStore : IDisposable
             {
                 if (comp[i] is { } a)
                 {
-                    ArrayPool<short>.Shared.Return(a);
+                    Pools<short>.Pool.Return(a);
                     comp[i] = null;
                 }
             }

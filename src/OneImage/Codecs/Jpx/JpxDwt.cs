@@ -40,8 +40,8 @@ internal static class JpxDwt
                 maxH = Math.Max(maxH, res[r].Height);
             }
 
-            rowScratch = ArrayPool<int>.Shared.Rent(maxW);
-            colScratch = ArrayPool<int>.Shared.Rent(maxH * ColumnBlock);
+            rowScratch = Pools<int>.Pool.Rent(maxW);
+            colScratch = Pools<int>.Pool.Rent(maxH * ColumnBlock);
         }
 
         try
@@ -52,8 +52,8 @@ internal static class JpxDwt
         {
             if (rowScratch is not null)
             {
-                ArrayPool<int>.Shared.Return(rowScratch);
-                ArrayPool<int>.Shared.Return(colScratch!);
+                Pools<int>.Pool.Return(rowScratch);
+                Pools<int>.Pool.Return(colScratch!);
             }
         }
     }
@@ -97,8 +97,8 @@ internal static class JpxDwt
                 maxH = Math.Max(maxH, res[r].Height);
             }
 
-            rowScratch = ArrayPool<float>.Shared.Rent(maxW);
-            colScratch = ArrayPool<float>.Shared.Rent(maxH * ColumnBlock);
+            rowScratch = Pools<float>.Pool.Rent(maxW);
+            colScratch = Pools<float>.Pool.Rent(maxH * ColumnBlock);
         }
 
         try
@@ -109,8 +109,8 @@ internal static class JpxDwt
         {
             if (rowScratch is not null)
             {
-                ArrayPool<float>.Shared.Return(rowScratch);
-                ArrayPool<float>.Shared.Return(colScratch!);
+                Pools<float>.Pool.Return(rowScratch);
+                Pools<float>.Pool.Return(colScratch!);
             }
         }
     }

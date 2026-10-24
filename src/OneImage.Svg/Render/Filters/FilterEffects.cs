@@ -61,7 +61,7 @@ internal static class FilterEffects
             float[] from = src;
             if (rx > 0)
             {
-                mid = ArrayPool<float>.Shared.Rent(Math.Max(count, 1));
+                mid = Pools<float>.Pool.Rent(Math.Max(count, 1));
                 Pass(from, ry > 0 ? mid : dst, w, h, Math.Min(rx, w), dilate, horizontal: true);
                 from = ry > 0 ? mid : dst;
             }
@@ -79,7 +79,7 @@ internal static class FilterEffects
         {
             if (mid is not null)
             {
-                ArrayPool<float>.Shared.Return(mid);
+                Pools<float>.Pool.Return(mid);
             }
         }
     }
@@ -91,9 +91,9 @@ internal static class FilterEffects
         int lines = horizontal ? h : w;
         int win = (2 * r) + 1;
         int padded = len + (2 * r);
-        float[] line = ArrayPool<float>.Shared.Rent(padded);
-        float[] pre = ArrayPool<float>.Shared.Rent(padded);
-        float[] suf = ArrayPool<float>.Shared.Rent(padded);
+        float[] line = Pools<float>.Pool.Rent(padded);
+        float[] pre = Pools<float>.Pool.Rent(padded);
+        float[] suf = Pools<float>.Pool.Rent(padded);
         try
         {
             for (int c = 0; c < 4; c++)
@@ -128,9 +128,9 @@ internal static class FilterEffects
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(line);
-            ArrayPool<float>.Shared.Return(pre);
-            ArrayPool<float>.Shared.Return(suf);
+            Pools<float>.Pool.Return(line);
+            Pools<float>.Pool.Return(pre);
+            Pools<float>.Pool.Return(suf);
         }
     }
 

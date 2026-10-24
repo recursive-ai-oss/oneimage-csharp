@@ -349,7 +349,7 @@ internal static class TrimScan
 
         int w = node.Width;
         const int Band = Tile.Size;
-        byte[] buf = ArrayPool<byte>.Shared.Rent(w * Band * 4);
+        byte[] buf = Pools<byte>.Pool.Rent(w * Band * 4);
         try
         {
             Rgba32 bg = background ?? default;
@@ -406,7 +406,7 @@ internal static class TrimScan
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buf);
+            Pools<byte>.Pool.Return(buf);
         }
     }
 

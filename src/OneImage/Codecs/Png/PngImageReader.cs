@@ -75,14 +75,14 @@ internal static class PngImageReader
         using var reader = new PngDataReader(src, fd.DataOffset, fd.IsFdat, total + InflateSlack, limits.MaxExpansionRatio);
         try
         {
-            raw = ArrayPool<byte>.Shared.Rent(checked(batchRows * rawRowLen));
+            raw = Pools<byte>.Pool.Rent(checked(batchRows * rawRowLen));
             if (pipelined)
             {
-                raw2 = ArrayPool<byte>.Shared.Rent(raw.Length);
+                raw2 = Pools<byte>.Pool.Rent(raw.Length);
             }
 
-            prev = ArrayPool<byte>.Shared.Rent((int)rawRowMax);
-            outBuf = ArrayPool<byte>.Shared.Rent(checked(batchRows * outRowMax));
+            prev = Pools<byte>.Pool.Rent((int)rawRowMax);
+            outBuf = Pools<byte>.Pool.Rent(checked(batchRows * outRowMax));
             if (!st.Interlaced)
             {
                 Array.Clear(prev, 0, (int)rawRowMax);
@@ -141,7 +141,7 @@ internal static class PngImageReader
                 throw new ImageLimitException("An interlaced image of this size cannot be assembled in memory.");
             }
 
-            frame = ArrayPool<byte>.Shared.Rent((int)frameBytes);
+            frame = Pools<byte>.Pool.Rent((int)frameBytes);
             for (int p = 0; p < 7; p++)
             {
                 (int pw, int ph) = PassSize(p, w, h);

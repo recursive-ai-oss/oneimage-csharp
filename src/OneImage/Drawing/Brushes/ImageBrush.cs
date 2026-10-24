@@ -92,7 +92,7 @@ internal sealed class ImageBrush : Brush
 
             if (pooled && d != null)
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(d);
+                Pools<byte>.Pool.Return(d);
             }
         }
 
@@ -109,7 +109,7 @@ internal sealed class ImageBrush : Brush
                 if (_data == null)
                 {
                     int length = region.Width * region.Height * 4;
-                    byte[] bytes = pooled ? System.Buffers.ArrayPool<byte>.Shared.Rent(length) : new byte[length];
+                    byte[] bytes = pooled ? Pools<byte>.Pool.Rent(length) : new byte[length];
                     Render.ReadRegion(node, region, bytes, 0, PixelFormat.Rgba8, RenderContext.Create(1, CancellationToken.None));
                     Volatile.Write(ref _data, bytes);
                 }

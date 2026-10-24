@@ -162,7 +162,7 @@ internal static class FilterBlurReference
     {
         int r = kernel.Length / 2;
         int stride = w * 4;
-        double[] acc = ArrayPool<double>.Shared.Rent(stride);
+        double[] acc = Pools<double>.Pool.Rent(stride);
         try
         {
             for (int y = 0; y < h; y++)
@@ -189,7 +189,7 @@ internal static class FilterBlurReference
         }
         finally
         {
-            ArrayPool<double>.Shared.Return(acc);
+            Pools<double>.Pool.Return(acc);
         }
     }
 
@@ -248,7 +248,7 @@ internal static class FilterBlurReference
         int hi = size - 1 - left;
         double inv = 1.0 / size;
         int stride = w * 4;
-        double[] acc = ArrayPool<double>.Shared.Rent(stride);
+        double[] acc = Pools<double>.Pool.Rent(stride);
         try
         {
             Array.Clear(acc, 0, stride);
@@ -293,7 +293,7 @@ internal static class FilterBlurReference
         }
         finally
         {
-            ArrayPool<double>.Shared.Return(acc);
+            Pools<double>.Pool.Return(acc);
         }
     }
 }

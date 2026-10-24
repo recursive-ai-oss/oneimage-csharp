@@ -106,8 +106,8 @@ internal sealed class RadialOverlayNode : Node
         bool bytePath = input.Format.Sample == SampleType.U8 && input.Format.Alpha != AlphaMode.Premultiplied;
         Tile src = input.GetTile(tx, ty, context);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
-        float[] row = ArrayPool<float>.Shared.Rent(bytePath ? 1 : o.Width * c);
-        float[] amounts = ArrayPool<float>.Shared.Rent(o.Width);
+        float[] row = Pools<float>.Pool.Rent(bytePath ? 1 : o.Width * c);
+        float[] amounts = Pools<float>.Pool.Rent(o.Width);
         try
         {
             int x0 = Math.Max(o.X, _area.X);
@@ -175,8 +175,8 @@ internal sealed class RadialOverlayNode : Node
         finally
         {
             src.Release();
-            ArrayPool<float>.Shared.Return(row);
-            ArrayPool<float>.Shared.Return(amounts);
+            Pools<float>.Pool.Return(row);
+            Pools<float>.Pool.Return(amounts);
         }
     }
 

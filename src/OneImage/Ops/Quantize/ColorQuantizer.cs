@@ -211,7 +211,7 @@ internal sealed class ColorQuantizer
         // Gather populated cells (mean color, weight) before the histogram is turned into cumulative moments.
         // The cells go in a pooled array that doubles by renting: a growing List would leave every smaller copy behind as garbage
         // for each palette built, and an animation builds many.
-        Cell[] cells = ArrayPool<Cell>.Shared.Rent(4096);
+        Cell[] cells = Pools<Cell>.Pool.Rent(4096);
         int cellCount = 0;
         try
         {
@@ -233,9 +233,9 @@ internal sealed class ColorQuantizer
                             int lutIndex = (((((full ? (_aDim == 2 ? 7 : ab - 1) : 0) << 5) | (r - 1)) << 5 | (g - 1)) << 5) | (b - 1);
                             if (cellCount == cells.Length)
                             {
-                                Cell[] bigger = ArrayPool<Cell>.Shared.Rent(cells.Length * 2);
+                                Cell[] bigger = Pools<Cell>.Pool.Rent(cells.Length * 2);
                                 Array.Copy(cells, bigger, cellCount);
-                                ArrayPool<Cell>.Shared.Return(cells);
+                                Pools<Cell>.Pool.Return(cells);
                                 cells = bigger;
                             }
 
@@ -281,7 +281,7 @@ internal sealed class ColorQuantizer
         }
         finally
         {
-            ArrayPool<Cell>.Shared.Return(cells);
+            Pools<Cell>.Pool.Return(cells);
         }
     }
 

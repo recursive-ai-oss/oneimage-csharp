@@ -19,8 +19,8 @@ internal static class CellRenderer
         double sx = targetWidth / info.Width, sy = targetHeight / info.Height;
         int firstCol = region.X / Cell, lastCol = (region.Right - 1) / Cell;
         int rowBytes = region.Width * 4;
-        byte[] cell = ArrayPool<byte>.Shared.Rent(Cell * Cell * 4);
-        byte[] band = ArrayPool<byte>.Shared.Rent(Math.Min(Cell, region.Height) * rowBytes);
+        byte[] cell = Pools<byte>.Pool.Rent(Cell * Cell * 4);
+        byte[] band = Pools<byte>.Pool.Rent(Math.Min(Cell, region.Height) * rowBytes);
         try
         {
             for (int cy = (region.Y / Cell) * Cell; cy < region.Bottom; cy += Cell)
@@ -45,8 +45,8 @@ internal static class CellRenderer
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(cell);
-            ArrayPool<byte>.Shared.Return(band);
+            Pools<byte>.Pool.Return(cell);
+            Pools<byte>.Pool.Return(band);
         }
     }
 

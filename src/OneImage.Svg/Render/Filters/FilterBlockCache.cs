@@ -150,7 +150,7 @@ internal static class FilterBlockCache
         if (block.Pixels is { } p)
         {
             block.Pixels = null;
-            ArrayPool<Rgba32>.Shared.Return(p);
+            Pools<Rgba32>.Pool.Return(p);
         }
     }
 

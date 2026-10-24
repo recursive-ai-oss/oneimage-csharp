@@ -38,7 +38,7 @@ internal static class InvertKernel
         int bpp = format.BytesPerPixel;
         int width = source.Length / bpp;
         int n = width * ch;
-        float[] buf = ArrayPool<float>.Shared.Rent(n);
+        float[] buf = Pools<float>.Pool.Rent(n);
         try
         {
             Span<float> v = buf.AsSpan(0, n);
@@ -57,7 +57,7 @@ internal static class InvertKernel
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(buf);
+            Pools<float>.Pool.Return(buf);
         }
     }
 

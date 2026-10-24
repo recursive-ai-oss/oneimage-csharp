@@ -196,13 +196,13 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(plane);
+            Pools<float>.Pool.Return(plane);
         }
 
         Contour(cov, rect.Width * rect.Height, d.Contour);
         if (d.KnockedOut)
         {
-            float[] own = ArrayPool<float>.Shared.Rent(rect.Width * rect.Height);
+            float[] own = Pools<float>.Pool.Rent(rect.Width * rect.Height);
             try
             {
                 source.ReadAlpha(rect, own);
@@ -213,7 +213,7 @@ internal static partial class EffectRenderer
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(own);
+                Pools<float>.Pool.Return(own);
             }
         }
 
@@ -234,7 +234,7 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(plane);
+            Pools<float>.Pool.Return(plane);
         }
 
         Stretch(cov, rect.Width * rect.Height, g.Range);
@@ -247,7 +247,7 @@ internal static partial class EffectRenderer
     {
         (double dx, double dy) = Offset(angle, distance);
         float[]? plane = ShiftedMatte(source, rect, dx, dy, choke, size, invert: true, out Plane p);
-        float[] own = ArrayPool<float>.Shared.Rent(rect.Width * rect.Height);
+        float[] own = Pools<float>.Pool.Rent(rect.Width * rect.Height);
         try
         {
             source.ReadAlpha(rect, own);
@@ -277,10 +277,10 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(own);
+            Pools<float>.Pool.Return(own);
             if (plane != null)
             {
-                ArrayPool<float>.Shared.Return(plane);
+                Pools<float>.Pool.Return(plane);
             }
         }
     }
@@ -294,9 +294,9 @@ internal static partial class EffectRenderer
         int oy = (int)Math.Round(dy);
         int pad = blur.Margin + 2 + Math.Max(Math.Abs(ox), Math.Abs(oy));
         ImageRect region = Layer.Widen(rect, pad);
-        float[] a = ArrayPool<float>.Shared.Rent(region.Width * region.Height);
-        float[] diff = ArrayPool<float>.Shared.Rent(region.Width * region.Height);
-        float[] own = ArrayPool<float>.Shared.Rent(rect.Width * rect.Height);
+        float[] a = Pools<float>.Pool.Rent(region.Width * region.Height);
+        float[] diff = Pools<float>.Pool.Rent(region.Width * region.Height);
+        float[] own = Pools<float>.Pool.Rent(rect.Width * rect.Height);
         try
         {
             source.ReadAlpha(region, a);
@@ -334,9 +334,9 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(a);
-            ArrayPool<float>.Shared.Return(diff);
-            ArrayPool<float>.Shared.Return(own);
+            Pools<float>.Pool.Return(a);
+            Pools<float>.Pool.Return(diff);
+            Pools<float>.Pool.Return(own);
         }
     }
 
@@ -354,7 +354,7 @@ internal static partial class EffectRenderer
 
         int margin = (int)Math.Ceiling(size) + 2;
         ImageRect region = Layer.Widen(rect, margin);
-        float[] a = ArrayPool<float>.Shared.Rent(region.Width * region.Height);
+        float[] a = Pools<float>.Pool.Rent(region.Width * region.Height);
         try
         {
             source.ReadAlpha(region, a);
@@ -379,7 +379,7 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(a);
+            Pools<float>.Pool.Return(a);
         }
     }
 
@@ -411,7 +411,7 @@ internal static partial class EffectRenderer
         // The window that has to be right: the rectangle moved to where the matte is sampled, plus one pixel for interpolation.
         var needed = new ImageRect(rect.X + sx, rect.Y + sy, rect.Width + 1, rect.Height + 1);
         ImageRect region = Layer.Widen(needed, margin);
-        float[] data = ArrayPool<float>.Shared.Rent(region.Width * region.Height);
+        float[] data = Pools<float>.Pool.Rent(region.Width * region.Height);
         plane = new Plane(data, region);
         int n = region.Width * region.Height;
         source.ReadAlpha(region, data);
@@ -424,7 +424,7 @@ internal static partial class EffectRenderer
         }
         else if (!AnyPositive(data, n))
         {
-            ArrayPool<float>.Shared.Return(data);
+            Pools<float>.Pool.Return(data);
             return null;
         }
 
@@ -602,11 +602,11 @@ internal readonly struct BlurPlan
             return;
         }
 
-        float[] tmp = ArrayPool<float>.Shared.Rent(w * h);
+        float[] tmp = Pools<float>.Pool.Rent(w * h);
         try
         {
-            float[] line = ArrayPool<float>.Shared.Rent(Math.Max(w, h) + 1);
-            float[] outLine = ArrayPool<float>.Shared.Rent(Math.Max(w, h) + 1);
+            float[] line = Pools<float>.Pool.Rent(Math.Max(w, h) + 1);
+            float[] outLine = Pools<float>.Pool.Rent(Math.Max(w, h) + 1);
             try
             {
                 // Horizontal: rows in place.
@@ -633,13 +633,13 @@ internal readonly struct BlurPlan
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(line);
-                ArrayPool<float>.Shared.Return(outLine);
+                Pools<float>.Pool.Return(line);
+                Pools<float>.Pool.Return(outLine);
             }
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(tmp);
+            Pools<float>.Pool.Return(tmp);
         }
     }
 
@@ -725,13 +725,13 @@ internal sealed class SignedDistance : IDisposable
         int n = width * height;
         if (outside)
         {
-            _outside = ArrayPool<float>.Shared.Rent(n);
+            _outside = Pools<float>.Pool.Rent(n);
             Field(alpha, width, height, sourceIsShape: true, _outside);
         }
 
         if (inside)
         {
-            _inside = ArrayPool<float>.Shared.Rent(n);
+            _inside = Pools<float>.Pool.Rent(n);
             Field(alpha, width, height, sourceIsShape: false, _inside);
         }
     }
@@ -756,13 +756,13 @@ internal sealed class SignedDistance : IDisposable
     {
         if (_outside != null)
         {
-            ArrayPool<float>.Shared.Return(_outside);
+            Pools<float>.Pool.Return(_outside);
             _outside = null;
         }
 
         if (_inside != null)
         {
-            ArrayPool<float>.Shared.Return(_inside);
+            Pools<float>.Pool.Return(_inside);
             _inside = null;
         }
     }
@@ -774,14 +774,14 @@ internal sealed class SignedDistance : IDisposable
     private static void Field(float[] alpha, int w, int h, bool sourceIsShape, float[] result)
     {
         int n = w * h;
-        float[] g = ArrayPool<float>.Shared.Rent(n);
-        int[] srcRow = ArrayPool<int>.Shared.Rent(n);
+        float[] g = Pools<float>.Pool.Rent(n);
+        int[] srcRow = Pools<int>.Pool.Rent(n);
         int m = Math.Max(w, h);
-        float[] f = ArrayPool<float>.Shared.Rent(m);
-        float[] d = ArrayPool<float>.Shared.Rent(m);
-        int[] arg = ArrayPool<int>.Shared.Rent(m);
-        int[] v = ArrayPool<int>.Shared.Rent(m);
-        float[] z = ArrayPool<float>.Shared.Rent(m + 1);
+        float[] f = Pools<float>.Pool.Rent(m);
+        float[] d = Pools<float>.Pool.Rent(m);
+        int[] arg = Pools<int>.Pool.Rent(m);
+        int[] v = Pools<int>.Pool.Rent(m);
+        float[] z = Pools<float>.Pool.Rent(m + 1);
         try
         {
             for (int x = 0; x < w; x++)
@@ -828,13 +828,13 @@ internal sealed class SignedDistance : IDisposable
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(g);
-            ArrayPool<int>.Shared.Return(srcRow);
-            ArrayPool<float>.Shared.Return(f);
-            ArrayPool<float>.Shared.Return(d);
-            ArrayPool<int>.Shared.Return(arg);
-            ArrayPool<int>.Shared.Return(v);
-            ArrayPool<float>.Shared.Return(z);
+            Pools<float>.Pool.Return(g);
+            Pools<int>.Pool.Return(srcRow);
+            Pools<float>.Pool.Return(f);
+            Pools<float>.Pool.Return(d);
+            Pools<int>.Pool.Return(arg);
+            Pools<int>.Pool.Return(v);
+            Pools<float>.Pool.Return(z);
         }
     }
 

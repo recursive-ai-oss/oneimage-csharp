@@ -196,7 +196,7 @@ internal sealed class ChannelReader
         if (predictor)
         {
             int rowBytes = RowBytesFor(width, depth);
-            byte[]? tmp = depth == 32 ? ArrayPool<byte>.Shared.Rent(rowBytes) : null;
+            byte[]? tmp = depth == 32 ? Pools<byte>.Pool.Rent(rowBytes) : null;
             try
             {
                 for (int y = 0; y < lines; y++)
@@ -209,7 +209,7 @@ internal sealed class ChannelReader
             {
                 if (tmp != null)
                 {
-                    ArrayPool<byte>.Shared.Return(tmp);
+                    Pools<byte>.Pool.Return(tmp);
                 }
             }
         }

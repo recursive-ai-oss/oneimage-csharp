@@ -61,7 +61,7 @@ internal static class ContainerIo
         buffer = null;
         if (b != null)
         {
-            ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 

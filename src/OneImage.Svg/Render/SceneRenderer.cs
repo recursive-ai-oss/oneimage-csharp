@@ -81,7 +81,7 @@ internal static class SceneRenderer
     private static void WriteBand(Canvas canvas, int width, int rows, int firstRow, IRowSink sink)
     {
         int length = width * rows * 4;
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(length);
+        byte[] bytes = Pools<byte>.Pool.Rent(length);
         try
         {
             canvas.CopyToBytes(bytes.AsSpan(0, length), new ImageRect(0, 0, width, rows));
@@ -89,7 +89,7 @@ internal static class SceneRenderer
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(bytes);
+            Pools<byte>.Pool.Return(bytes);
         }
     }
 

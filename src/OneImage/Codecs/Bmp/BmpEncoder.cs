@@ -101,9 +101,9 @@ internal sealed class BmpEncoder : IImageEncoder
         dest.Write(head);
 
         int stripRows = Math.Max(1, Math.Min(height, (1 << 20) / Math.Max(1, width * srcBpp)));
-        byte[] src = ArrayPool<byte>.Shared.Rent(stripRows * width * srcBpp);
-        byte[] outBlock = ArrayPool<byte>.Shared.Rent((int)(stripRows * stride));
-        byte[]? mask = icon ? ArrayPool<byte>.Shared.Rent((int)(maskBytes)) : null;
+        byte[] src = Pools<byte>.Pool.Rent(stripRows * width * srcBpp);
+        byte[] outBlock = Pools<byte>.Pool.Rent((int)(stripRows * stride));
+        byte[]? mask = icon ? Pools<byte>.Pool.Rent((int)(maskBytes)) : null;
         try
         {
             // Bottom-up: the last image rows come first in the file.
@@ -162,11 +162,11 @@ internal sealed class BmpEncoder : IImageEncoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(src);
-            ArrayPool<byte>.Shared.Return(outBlock);
+            Pools<byte>.Pool.Return(src);
+            Pools<byte>.Pool.Return(outBlock);
             if (mask != null)
             {
-                ArrayPool<byte>.Shared.Return(mask);
+                Pools<byte>.Pool.Return(mask);
             }
         }
 
@@ -181,7 +181,7 @@ internal sealed class BmpEncoder : IImageEncoder
     private static bool ScanAlpha(PngRowReader rows, int width, int height, CancellationToken ct)
     {
         int stripRows = Math.Max(1, Math.Min(height, (1 << 20) / (width * 4)));
-        byte[] buf = ArrayPool<byte>.Shared.Rent(stripRows * width * 4);
+        byte[] buf = Pools<byte>.Pool.Rent(stripRows * width * 4);
         try
         {
             for (int y = 0; y < height; y += stripRows)
@@ -203,7 +203,7 @@ internal sealed class BmpEncoder : IImageEncoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buf);
+            Pools<byte>.Pool.Return(buf);
         }
     }
 }

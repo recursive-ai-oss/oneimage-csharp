@@ -36,8 +36,8 @@ internal sealed class PixelateNode : Node
         Node input = Inputs[0];
         ImageRect need = RequiredInput(0, o);
         int bpp = Format.BytesPerPixel;
-        byte[] src = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * bpp);
-        int[] cols = ArrayPool<int>.Shared.Rent(o.Width);
+        byte[] src = Pools<byte>.Pool.Rent(need.Width * need.Height * bpp);
+        int[] cols = Pools<int>.Pool.Rent(o.Width);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -76,8 +76,8 @@ internal sealed class PixelateNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(src);
-            ArrayPool<int>.Shared.Return(cols);
+            Pools<byte>.Pool.Return(src);
+            Pools<int>.Pool.Return(cols);
         }
     }
 }

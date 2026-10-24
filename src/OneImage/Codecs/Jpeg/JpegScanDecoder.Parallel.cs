@@ -192,7 +192,7 @@ internal sealed partial class JpegScanDecoder
             {
                 if (s.Data.Length > 0)
                 {
-                    ArrayPool<byte>.Shared.Return(s.Data);
+                    Pools<byte>.Pool.Return(s.Data);
                     s.Data = [];
                 }
             }

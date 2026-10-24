@@ -43,15 +43,15 @@ internal sealed partial class EqualizeNode
         int obpp = Format.BytesPerPixel;
         bool convert = _work != Format;
 
-        byte[] region = ArrayPool<byte>.Shared.Rent(needW * needH * wbpp);
-        ushort[] regionBins = ArrayPool<ushort>.Shared.Rent(needW * needH);
-        int[] colIdx = ArrayPool<int>.Shared.Rent(padW);
-        int[] rowOff = ArrayPool<int>.Shared.Rent(padH);
-        int[] hist = ArrayPool<int>.Shared.Rent(levels);
-        int[] clipScratch = _clip ? ArrayPool<int>.Shared.Rent(levels) : [];
-        int[] vals = ArrayPool<int>.Shared.Rent(o.Width);
-        ushort[] ownBins = ArrayPool<ushort>.Shared.Rent(o.Width);
-        byte[]? convRow = convert ? ArrayPool<byte>.Shared.Rent(o.Width * wbpp) : null;
+        byte[] region = Pools<byte>.Pool.Rent(needW * needH * wbpp);
+        ushort[] regionBins = Pools<ushort>.Pool.Rent(needW * needH);
+        int[] colIdx = Pools<int>.Pool.Rent(padW);
+        int[] rowOff = Pools<int>.Pool.Rent(padH);
+        int[] hist = Pools<int>.Pool.Rent(levels);
+        int[] clipScratch = _clip ? Pools<int>.Pool.Rent(levels) : [];
+        int[] vals = Pools<int>.Pool.Rent(o.Width);
+        ushort[] ownBins = Pools<ushort>.Pool.Rent(o.Width);
+        byte[]? convRow = convert ? Pools<byte>.Pool.Rent(o.Width * wbpp) : null;
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -146,21 +146,21 @@ internal sealed partial class EqualizeNode
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(region);
-            ArrayPool<ushort>.Shared.Return(regionBins);
-            ArrayPool<int>.Shared.Return(colIdx);
-            ArrayPool<int>.Shared.Return(rowOff);
-            ArrayPool<int>.Shared.Return(hist);
+            Pools<byte>.Pool.Return(region);
+            Pools<ushort>.Pool.Return(regionBins);
+            Pools<int>.Pool.Return(colIdx);
+            Pools<int>.Pool.Return(rowOff);
+            Pools<int>.Pool.Return(hist);
             if (_clip)
             {
-                ArrayPool<int>.Shared.Return(clipScratch);
+                Pools<int>.Pool.Return(clipScratch);
             }
 
-            ArrayPool<int>.Shared.Return(vals);
-            ArrayPool<ushort>.Shared.Return(ownBins);
+            Pools<int>.Pool.Return(vals);
+            Pools<ushort>.Pool.Return(ownBins);
             if (convRow != null)
             {
-                ArrayPool<byte>.Shared.Return(convRow);
+                Pools<byte>.Pool.Return(convRow);
             }
         }
     }

@@ -43,9 +43,9 @@ internal sealed class MedianNode : Node
         int ph = o.Height + (2 * r);
         int padL = need.X - (o.X - r);
         int padR = o.Right + r - need.Right;
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * bpp);
+        byte[] bytes = Pools<byte>.Pool.Rent(need.Width * need.Height * bpp);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
-        int[] colMap = ArrayPool<int>.Shared.Rent(pw);
+        int[] colMap = Pools<int>.Pool.Rent(pw);
         try
         {
             Render.ReadRegion(input, need, bytes, need.Width * bpp, fmt, context);
@@ -61,7 +61,7 @@ internal sealed class MedianNode : Node
 
             if (fmt.Sample == SampleType.U8)
             {
-                byte[] padded = ArrayPool<byte>.Shared.Rent(pw * ph * c);
+                byte[] padded = Pools<byte>.Pool.Rent(pw * ph * c);
                 try
                 {
                     for (int i = 0; i < ph; i++)
@@ -91,7 +91,7 @@ internal sealed class MedianNode : Node
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(padded);
+                    Pools<byte>.Pool.Return(padded);
                 }
 
                 return tile;
@@ -99,10 +99,10 @@ internal sealed class MedianNode : Node
 
             // 16-bit and floating point: convert to float samples, pad, sort windows, convert back.
             int sampleRow = need.Width * c;
-            float[] region = ArrayPool<float>.Shared.Rent(need.Height * sampleRow);
-            float[] paddedF = ArrayPool<float>.Shared.Rent(pw * ph * c);
-            float[] result = ArrayPool<float>.Shared.Rent(o.Width * o.Height * c);
-            float[] window = ArrayPool<float>.Shared.Rent((2 * r + 1) * (2 * r + 1));
+            float[] region = Pools<float>.Pool.Rent(need.Height * sampleRow);
+            float[] paddedF = Pools<float>.Pool.Rent(pw * ph * c);
+            float[] result = Pools<float>.Pool.Rent(o.Width * o.Height * c);
+            float[] window = Pools<float>.Pool.Rent((2 * r + 1) * (2 * r + 1));
             try
             {
                 int total = need.Height * sampleRow;
@@ -148,10 +148,10 @@ internal sealed class MedianNode : Node
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(region);
-                ArrayPool<float>.Shared.Return(paddedF);
-                ArrayPool<float>.Shared.Return(result);
-                ArrayPool<float>.Shared.Return(window);
+                Pools<float>.Pool.Return(region);
+                Pools<float>.Pool.Return(paddedF);
+                Pools<float>.Pool.Return(result);
+                Pools<float>.Pool.Return(window);
             }
         }
         catch
@@ -161,8 +161,8 @@ internal sealed class MedianNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(bytes);
-            ArrayPool<int>.Shared.Return(colMap);
+            Pools<byte>.Pool.Return(bytes);
+            Pools<int>.Pool.Return(colMap);
         }
     }
 
@@ -243,9 +243,9 @@ internal sealed class SobelNode : Node
         int padL = need.X - (o.X - 1);
         int padR = o.Right + 1 - need.Right;
         int rowF = o.Width + 2;
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * ibpp);
-        float[] gray = ArrayPool<float>.Shared.Rent((need.Height + 1) * rowF);
-        float[] mag = ArrayPool<float>.Shared.Rent(o.Width);
+        byte[] bytes = Pools<byte>.Pool.Rent(need.Width * need.Height * ibpp);
+        float[] gray = Pools<float>.Pool.Rent((need.Height + 1) * rowF);
+        float[] mag = Pools<float>.Pool.Rent(o.Width);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -281,9 +281,9 @@ internal sealed class SobelNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(bytes);
-            ArrayPool<float>.Shared.Return(gray);
-            ArrayPool<float>.Shared.Return(mag);
+            Pools<byte>.Pool.Return(bytes);
+            Pools<float>.Pool.Return(gray);
+            Pools<float>.Pool.Return(mag);
         }
     }
 }
@@ -314,8 +314,8 @@ internal sealed class UnsharpCombineNode : Node
         Tile a = Inputs[0].GetTile(tx, ty, context);
         Tile? b = null;
         int p = _layout.Stride;
-        float[] orig = ArrayPool<float>.Shared.Rent(o.Width * p);
-        float[] blur = ArrayPool<float>.Shared.Rent(o.Width * p);
+        float[] orig = Pools<float>.Pool.Rent(o.Width * p);
+        float[] blur = Pools<float>.Pool.Rent(o.Width * p);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -342,8 +342,8 @@ internal sealed class UnsharpCombineNode : Node
         {
             a.Release();
             b?.Release();
-            ArrayPool<float>.Shared.Return(orig);
-            ArrayPool<float>.Shared.Return(blur);
+            Pools<float>.Pool.Return(orig);
+            Pools<float>.Pool.Return(blur);
         }
     }
 }

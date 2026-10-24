@@ -97,7 +97,7 @@ internal sealed class FilterBuffer : IDisposable
     {
         Rect = rect;
         Linear = linear;
-        _data = ArrayPool<float>.Shared.Rent(Math.Max(rect.W * rect.H * 4, 1));
+        _data = Pools<float>.Pool.Rent(Math.Max(rect.W * rect.H * 4, 1));
         if (clear)
         {
             Array.Clear(_data, 0, rect.W * rect.H * 4);
@@ -136,7 +136,7 @@ internal sealed class FilterBuffer : IDisposable
 
             // Expanded on first use, in sRGB.
             int count = Rect.W * Rect.H;
-            float[] d = ArrayPool<float>.Shared.Rent(Math.Max(count * 4, 1));
+            float[] d = Pools<float>.Pool.Rent(Math.Max(count * 4, 1));
             Fill(_bytes, d, count, linear: false);
             return _data = d;
         }
@@ -152,12 +152,12 @@ internal sealed class FilterBuffer : IDisposable
         _bytes = null;
         if (d is not null)
         {
-            ArrayPool<float>.Shared.Return(d);
+            Pools<float>.Pool.Return(d);
         }
 
         if (b is not null)
         {
-            ArrayPool<Rgba32>.Shared.Return(b);
+            Pools<Rgba32>.Pool.Return(b);
         }
     }
 

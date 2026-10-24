@@ -611,11 +611,11 @@ internal sealed class PngDecoder : IImageDecoder
             }
 
             int outStride = _r.Width * _bpp;
-            _buf ??= ArrayPool<byte>.Shared.Rent(Math.Max(outStride * Math.Min(count, _r.Height), 1));
+            _buf ??= Pools<byte>.Pool.Rent(Math.Max(outStride * Math.Min(count, _r.Height), 1));
             if (_buf.Length < n * outStride)
             {
                 ContainerIo.Return(ref _buf);
-                _buf = ArrayPool<byte>.Shared.Rent(n * outStride);
+                _buf = Pools<byte>.Pool.Rent(n * outStride);
             }
 
             for (int i = 0; i < n; i++)
@@ -654,7 +654,7 @@ internal sealed class PngDecoder : IImageDecoder
             bool convert = _st.Natural != canvasFormat;
             if (convert)
             {
-                _tmp ??= ArrayPool<byte>.Shared.Rent(w * cbpp);
+                _tmp ??= Pools<byte>.Pool.Rent(w * cbpp);
             }
 
             for (int i = 0; i < count; i++)

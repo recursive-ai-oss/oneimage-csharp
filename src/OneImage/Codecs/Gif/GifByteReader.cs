@@ -12,7 +12,7 @@ internal sealed class GifByteReader : IDisposable
     public GifByteReader(Stream stream)
     {
         _stream = stream;
-        _buf = System.Buffers.ArrayPool<byte>.Shared.Rent(16384);
+        _buf = Pools<byte>.Pool.Rent(16384);
         Length = stream.Length;
         SeekTo(0);
     }
@@ -114,7 +114,7 @@ internal sealed class GifByteReader : IDisposable
         _buf = null;
         if (b != null)
         {
-            System.Buffers.ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 

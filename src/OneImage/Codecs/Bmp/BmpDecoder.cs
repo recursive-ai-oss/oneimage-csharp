@@ -358,8 +358,8 @@ internal sealed class BmpDecoder : IImageDecoder
         var conv = new RowConverter(st);
         int outBpp = st.Format.BytesPerPixel;
         int outStride = region.Width * outBpp;
-        byte[]? rowBuf = ArrayPool<byte>.Shared.Rent(st.Width * outBpp);
-        byte[]? outBuf = ArrayPool<byte>.Shared.Rent(outStride);
+        byte[]? rowBuf = Pools<byte>.Pool.Rent(st.Width * outBpp);
+        byte[]? outBuf = Pools<byte>.Pool.Rent(outStride);
         try
         {
             if (st.Compression is 1 or 2)
@@ -390,8 +390,8 @@ internal sealed class BmpDecoder : IImageDecoder
             int batch = (int)Math.Max(1, Math.Min(region.Height, (1 << 18) / stride));
             ReadOnlyMemory<byte> mem = s is ReadOnlyMemoryStream rms ? rms.Data : default;
             bool direct = region.X == 0 && region.Width == st.Width;
-            byte[]? block = mem.IsEmpty ? ArrayPool<byte>.Shared.Rent((int)(batch * stride)) : null;
-            byte[] outBlock = ArrayPool<byte>.Shared.Rent(checked(batch * outStride));
+            byte[]? block = mem.IsEmpty ? Pools<byte>.Pool.Rent((int)(batch * stride)) : null;
+            byte[] outBlock = Pools<byte>.Pool.Rent(checked(batch * outStride));
             try
             {
                 for (int y0 = 0; y0 < region.Height; y0 += batch)
@@ -436,10 +436,10 @@ internal sealed class BmpDecoder : IImageDecoder
             {
                 if (block != null)
                 {
-                    ArrayPool<byte>.Shared.Return(block);
+                    Pools<byte>.Pool.Return(block);
                 }
 
-                ArrayPool<byte>.Shared.Return(outBlock);
+                Pools<byte>.Pool.Return(outBlock);
             }
         }
         finally
@@ -456,7 +456,7 @@ internal sealed class BmpDecoder : IImageDecoder
         int h = st.Height;
         byte[] idx = new byte[(long)w * h];
         s.Position = st.DataOffset;
-        byte[] buf = ArrayPool<byte>.Shared.Rent(1 << 16);
+        byte[] buf = Pools<byte>.Pool.Rent(1 << 16);
         int pos = 0;
         int len = 0;
         bool four = st.Compression == 2;
@@ -563,7 +563,7 @@ internal sealed class BmpDecoder : IImageDecoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buf);
+            Pools<byte>.Pool.Return(buf);
         }
 
         return idx;

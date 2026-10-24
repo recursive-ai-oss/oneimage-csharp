@@ -70,7 +70,7 @@ internal static partial class EffectRenderer
         float size = Math.Max(s.Size, 1e-3f);
         int margin = (int)Math.Ceiling(s.Size) + 2;
         ImageRect region = Layer.Widen(rect, margin);
-        float[] a = ArrayPool<float>.Shared.Rent(region.Width * region.Height);
+        float[] a = Pools<float>.Pool.Rent(region.Width * region.Height);
         try
         {
             source.ReadAlpha(region, a);
@@ -90,7 +90,7 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(a);
+            Pools<float>.Pool.Return(a);
         }
     }
 
@@ -132,8 +132,8 @@ internal static partial class EffectRenderer
         ImageRect region = Layer.Widen(rect, margin);
         int w = region.Width;
         int h = region.Height;
-        float[] a = ArrayPool<float>.Shared.Rent(w * h);
-        float[] height = ArrayPool<float>.Shared.Rent(w * h);
+        float[] a = Pools<float>.Pool.Rent(w * h);
+        float[] height = Pools<float>.Pool.Rent(w * h);
         try
         {
             source.ReadAlpha(region, a);
@@ -217,8 +217,8 @@ internal static partial class EffectRenderer
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(a);
-            ArrayPool<float>.Shared.Return(height);
+            Pools<float>.Pool.Return(a);
+            Pools<float>.Pool.Return(height);
         }
     }
 

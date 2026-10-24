@@ -178,8 +178,8 @@ internal static class PdfColors
 
     private static void TransformRow(ColorTransform t, int n, ReadOnlySpan<byte> samples, Span<Rgba32> dst, int count)
     {
-        float[] src = ArrayPool<float>.Shared.Rent(Chunk * n);
-        float[] outp = ArrayPool<float>.Shared.Rent(Chunk * 3);
+        float[] src = Pools<float>.Pool.Rent(Chunk * n);
+        float[] outp = Pools<float>.Pool.Rent(Chunk * 3);
         try
         {
             for (int start = 0; start < count; start += Chunk)
@@ -200,8 +200,8 @@ internal static class PdfColors
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(src);
-            ArrayPool<float>.Shared.Return(outp);
+            Pools<float>.Pool.Return(src);
+            Pools<float>.Pool.Return(outp);
         }
     }
 

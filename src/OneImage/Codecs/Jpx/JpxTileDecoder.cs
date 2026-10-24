@@ -145,12 +145,12 @@ internal static class JpxTileDecoder
                 int count = tc.BufferWidth * tc.BufferHeight;
                 if (tc.Cod.Reversible)
                 {
-                    tc.IntCoeffs = ArrayPool<int>.Shared.Rent(count);
+                    tc.IntCoeffs = Pools<int>.Pool.Rent(count);
                     Array.Clear(tc.IntCoeffs, 0, count);
                 }
                 else
                 {
-                    tc.FloatCoeffs = ArrayPool<float>.Shared.Rent(count);
+                    tc.FloatCoeffs = Pools<float>.Pool.Rent(count);
                     Array.Clear(tc.FloatCoeffs, 0, count);
                 }
             }
@@ -223,13 +223,13 @@ internal static class JpxTileDecoder
             {
                 if (tc.IntCoeffs is not null)
                 {
-                    ArrayPool<int>.Shared.Return(tc.IntCoeffs);
+                    Pools<int>.Pool.Return(tc.IntCoeffs);
                     tc.IntCoeffs = null;
                 }
 
                 if (tc.FloatCoeffs is not null)
                 {
-                    ArrayPool<float>.Shared.Return(tc.FloatCoeffs);
+                    Pools<float>.Pool.Return(tc.FloatCoeffs);
                     tc.FloatCoeffs = null;
                 }
             }

@@ -136,7 +136,7 @@ internal sealed class TiffDecoder : IImageDecoder, IDirectFrameDecoder
         int bpp = f.Format.BytesPerPixel;
         int outRowBytes = checked(r.Width * bpp);
         int chunkRows = Math.Clamp((1 << 20) / Math.Max(outRowBytes, 1), 1, 128);
-        byte[] band = ArrayPool<byte>.Shared.Rent(checked(outRowBytes * Math.Min(chunkRows, r.Height)));
+        byte[] band = Pools<byte>.Pool.Rent(checked(outRowBytes * Math.Min(chunkRows, r.Height)));
         try
         {
             int rowBytes = (int)f.BlockRowBytes;
@@ -228,7 +228,7 @@ internal sealed class TiffDecoder : IImageDecoder, IDirectFrameDecoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(band);
+            Pools<byte>.Pool.Return(band);
         }
     }
 
@@ -271,7 +271,7 @@ internal sealed class TiffDecoder : IImageDecoder, IDirectFrameDecoder
             int x1 = Math.Min(f.Width, blockLeft + f.BlockWidth);
             int count = x1 - blockLeft;
             var blocks = new byte[]?[f.Planes];
-            byte[]? scratch = converter == null ? null : ArrayPool<byte>.Shared.Rent(count * bpp);
+            byte[]? scratch = converter == null ? null : Pools<byte>.Pool.Rent(count * bpp);
             try
             {
                 for (int plane = 0; plane < f.Planes; plane++)
@@ -312,7 +312,7 @@ internal sealed class TiffDecoder : IImageDecoder, IDirectFrameDecoder
                 ReleaseHeld(blocks);
                 if (scratch != null)
                 {
-                    ArrayPool<byte>.Shared.Return(scratch);
+                    Pools<byte>.Pool.Return(scratch);
                 }
             }
         }
@@ -369,7 +369,7 @@ internal sealed class TiffDecoder : IImageDecoder, IDirectFrameDecoder
         {
             if (held[i] is { } b)
             {
-                ArrayPool<byte>.Shared.Return(b);
+                Pools<byte>.Pool.Return(b);
                 held[i] = null;
             }
         }

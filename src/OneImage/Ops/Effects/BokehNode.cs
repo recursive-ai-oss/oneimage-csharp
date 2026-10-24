@@ -189,13 +189,13 @@ internal sealed class BokehNode : Node
         int padR = o.Right + r - need.Right;
         int rowF = (o.Width + (2 * r)) * p;
         int hstride = o.Width * p;
-        float[] padded = ArrayPool<float>.Shared.Rent((need.Height + 1) * rowF);
-        float[] hRe = ArrayPool<float>.Shared.Rent((need.Height + 1) * hstride);
-        float[] hIm = ArrayPool<float>.Shared.Rent((need.Height + 1) * hstride);
-        float[] part = ArrayPool<float>.Shared.Rent(hstride);
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * ibpp);
-        int[] offA = ArrayPool<int>.Shared.Rent(r);
-        int[] offB = ArrayPool<int>.Shared.Rent(r);
+        float[] padded = Pools<float>.Pool.Rent((need.Height + 1) * rowF);
+        float[] hRe = Pools<float>.Pool.Rent((need.Height + 1) * hstride);
+        float[] hIm = Pools<float>.Pool.Rent((need.Height + 1) * hstride);
+        float[] part = Pools<float>.Pool.Rent(hstride);
+        byte[] bytes = Pools<byte>.Pool.Rent(need.Width * need.Height * ibpp);
+        int[] offA = Pools<int>.Pool.Rent(r);
+        int[] offB = Pools<int>.Pool.Rent(r);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -220,7 +220,7 @@ internal sealed class BokehNode : Node
             int obpp = Format.BytesPerPixel;
             // The horizontal passes of one component cover every row read; the vertical pass sums them per output row, and
             // components add up in a tile-sized buffer.
-            float[] sums = ArrayPool<float>.Shared.Rent(o.Height * hstride);
+            float[] sums = Pools<float>.Pool.Rent(o.Height * hstride);
             try
             {
                 for (int k = 0; k < _kernels.Components; k++)
@@ -280,7 +280,7 @@ internal sealed class BokehNode : Node
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(sums);
+                Pools<float>.Pool.Return(sums);
             }
 
             return tile;
@@ -292,13 +292,13 @@ internal sealed class BokehNode : Node
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(padded);
-            ArrayPool<float>.Shared.Return(hRe);
-            ArrayPool<float>.Shared.Return(hIm);
-            ArrayPool<float>.Shared.Return(part);
-            ArrayPool<byte>.Shared.Return(bytes);
-            ArrayPool<int>.Shared.Return(offA);
-            ArrayPool<int>.Shared.Return(offB);
+            Pools<float>.Pool.Return(padded);
+            Pools<float>.Pool.Return(hRe);
+            Pools<float>.Pool.Return(hIm);
+            Pools<float>.Pool.Return(part);
+            Pools<byte>.Pool.Return(bytes);
+            Pools<int>.Pool.Return(offA);
+            Pools<int>.Pool.Return(offB);
         }
     }
 

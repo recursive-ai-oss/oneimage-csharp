@@ -320,8 +320,8 @@ internal sealed class TextLayout
             return;
         }
 
-        int[] owner = ArrayPool<int>.Shared.Rent(len);
-        int[] next = ArrayPool<int>.Shared.Rent(len + 1);
+        int[] owner = Pools<int>.Pool.Rent(len);
+        int[] next = Pools<int>.Pool.Rent(len + 1);
         _runOf = owner;
         try
         {
@@ -346,7 +346,7 @@ internal sealed class TextLayout
         }
         finally
         {
-            ArrayPool<int>.Shared.Return(next);
+            Pools<int>.Pool.Return(next);
         }
     }
 
@@ -372,7 +372,7 @@ internal sealed class TextLayout
     {
         if (_runOf is not null)
         {
-            ArrayPool<int>.Shared.Return(_runOf);
+            Pools<int>.Pool.Return(_runOf);
             _runOf = null;
         }
     }
@@ -730,8 +730,8 @@ internal sealed class TextLayout
     {
         int length = end - start;
         _paragraphStart = start;
-        _breaks = ArrayPool<byte>.Shared.Rent(length + 1);
-        _clusters = ArrayPool<byte>.Shared.Rent(length + 1);
+        _breaks = Pools<byte>.Pool.Rent(length + 1);
+        _clusters = Pools<byte>.Pool.Rent(length + 1);
         if (length == 0)
         {
             return;
@@ -778,8 +778,8 @@ internal sealed class TextLayout
 
     private void ReleaseBreaks()
     {
-        ArrayPool<byte>.Shared.Return(_breaks);
-        ArrayPool<byte>.Shared.Return(_clusters);
+        Pools<byte>.Pool.Return(_breaks);
+        Pools<byte>.Pool.Return(_clusters);
         _breaks = [];
         _clusters = [];
     }
@@ -853,9 +853,9 @@ internal sealed class TextLayout
             return;
         }
 
-        int[] cps = ArrayPool<int>.Shared.Rent(length);
-        byte[] lev = ArrayPool<byte>.Shared.Rent(length);
-        int[] at = ArrayPool<int>.Shared.Rent(length);
+        int[] cps = Pools<int>.Pool.Rent(length);
+        byte[] lev = Pools<byte>.Pool.Rent(length);
+        int[] at = Pools<int>.Pool.Rent(length);
         try
         {
             int n = 0;
@@ -875,8 +875,8 @@ internal sealed class TextLayout
             }
 
             _paraLevel = OneTextShaping.ResolveBidiLevels(cps.AsSpan(0, n), _direction switch { TextDirection.LeftToRight => global::OneFont.TextDirection.LeftToRight, TextDirection.RightToLeft => global::OneFont.TextDirection.RightToLeft, _ => global::OneFont.TextDirection.Auto }, lev.AsSpan(0, n));
-            byte[] levels = ArrayPool<byte>.Shared.Rent(length + 1);
-            byte[] raw = ArrayPool<byte>.Shared.Rent(length + 1);
+            byte[] levels = Pools<byte>.Pool.Rent(length + 1);
+            byte[] raw = Pools<byte>.Pool.Rent(length + 1);
             byte prev = (byte)_paraLevel;
             for (int k = 0; k < n; k++)
             {
@@ -896,9 +896,9 @@ internal sealed class TextLayout
         }
         finally
         {
-            ArrayPool<int>.Shared.Return(cps);
-            ArrayPool<byte>.Shared.Return(lev);
-            ArrayPool<int>.Shared.Return(at);
+            Pools<int>.Pool.Return(cps);
+            Pools<byte>.Pool.Return(lev);
+            Pools<int>.Pool.Return(at);
         }
     }
 
@@ -906,11 +906,11 @@ internal sealed class TextLayout
     {
         if (_levels is not null)
         {
-            ArrayPool<byte>.Shared.Return(_levels);
+            Pools<byte>.Pool.Return(_levels);
             _levels = null;
             if (_rawLevels is not null)
             {
-                ArrayPool<byte>.Shared.Return(_rawLevels);
+                Pools<byte>.Pool.Return(_rawLevels);
                 _rawLevels = null;
             }
         }
@@ -947,13 +947,13 @@ internal sealed class TextLayout
             return;
         }
 
-        int[] cps = ArrayPool<int>.Shared.Rent(length);
-        byte[] lev = ArrayPool<byte>.Shared.Rent(length);
-        int[] order = ArrayPool<int>.Shared.Rent(length);
-        int[] rankAt = ArrayPool<int>.Shared.Rent(length);
-        int[] keyed = ArrayPool<int>.Shared.Rent(n);
-        long[] keys = ArrayPool<long>.Shared.Rent(n);
-        int[] head = ArrayPool<int>.Shared.Rent(n);
+        int[] cps = Pools<int>.Pool.Rent(length);
+        byte[] lev = Pools<byte>.Pool.Rent(length);
+        int[] order = Pools<int>.Pool.Rent(length);
+        int[] rankAt = Pools<int>.Pool.Rent(length);
+        int[] keyed = Pools<int>.Pool.Rent(n);
+        long[] keys = Pools<long>.Pool.Rent(n);
+        int[] head = Pools<int>.Pool.Rent(n);
         try
         {
             int m = 0;
@@ -987,7 +987,7 @@ internal sealed class TextLayout
             int shown = OneTextShaping.GetVisualOrder(lev.AsSpan(0, m), order.AsSpan(0, m));
 
             // The display rank of every character, then of every glyph by the character it starts at.
-            int[] rankByIndex = ArrayPool<int>.Shared.Rent(m);
+            int[] rankByIndex = Pools<int>.Pool.Rent(m);
             try
             {
                 for (int r = 0; r < shown; r++)
@@ -1022,7 +1022,7 @@ internal sealed class TextLayout
             }
             finally
             {
-                ArrayPool<int>.Shared.Return(rankByIndex);
+                Pools<int>.Pool.Return(rankByIndex);
             }
 
             Array.Sort(keys, keyed, 0, n);
@@ -1063,13 +1063,13 @@ internal sealed class TextLayout
         }
         finally
         {
-            ArrayPool<int>.Shared.Return(cps);
-            ArrayPool<byte>.Shared.Return(lev);
-            ArrayPool<int>.Shared.Return(order);
-            ArrayPool<int>.Shared.Return(rankAt);
-            ArrayPool<int>.Shared.Return(keyed);
-            ArrayPool<long>.Shared.Return(keys);
-            ArrayPool<int>.Shared.Return(head);
+            Pools<int>.Pool.Return(cps);
+            Pools<byte>.Pool.Return(lev);
+            Pools<int>.Pool.Return(order);
+            Pools<int>.Pool.Return(rankAt);
+            Pools<int>.Pool.Return(keyed);
+            Pools<long>.Pool.Return(keys);
+            Pools<int>.Pool.Return(head);
         }
     }
 

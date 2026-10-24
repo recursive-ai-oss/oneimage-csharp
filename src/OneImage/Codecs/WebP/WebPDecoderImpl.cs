@@ -66,7 +66,7 @@ internal sealed class WebPDecoderImpl : IImageDecoder
                 }
 
                 WebPFrameRecord f = file.Frames[i];
-                byte[] tmp = ArrayPool<byte>.Shared.Rent(checked(f.Width * f.Height * 4));
+                byte[] tmp = Pools<byte>.Pool.Rent(checked(f.Width * f.Height * 4));
                 try
                 {
                     var buf = new BufferSink(f.Width, f.Height, PixelFormat.Rgba8, tmp);
@@ -75,7 +75,7 @@ internal sealed class WebPDecoderImpl : IImageDecoder
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(tmp);
+                    Pools<byte>.Pool.Return(tmp);
                 }
 
                 c.Last = i;
@@ -99,7 +99,7 @@ internal sealed class WebPDecoderImpl : IImageDecoder
             throw new ImageOperationException("The sink size does not match the frame.");
         }
 
-        byte[] data = ArrayPool<byte>.Shared.Rent(f.DataLength);
+        byte[] data = Pools<byte>.Pool.Rent(f.DataLength);
         byte[]? alpha = null;
         try
         {
@@ -116,7 +116,7 @@ internal sealed class WebPDecoderImpl : IImageDecoder
 
             if (f.AlphaLength > 0)
             {
-                alpha = ArrayPool<byte>.Shared.Rent(f.AlphaLength);
+                alpha = Pools<byte>.Pool.Rent(f.AlphaLength);
                 source.Position = f.AlphaOffset;
                 WebPContainer.ReadExactly(source, alpha.AsSpan(0, f.AlphaLength));
             }
@@ -125,10 +125,10 @@ internal sealed class WebPDecoderImpl : IImageDecoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(data);
+            Pools<byte>.Pool.Return(data);
             if (alpha != null)
             {
-                ArrayPool<byte>.Shared.Return(alpha);
+                Pools<byte>.Pool.Return(alpha);
             }
         }
     }

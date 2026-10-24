@@ -97,9 +97,9 @@ internal sealed class QuantizeNode : Node
             int h = Height;
             int inRow = checked(w * 4);
             int outBpp = Format.BytesPerPixel;
-            byte[] band = ArrayPool<byte>.Shared.Rent(checked(inRow * Math.Min(Tile.Size, h)));
-            byte[] outBand = ArrayPool<byte>.Shared.Rent(checked(w * outBpp * Math.Min(Tile.Size, h)));
-            byte[] idx = ArrayPool<byte>.Shared.Rent(w);
+            byte[] band = Pools<byte>.Pool.Rent(checked(inRow * Math.Min(Tile.Size, h)));
+            byte[] outBand = Pools<byte>.Pool.Rent(checked(w * outBpp * Math.Min(Tile.Size, h)));
+            byte[] idx = Pools<byte>.Pool.Rent(w);
             var grid = new TileGrid(w, h, Format, null);
             try
             {
@@ -157,9 +157,9 @@ internal sealed class QuantizeNode : Node
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(band);
-                ArrayPool<byte>.Shared.Return(outBand);
-                ArrayPool<byte>.Shared.Return(idx);
+                Pools<byte>.Pool.Return(band);
+                Pools<byte>.Pool.Return(outBand);
+                Pools<byte>.Pool.Return(idx);
             }
         }
     }

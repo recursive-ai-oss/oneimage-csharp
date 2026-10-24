@@ -23,7 +23,7 @@ internal sealed partial class JpegReader : IDisposable
     public JpegReader(Stream stream)
     {
         _stream = stream;
-        _buf = ArrayPool<byte>.Shared.Rent(BufferSize);
+        _buf = Pools<byte>.Pool.Rent(BufferSize);
     }
 
     private JpegReader()
@@ -60,7 +60,7 @@ internal sealed partial class JpegReader : IDisposable
         _buf = [];
         if (b.Length > 0 && _ownsBuffer)
         {
-            ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 
@@ -416,11 +416,11 @@ internal sealed partial class JpegReader : IDisposable
                 throw new ImageLimitException("JPEG restart interval data is too large.");
             }
 
-            byte[] bigger = ArrayPool<byte>.Shared.Rent((int)Math.Max(need, Math.Min((long)dst.Length * 2, Array.MaxLength)));
+            byte[] bigger = Pools<byte>.Pool.Rent((int)Math.Max(need, Math.Min((long)dst.Length * 2, Array.MaxLength)));
             dst.AsSpan(0, len).CopyTo(bigger);
             if (dst.Length > 0)
             {
-                ArrayPool<byte>.Shared.Return(dst);
+                Pools<byte>.Pool.Return(dst);
             }
 
             dst = bigger;

@@ -935,7 +935,7 @@ internal static class VP8LEncoder
             int degree = Math.Min(_o.Degree, bands);
             int waveBands = Math.Max(8, 2 * degree);
             int waveLen = (int)Math.Min(n, (long)waveBands * BandPixels);
-            int[] chain = System.Buffers.ArrayPool<int>.Shared.Rent((int)Math.Min(n, (long)Window + waveLen));
+            int[] chain = Pools<int>.Pool.Rent((int)Math.Min(n, (long)Window + waveLen));
             try
             {
                 var perBand = new MatchList[bands];
@@ -1015,7 +1015,7 @@ internal static class VP8LEncoder
             }
             finally
             {
-                System.Buffers.ArrayPool<int>.Shared.Return(chain);
+                Pools<int>.Pool.Return(chain);
             }
         }
 

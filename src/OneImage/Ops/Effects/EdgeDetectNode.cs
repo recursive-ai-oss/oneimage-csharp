@@ -173,12 +173,12 @@ internal sealed class EdgeDetectNode : Node
             maxTaps = Math.Max(maxTaps, w.Length);
         }
 
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * ibpp);
-        float[] padded = ArrayPool<float>.Shared.Rent((need.Height + 1) * rowF);
-        float[] resp = ArrayPool<float>.Shared.Rent(_kernels.Length * outLen);
-        float[] result = ArrayPool<float>.Shared.Rent(outLen);
-        int[] offsets = ArrayPool<int>.Shared.Rent(maxTaps);
-        byte[]? gray8 = _grayscale && input.Format.Sample == SampleType.U8 && input.Format.Model == ColorModel.Rgb ? ArrayPool<byte>.Shared.Rent(need.Width) : null;
+        byte[] bytes = Pools<byte>.Pool.Rent(need.Width * need.Height * ibpp);
+        float[] padded = Pools<float>.Pool.Rent((need.Height + 1) * rowF);
+        float[] resp = Pools<float>.Pool.Rent(_kernels.Length * outLen);
+        float[] result = Pools<float>.Pool.Rent(outLen);
+        int[] offsets = Pools<int>.Pool.Rent(maxTaps);
+        byte[]? gray8 = _grayscale && input.Format.Sample == SampleType.U8 && input.Format.Model == ColorModel.Rgb ? Pools<byte>.Pool.Rent(need.Width) : null;
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -239,14 +239,14 @@ internal sealed class EdgeDetectNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(bytes);
-            ArrayPool<float>.Shared.Return(padded);
-            ArrayPool<float>.Shared.Return(resp);
-            ArrayPool<float>.Shared.Return(result);
-            ArrayPool<int>.Shared.Return(offsets);
+            Pools<byte>.Pool.Return(bytes);
+            Pools<float>.Pool.Return(padded);
+            Pools<float>.Pool.Return(resp);
+            Pools<float>.Pool.Return(result);
+            Pools<int>.Pool.Return(offsets);
             if (gray8 != null)
             {
-                ArrayPool<byte>.Shared.Return(gray8);
+                Pools<byte>.Pool.Return(gray8);
             }
         }
     }

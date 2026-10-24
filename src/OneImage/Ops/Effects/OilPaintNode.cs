@@ -63,13 +63,13 @@ internal sealed class OilPaintNode : Node
         int ws = _before + _after + 1;
         int pw = o.Width + ws - 1;
         int ph = o.Height + ws - 1;
-        byte[] region = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * wbpp);
-        int[] bins = ArrayPool<int>.Shared.Rent(pw * ph);
-        int[] vals = ArrayPool<int>.Shared.Rent(pw * ph * c);
-        int[] cnt = ArrayPool<int>.Shared.Rent(_levels);
-        int[] sum = ArrayPool<int>.Shared.Rent(_levels * c);
-        int[] colMap = ArrayPool<int>.Shared.Rent(pw);
-        byte[] outRow = ArrayPool<byte>.Shared.Rent(o.Width * wbpp);
+        byte[] region = Pools<byte>.Pool.Rent(need.Width * need.Height * wbpp);
+        int[] bins = Pools<int>.Pool.Rent(pw * ph);
+        int[] vals = Pools<int>.Pool.Rent(pw * ph * c);
+        int[] cnt = Pools<int>.Pool.Rent(_levels);
+        int[] sum = Pools<int>.Pool.Rent(_levels * c);
+        int[] colMap = Pools<int>.Pool.Rent(pw);
+        byte[] outRow = Pools<byte>.Pool.Rent(o.Width * wbpp);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -170,13 +170,13 @@ internal sealed class OilPaintNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(region);
-            ArrayPool<int>.Shared.Return(bins);
-            ArrayPool<int>.Shared.Return(vals);
-            ArrayPool<int>.Shared.Return(cnt);
-            ArrayPool<int>.Shared.Return(sum);
-            ArrayPool<int>.Shared.Return(colMap);
-            ArrayPool<byte>.Shared.Return(outRow);
+            Pools<byte>.Pool.Return(region);
+            Pools<int>.Pool.Return(bins);
+            Pools<int>.Pool.Return(vals);
+            Pools<int>.Pool.Return(cnt);
+            Pools<int>.Pool.Return(sum);
+            Pools<int>.Pool.Return(colMap);
+            Pools<byte>.Pool.Return(outRow);
         }
     }
 

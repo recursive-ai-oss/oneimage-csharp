@@ -63,7 +63,7 @@ internal sealed class WeightBuffers : IDisposable
     {
         if (array.Length > 0)
         {
-            ArrayPool<T>.Shared.Return(array);
+            Pools<T>.Pool.Return(array);
         }
     }
 
@@ -74,7 +74,7 @@ internal sealed class WeightBuffers : IDisposable
             return;
         }
 
-        T[] bigger = ArrayPool<T>.Shared.Rent(needed);
+        T[] bigger = Pools<T>.Pool.Rent(needed);
         array.AsSpan(0, keep).CopyTo(bigger);
         Release(array);
         array = bigger;

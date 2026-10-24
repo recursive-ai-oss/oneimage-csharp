@@ -173,7 +173,7 @@ internal static class FilterRenderer
             return (null, default);
         }
 
-        Rgba32[] px = System.Buffers.ArrayPool<Rgba32>.Shared.Rent((int)crop.Area);
+        Rgba32[] px = Pools<Rgba32>.Pool.Rent((int)crop.Area);
         buf.ToRgba(px.AsSpan(0, (int)crop.Area), crop);
         return (px, new PxRect(crop.X - ax, crop.Y - ay, crop.W, crop.H));
     }
@@ -275,14 +275,14 @@ internal static class FilterRenderer
 
     private static FilterBuffer ReadBuffer(Canvas canvas, PxRect rect)
     {
-        Rgba32[] px = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(rect.W * rect.H);
+        Rgba32[] px = Pools<Rgba32>.Pool.Rent(rect.W * rect.H);
         try
         {
             canvas.CopyTo(px.AsSpan(0, rect.W * rect.H), new ImageRect(0, 0, rect.W, rect.H));
         }
         catch
         {
-            System.Buffers.ArrayPool<Rgba32>.Shared.Return(px);
+            Pools<Rgba32>.Pool.Return(px);
             throw;
         }
 
@@ -302,7 +302,7 @@ internal static class FilterRenderer
                 return;
             }
 
-            Rgba32[] vis = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(visible.W * visible.H);
+            Rgba32[] vis = Pools<Rgba32>.Pool.Rent(visible.W * visible.H);
             try
             {
                 result.ToRgba(vis.AsSpan(0, visible.W * visible.H), visible);
@@ -310,13 +310,13 @@ internal static class FilterRenderer
             }
             finally
             {
-                System.Buffers.ArrayPool<Rgba32>.Shared.Return(vis);
+                Pools<Rgba32>.Pool.Return(vis);
             }
 
             return;
         }
 
-        Rgba32[] px = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(r.W * r.H);
+        Rgba32[] px = Pools<Rgba32>.Pool.Rent(r.W * r.H);
         try
         {
             result.ToRgba(px.AsSpan(0, r.W * r.H));
@@ -334,7 +334,7 @@ internal static class FilterRenderer
         }
         finally
         {
-            System.Buffers.ArrayPool<Rgba32>.Shared.Return(px);
+            Pools<Rgba32>.Pool.Return(px);
         }
     }
 
@@ -347,7 +347,7 @@ internal static class FilterRenderer
             return;
         }
 
-        Rgba32[] part = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(dst.W * dst.H);
+        Rgba32[] part = Pools<Rgba32>.Pool.Rent(dst.W * dst.H);
         try
         {
             for (int y = 0; y < dst.H; y++)
@@ -359,7 +359,7 @@ internal static class FilterRenderer
         }
         finally
         {
-            System.Buffers.ArrayPool<Rgba32>.Shared.Return(part);
+            Pools<Rgba32>.Pool.Return(part);
         }
     }
 
@@ -873,7 +873,7 @@ internal static class FilterRenderer
         }
 
         Rgba32[] scaled = picture.Resize(dest.W, dest.H, Fit.Stretch, filter: ResamplingFilter.Mitchell, linear: false).ToArray<Rgba32>(cancellationToken: c.Cancel);
-        Rgba32[] frame = System.Buffers.ArrayPool<Rgba32>.Shared.Rent(rect.W * rect.H);
+        Rgba32[] frame = Pools<Rgba32>.Pool.Rent(rect.W * rect.H);
         try
         {
             Array.Clear(frame, 0, rect.W * rect.H);
@@ -886,7 +886,7 @@ internal static class FilterRenderer
         }
         finally
         {
-            System.Buffers.ArrayPool<Rgba32>.Shared.Return(frame);
+            Pools<Rgba32>.Pool.Return(frame);
         }
     }
 }

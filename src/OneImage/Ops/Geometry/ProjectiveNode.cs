@@ -204,10 +204,10 @@ internal sealed class ProjectiveNode : Node
         int ibpp = input.Format.BytesPerPixel;
         int obpp = Format.BytesPerPixel;
         int bandRows = Math.Min(Tile.Size, Math.Max(need.Height, 1));
-        float[] region = ArrayPool<float>.Shared.Rent(Math.Max(1, need.Width * need.Height * p));
-        byte[] band = ArrayPool<byte>.Shared.Rent(Math.Max(1, bandRows * need.Width * ibpp));
-        float[] row = ArrayPool<float>.Shared.Rent(o.Width * p);
-        double[] pos = ArrayPool<double>.Shared.Rent(o.Width * 2);
+        float[] region = Pools<float>.Pool.Rent(Math.Max(1, need.Width * need.Height * p));
+        byte[] band = Pools<byte>.Pool.Rent(Math.Max(1, bandRows * need.Width * ibpp));
+        float[] row = Pools<float>.Pool.Rent(o.Width * p);
+        double[] pos = Pools<double>.Pool.Rent(o.Width * 2);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -264,10 +264,10 @@ internal sealed class ProjectiveNode : Node
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(region);
-            ArrayPool<byte>.Shared.Return(band);
-            ArrayPool<float>.Shared.Return(row);
-            ArrayPool<double>.Shared.Return(pos);
+            Pools<float>.Pool.Return(region);
+            Pools<byte>.Pool.Return(band);
+            Pools<float>.Pool.Return(row);
+            Pools<double>.Pool.Return(pos);
         }
     }
 }

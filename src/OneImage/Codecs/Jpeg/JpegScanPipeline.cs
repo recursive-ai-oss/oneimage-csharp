@@ -537,7 +537,7 @@ internal sealed class JpegScanPipeline : IDisposable
         {
             if (it.Finished && it.Data.Length > 0)
             {
-                ArrayPool<byte>.Shared.Return(it.Data);
+                Pools<byte>.Pool.Return(it.Data);
                 it.Data = [];
             }
         }

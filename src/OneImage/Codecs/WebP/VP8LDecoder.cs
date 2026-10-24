@@ -116,7 +116,7 @@ internal sealed class VP8LDecoder : IDisposable
     {
         foreach (uint[] a in _rented)
         {
-            ArrayPool<uint>.Shared.Return(a);
+            Pools<uint>.Pool.Return(a);
         }
 
         _rented.Clear();
@@ -838,7 +838,7 @@ internal sealed class VP8LDecoder : IDisposable
             _stop = CancellationTokenSource.CreateLinkedTokenSource(d._token);
             for (int i = 0; i < Slots; i++)
             {
-                _buf[i] = ArrayPool<uint>.Shared.Rent(checked(width * BatchRows));
+                _buf[i] = Pools<uint>.Pool.Rent(checked(width * BatchRows));
             }
 
             _task = Task.Factory.StartNew(Work, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -883,7 +883,7 @@ internal sealed class VP8LDecoder : IDisposable
             _stop.Dispose();
             foreach (uint[] b in _buf)
             {
-                ArrayPool<uint>.Shared.Return(b);
+                Pools<uint>.Pool.Return(b);
             }
         }
 
@@ -976,7 +976,7 @@ internal sealed class VP8LDecoder : IDisposable
         uint[] bigger = Rent(newLen);
         Array.Copy(data, bigger, _pP);
         _rented.Remove(data);
-        ArrayPool<uint>.Shared.Return(data);
+        Pools<uint>.Pool.Return(data);
         _pData = bigger;
     }
 
@@ -1291,7 +1291,7 @@ internal sealed class VP8LDecoder : IDisposable
 
     private uint[] Rent(int count)
     {
-        uint[] a = ArrayPool<uint>.Shared.Rent(Math.Max(count, 1));
+        uint[] a = Pools<uint>.Pool.Rent(Math.Max(count, 1));
         _rented.Add(a);
         return a;
     }

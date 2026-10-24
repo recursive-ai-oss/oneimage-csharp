@@ -87,9 +87,9 @@ internal sealed class TiffEncoder : IImageEncoder
         int strips = (frame.Height + rps - 1) / rps;
         long[] offsets = new long[strips];
         long[] counts = new long[strips];
-        byte[] raw = ArrayPool<byte>.Shared.Rent(checked(rowBytes * rps));
-        byte[] scratch = predictor == 3 ? ArrayPool<byte>.Shared.Rent(rowBytes) : [];
-        byte[] packBuf = comp == TiffCompression.PackBits ? ArrayPool<byte>.Shared.Rent(rowBytes + (rowBytes / 128) + 2) : [];
+        byte[] raw = Pools<byte>.Pool.Rent(checked(rowBytes * rps));
+        byte[] scratch = predictor == 3 ? Pools<byte>.Pool.Rent(rowBytes) : [];
+        byte[] packBuf = comp == TiffCompression.PackBits ? Pools<byte>.Pool.Rent(rowBytes + (rowBytes / 128) + 2) : [];
         try
         {
             for (int s = 0; s < strips; s++)
@@ -153,15 +153,15 @@ internal sealed class TiffEncoder : IImageEncoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(raw);
+            Pools<byte>.Pool.Return(raw);
             if (scratch.Length > 0)
             {
-                ArrayPool<byte>.Shared.Return(scratch);
+                Pools<byte>.Pool.Return(scratch);
             }
 
             if (packBuf.Length > 0)
             {
-                ArrayPool<byte>.Shared.Return(packBuf);
+                Pools<byte>.Pool.Return(packBuf);
             }
         }
 

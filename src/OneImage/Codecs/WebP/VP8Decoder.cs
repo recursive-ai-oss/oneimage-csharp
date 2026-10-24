@@ -142,9 +142,9 @@ internal sealed class VP8Decoder
         _uvStride = _mbw * 8;
         // Only two macroblock rows of each plane are kept: the one being decoded and the one above it, which the loop filter
         // and the chroma upsampler still read. Memory is independent of the image height.
-        byte[] yBuf = ArrayPool<byte>.Shared.Rent(2 * 16 * _yStride);
-        byte[] uBuf = ArrayPool<byte>.Shared.Rent(2 * 8 * _uvStride);
-        byte[] vBuf = ArrayPool<byte>.Shared.Rent(2 * 8 * _uvStride);
+        byte[] yBuf = Pools<byte>.Pool.Rent(2 * 16 * _yStride);
+        byte[] uBuf = Pools<byte>.Pool.Rent(2 * 8 * _uvStride);
+        byte[] vBuf = Pools<byte>.Pool.Rent(2 * 8 * _uvStride);
         try
         {
             _y = yBuf;
@@ -162,12 +162,12 @@ internal sealed class VP8Decoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(yBuf);
-            ArrayPool<byte>.Shared.Return(uBuf);
-            ArrayPool<byte>.Shared.Return(vBuf);
+            Pools<byte>.Pool.Return(yBuf);
+            Pools<byte>.Pool.Return(uBuf);
+            Pools<byte>.Pool.Return(vBuf);
             if (alphaPlane != null)
             {
-                ArrayPool<byte>.Shared.Return(alphaPlane);
+                Pools<byte>.Pool.Return(alphaPlane);
             }
         }
     }

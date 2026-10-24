@@ -37,7 +37,7 @@ internal static class TiffBlockDecoder
         int rowBytes = (int)f.BlockRowBytes;
         int expected = checked(rows * rowBytes);
         CheckSizes(f, count, rows, expected, limits);
-        byte[] input = ArrayPool<byte>.Shared.Rent((int)Math.Min(count, int.MaxValue / 2));
+        byte[] input = Pools<byte>.Pool.Rent((int)Math.Min(count, int.MaxValue / 2));
         try
         {
             Span<byte> compressed = input.AsSpan(0, (int)count);
@@ -50,7 +50,7 @@ internal static class TiffBlockDecoder
             byte[] raw;
             if (pooled)
             {
-                raw = ArrayPool<byte>.Shared.Rent(expected);
+                raw = Pools<byte>.Pool.Rent(expected);
 
                 // These codecs write every byte of the block or fail, so stale pool contents never show; the others (bit-packed fax
                 // data, JPEG) may leave gaps and start from zeros.
@@ -73,7 +73,7 @@ internal static class TiffBlockDecoder
             {
                 if (pooled)
                 {
-                    ArrayPool<byte>.Shared.Return(raw);
+                    Pools<byte>.Pool.Return(raw);
                 }
 
                 throw;
@@ -83,7 +83,7 @@ internal static class TiffBlockDecoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(input);
+            Pools<byte>.Pool.Return(input);
         }
     }
 
@@ -231,14 +231,14 @@ internal static class TiffBlockDecoder
         }
         else if (f.Predictor == 3)
         {
-            byte[] scratch = ArrayPool<byte>.Shared.Rent(rowBytes);
+            byte[] scratch = Pools<byte>.Pool.Rent(rowBytes);
             try
             {
                 TiffKernels.UndoFloat(raw, rowBytes, f.SamplesPerBlockPixel, scratch);
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(scratch);
+                Pools<byte>.Pool.Return(scratch);
             }
         }
     }

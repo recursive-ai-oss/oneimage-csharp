@@ -63,7 +63,7 @@ internal static class ConvertFast
             return false;
         }
 
-        byte[] scratch = ArrayPool<byte>.Shared.Rent(width * 8);
+        byte[] scratch = Pools<byte>.Pool.Rent(width * 8);
         try
         {
             if (ss == SampleType.U16)
@@ -82,7 +82,7 @@ internal static class ConvertFast
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(scratch);
+            Pools<byte>.Pool.Return(scratch);
         }
     }
 

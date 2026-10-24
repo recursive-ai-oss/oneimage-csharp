@@ -306,7 +306,7 @@ internal sealed class DitherNode : Node
         ImageRect r = TileRect(tx, ty);
         int w = r.Width;
         int h = r.Height;
-        byte[] src = ArrayPool<byte>.Shared.Rent(w * h * 4);
+        byte[] src = Pools<byte>.Pool.Rent(w * h * 4);
         try
         {
             Render.ReadRegion(Inputs[0], r, src, w * 4, PixelFormat.Rgba8, context);
@@ -368,7 +368,7 @@ internal sealed class DitherNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(src);
+            Pools<byte>.Pool.Return(src);
         }
     }
 
@@ -399,8 +399,8 @@ internal sealed class DitherNode : Node
             int ahead = k?.RowsBelow ?? 0;
             int bandRows = Tile.Size;
             int outBpp = Format.BytesPerPixel;
-            byte[] buf = ArrayPool<byte>.Shared.Rent(checked(rowBytes * (bandRows + ahead)));
-            byte[] outBand = ArrayPool<byte>.Shared.Rent(checked(w * outBpp * bandRows));
+            byte[] buf = Pools<byte>.Pool.Rent(checked(rowBytes * (bandRows + ahead)));
+            byte[] outBand = Pools<byte>.Pool.Rent(checked(w * outBpp * bandRows));
             var grid = new TileGrid(w, h, Format, null);
             try
             {
@@ -535,8 +535,8 @@ internal sealed class DitherNode : Node
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(buf);
-                ArrayPool<byte>.Shared.Return(outBand);
+                Pools<byte>.Pool.Return(buf);
+                Pools<byte>.Pool.Return(outBand);
             }
         }
     }

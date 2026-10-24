@@ -40,7 +40,7 @@ internal sealed class TiffBlock
         {
             byte[] d = _data!;
             _data = null;
-            ArrayPool<byte>.Shared.Return(d);
+            Pools<byte>.Pool.Return(d);
         }
     }
 }

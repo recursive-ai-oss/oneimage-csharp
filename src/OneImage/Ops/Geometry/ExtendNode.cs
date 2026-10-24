@@ -117,8 +117,8 @@ internal sealed class ExtendNode : Node
         ImageRect need = RequiredInput(0, o);
         int bpp = Format.BytesPerPixel;
         int stride = need.Width * bpp;
-        int[] cols = ArrayPool<int>.Shared.Rent(o.Width);
-        byte[]? scratch = need.IsEmpty ? null : ArrayPool<byte>.Shared.Rent(stride * need.Height);
+        int[] cols = Pools<int>.Pool.Rent(o.Width);
+        byte[]? scratch = need.IsEmpty ? null : Pools<byte>.Pool.Rent(stride * need.Height);
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -181,10 +181,10 @@ internal sealed class ExtendNode : Node
         }
         finally
         {
-            ArrayPool<int>.Shared.Return(cols);
+            Pools<int>.Pool.Return(cols);
             if (scratch != null)
             {
-                ArrayPool<byte>.Shared.Return(scratch);
+                Pools<byte>.Pool.Return(scratch);
             }
         }
     }

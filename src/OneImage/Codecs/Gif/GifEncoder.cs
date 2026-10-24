@@ -96,7 +96,7 @@ internal sealed class GifEncoder : IImageEncoder
             IndexCount = 0;
             if (b.Length > 0)
             {
-                ArrayPool<byte>.Shared.Return(b);
+                Pools<byte>.Pool.Return(b);
             }
         }
     }
@@ -164,10 +164,10 @@ internal sealed class GifEncoder : IImageEncoder
                 {
                     if (cur != null)
                     {
-                        ArrayPool<byte>.Shared.Return(cur);
+                        Pools<byte>.Pool.Return(cur);
                     }
 
-                    cur = ArrayPool<byte>.Shared.Rent((int)need);
+                    cur = Pools<byte>.Pool.Rent((int)need);
                     curLen = (int)need;
                 }
 
@@ -186,7 +186,7 @@ internal sealed class GifEncoder : IImageEncoder
 
                 if (prefetch && i + 1 < frames.Count)
                 {
-                    ahead ??= ArrayPool<byte>.Shared.Rent(curLen);
+                    ahead ??= Pools<byte>.Pool.Rent(curLen);
                     byte[] target = ahead;
                     int bytes = curLen;
                     ImageFrameReader next = frames[i + 1];
@@ -224,7 +224,7 @@ internal sealed class GifEncoder : IImageEncoder
 
                 // Region pixels; pixels that need not be drawn (unchanged since the previous frame) become transparent.
                 int workLen = rw * rh * 4;
-                byte[] workBuf = ArrayPool<byte>.Shared.Rent(workLen);
+                byte[] workBuf = Pools<byte>.Pool.Rent(workLen);
                 Span<byte> workSpan = workBuf.AsSpan(0, workLen);
                 for (int y = 0; y < rh; y++)
                 {
@@ -276,7 +276,7 @@ internal sealed class GifEncoder : IImageEncoder
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(workBuf);
+                    Pools<byte>.Pool.Return(workBuf);
                 }
 
                 if (pending != null)
@@ -305,17 +305,17 @@ internal sealed class GifEncoder : IImageEncoder
 
             if (ahead != null)
             {
-                ArrayPool<byte>.Shared.Return(ahead);
+                Pools<byte>.Pool.Return(ahead);
             }
 
             if (cur != null)
             {
-                ArrayPool<byte>.Shared.Return(cur);
+                Pools<byte>.Pool.Return(cur);
             }
 
             if (prev != null)
             {
-                ArrayPool<byte>.Shared.Return(prev);
+                Pools<byte>.Pool.Return(prev);
             }
 
             if (!ok)
@@ -402,7 +402,7 @@ internal sealed class GifEncoder : IImageEncoder
     {
         int offset = plan.ReserveT ? 1 : 0;
         int count = rw * rh;
-        byte[] indices = ArrayPool<byte>.Shared.Rent(count);
+        byte[] indices = Pools<byte>.Pool.Rent(count);
         bool usesT = false;
         uint lastKey = 0;
         int lastIdx = -1;
@@ -426,7 +426,7 @@ internal sealed class GifEncoder : IImageEncoder
                     {
                         if (set.Count >= cap)
                         {
-                            ArrayPool<byte>.Shared.Return(indices);
+                            Pools<byte>.Pool.Return(indices);
                             return false;
                         }
 
@@ -505,7 +505,7 @@ internal sealed class GifEncoder : IImageEncoder
         }
 
         var mapper = new PaletteMapper(pal, rw, options.Dither);
-        byte[] indices = ArrayPool<byte>.Shared.Rent(rw * rh);
+        byte[] indices = Pools<byte>.Pool.Rent(rw * rh);
         for (int y = 0; y < rh; y++)
         {
             mapper.MapRow(y, work.Slice(y * rw * 4, rw * 4), indices.AsSpan(y * rw, rw));

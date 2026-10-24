@@ -81,8 +81,8 @@ internal static class PngQuantizerHook
 
         int stride = width * bpp;
         int stripRows = Math.Max(1, Math.Min(height, (1 << 18) / stride));
-        byte[] strip = ArrayPool<byte>.Shared.Rent(stripRows * stride);
-        byte[] rgba = ArrayPool<byte>.Shared.Rent(stripRows * width * 4);
+        byte[] strip = Pools<byte>.Pool.Rent(stripRows * stride);
+        byte[] rgba = Pools<byte>.Pool.Rent(stripRows * width * 4);
         try
         {
             // Two forward passes over the rows: statistics, then mapping. Opaque input uses the cheaper binary-alpha statistics.
@@ -150,8 +150,8 @@ internal static class PngQuantizerHook
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(strip);
-            ArrayPool<byte>.Shared.Return(rgba);
+            Pools<byte>.Pool.Return(strip);
+            Pools<byte>.Pool.Return(rgba);
         }
     }
 
@@ -188,7 +188,7 @@ internal sealed class PngChunkWriter : IBufferWriter<byte>, IDisposable
         _s = s;
         _type = type;
         _seq = sequence;
-        _buf = ArrayPool<byte>.Shared.Rent(Target + 8192);
+        _buf = Pools<byte>.Pool.Rent(Target + 8192);
     }
 
     public void Advance(int count)
@@ -252,8 +252,8 @@ internal sealed class PngChunkWriter : IBufferWriter<byte>, IDisposable
         Flush();
         if (_buf.Length < hint)
         {
-            ArrayPool<byte>.Shared.Return(_buf);
-            _buf = ArrayPool<byte>.Shared.Rent(hint);
+            Pools<byte>.Pool.Return(_buf);
+            _buf = Pools<byte>.Pool.Rent(hint);
         }
     }
 }
@@ -458,7 +458,7 @@ internal sealed class PngEncoder : IImageEncoder
 
         int srcStride = f.Width * f.Format.BytesPerPixel;
         int rowsPer = Math.Max(1, (1 << 20) / Math.Max(1, srcStride));
-        byte[] tmp = ArrayPool<byte>.Shared.Rent(rowsPer * srcStride);
+        byte[] tmp = Pools<byte>.Pool.Rent(rowsPer * srcStride);
         try
         {
             for (int y = 0; y < height; y += rowsPer)
@@ -474,7 +474,7 @@ internal sealed class PngEncoder : IImageEncoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(tmp);
+            Pools<byte>.Pool.Return(tmp);
         }
     }
 
@@ -684,7 +684,7 @@ internal sealed class PngEncoder : IImageEncoder
         var seen = new ulong[1024];
         var colors = new uint[257];
         int count = 0;
-        byte[] strip = ArrayPool<byte>.Shared.Rent(stripRows * stride);
+        byte[] strip = Pools<byte>.Pool.Rent(stripRows * stride);
         try
         {
             for (int y0 = 0; y0 < height; y0 += stripRows)
@@ -735,7 +735,7 @@ internal sealed class PngEncoder : IImageEncoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(strip);
+            Pools<byte>.Pool.Return(strip);
         }
 
         // Non-opaque colors first (in order of first appearance), then the opaque ones.
@@ -776,15 +776,15 @@ internal sealed class PngEncoder : IImageEncoder
         }
 
         int stripRows = Math.Max(1, Math.Min(height, (1 << 18) / Math.Max(1, srcStride)));
-        byte[]? strip = ArrayPool<byte>.Shared.Rent(stripRows * srcStride);
-        byte[]? cur = ArrayPool<byte>.Shared.Rent(rawLen);
-        byte[]? prev = ArrayPool<byte>.Shared.Rent(rawLen);
+        byte[]? strip = Pools<byte>.Pool.Rent(stripRows * srcStride);
+        byte[]? cur = Pools<byte>.Pool.Rent(rawLen);
+        byte[]? prev = Pools<byte>.Pool.Rent(rawLen);
         byte[]?[] cand = new byte[5][];
         try
         {
             for (int i = 0; i < 5; i++)
             {
-                cand[i] = ArrayPool<byte>.Shared.Rent(rawLen + 1);
+                cand[i] = Pools<byte>.Pool.Rent(rawLen + 1);
             }
 
             Array.Clear(prev, 0, rawLen);
@@ -824,14 +824,14 @@ internal sealed class PngEncoder : IImageEncoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(strip);
-            ArrayPool<byte>.Shared.Return(cur!);
-            ArrayPool<byte>.Shared.Return(prev!);
+            Pools<byte>.Pool.Return(strip);
+            Pools<byte>.Pool.Return(cur!);
+            Pools<byte>.Pool.Return(prev!);
             foreach (byte[]? c in cand)
             {
                 if (c != null)
                 {
-                    ArrayPool<byte>.Shared.Return(c);
+                    Pools<byte>.Pool.Return(c);
                 }
             }
         }

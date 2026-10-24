@@ -191,7 +191,7 @@ internal sealed partial class TileJob
         {
             if (coverage != null)
             {
-                ArrayPool<byte>.Shared.Return(coverage);
+                Pools<byte>.Pool.Return(coverage);
             }
         }
     }
@@ -220,7 +220,7 @@ internal sealed partial class TileJob
 
                     if (full)
                     {
-                        ArrayPool<byte>.Shared.Return(coverage);
+                        Pools<byte>.Pool.Return(coverage);
                         coverage = null;
                     }
                 }
@@ -255,7 +255,7 @@ internal sealed partial class TileJob
         {
             if (coverage != null)
             {
-                ArrayPool<byte>.Shared.Return(coverage);
+                Pools<byte>.Pool.Return(coverage);
             }
         }
     }
@@ -373,7 +373,7 @@ internal sealed partial class TileJob
         {
             if (cov != null)
             {
-                ArrayPool<byte>.Shared.Return(cov);
+                Pools<byte>.Pool.Return(cov);
             }
         }
 
@@ -395,7 +395,7 @@ internal sealed partial class TileJob
                 cov = Coverage(g.Mask, out bool zero, out bool full);
                 if (zero || full)
                 {
-                    ArrayPool<byte>.Shared.Return(cov);
+                    Pools<byte>.Pool.Return(cov);
                     cov = null;
                     if (zero)
                     {
@@ -452,7 +452,7 @@ internal sealed partial class TileJob
         {
             if (cov != null)
             {
-                ArrayPool<byte>.Shared.Return(cov);
+                Pools<byte>.Pool.Return(cov);
             }
         }
     }
@@ -484,7 +484,7 @@ internal sealed partial class TileJob
             {
                 if (cov != null)
                 {
-                    ArrayPool<byte>.Shared.Return(cov);
+                    Pools<byte>.Pool.Return(cov);
                 }
             }
         }
@@ -554,7 +554,7 @@ internal sealed partial class TileJob
         {
             if (cov != null)
             {
-                ArrayPool<byte>.Shared.Return(cov);
+                Pools<byte>.Pool.Return(cov);
             }
         }
     }
@@ -677,14 +677,14 @@ internal sealed partial class TileJob
     {
         int w = rect.Width;
         int h = rect.Height;
-        byte[] cov = ArrayPool<byte>.Shared.Rent(w * h);
+        byte[] cov = Pools<byte>.Pool.Rent(w * h);
         try
         {
             cov.AsSpan(0, w * h).Fill(mask.Outside);
             ImageRect hit = mask.Area.Intersect(rect);
             if (!hit.IsEmpty)
             {
-                byte[] scratch = ArrayPool<byte>.Shared.Rent(hit.Width * hit.Height);
+                byte[] scratch = Pools<byte>.Pool.Rent(hit.Width * hit.Height);
                 try
                 {
                     Render.ReadRegion(mask.Node, new ImageRect(hit.X - mask.Area.X, hit.Y - mask.Area.Y, hit.Width, hit.Height), scratch, hit.Width, PixelFormat.Gray8, _context);
@@ -695,7 +695,7 @@ internal sealed partial class TileJob
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(scratch);
+                    Pools<byte>.Pool.Return(scratch);
                 }
             }
 
@@ -713,7 +713,7 @@ internal sealed partial class TileJob
         }
         catch
         {
-            ArrayPool<byte>.Shared.Return(cov);
+            Pools<byte>.Pool.Return(cov);
             throw;
         }
     }
@@ -800,8 +800,8 @@ internal sealed partial class TileJob
             int bpp = _format.BytesPerPixel;
             int channels = _work.ChannelCount;
             int stride = Tile.Size * bpp;
-            fb = ArrayPool<float>.Shared.Rent(w * channels);
-            ft = ArrayPool<float>.Shared.Rent(w * channels);
+            fb = Pools<float>.Pool.Rent(w * channels);
+            ft = Pools<float>.Pool.Rent(w * channels);
             result = Tile.Rent(back.Length, clear: false);
             back.Span.CopyTo(result.Span);
             ReadOnlySpan<byte> bs = back.Span;
@@ -839,12 +839,12 @@ internal sealed partial class TileJob
         {
             if (fb != null)
             {
-                ArrayPool<float>.Shared.Return(fb);
+                Pools<float>.Pool.Return(fb);
             }
 
             if (ft != null)
             {
-                ArrayPool<float>.Shared.Return(ft);
+                Pools<float>.Pool.Return(ft);
             }
         }
     }

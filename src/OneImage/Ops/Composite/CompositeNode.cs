@@ -144,7 +144,7 @@ internal static class TileCompositor
         {
             if (scratch != null)
             {
-                ArrayPool<float>.Shared.Return(scratch);
+                Pools<float>.Pool.Return(scratch);
             }
         }
 
@@ -191,7 +191,7 @@ internal static class TileCompositor
         {
             if (scratch != null)
             {
-                ArrayPool<float>.Shared.Return(scratch);
+                Pools<float>.Pool.Return(scratch);
             }
         }
 
@@ -257,7 +257,7 @@ internal static class TileCompositor
         var work = new PixelFormat(bf.Model, SampleType.F32, AlphaMode.Premultiplied);
         int channels = work.ChannelCount;
         int n = w * channels;
-        scratch ??= ArrayPool<float>.Shared.Rent(3 * Tile.Size * channels);
+        scratch ??= Pools<float>.Pool.Rent(3 * Tile.Size * channels);
         Span<float> fb = scratch.AsSpan(0, n);
         Span<float> fo = scratch.AsSpan(Tile.Size * channels, n);
         Span<float> fd = scratch.AsSpan(2 * Tile.Size * channels, n);

@@ -201,7 +201,7 @@ internal sealed class JpegBitWriter : IDisposable
     public JpegBitWriter(Stream stream)
     {
         _stream = stream;
-        _buf = ArrayPool<byte>.Shared.Rent(1 << 16);
+        _buf = Pools<byte>.Pool.Rent(1 << 16);
     }
 
     /// <summary>
@@ -211,7 +211,7 @@ internal sealed class JpegBitWriter : IDisposable
     /// </summary>
     public JpegBitWriter()
     {
-        _buf = ArrayPool<byte>.Shared.Rent(1 << 16);
+        _buf = Pools<byte>.Pool.Rent(1 << 16);
     }
 
     public bool Counting { get; set; }
@@ -265,9 +265,9 @@ internal sealed class JpegBitWriter : IDisposable
         {
             if (_stream is null)
             {
-                byte[] bigger = ArrayPool<byte>.Shared.Rent(checked(_buf.Length * 2));
+                byte[] bigger = Pools<byte>.Pool.Rent(checked(_buf.Length * 2));
                 _buf.AsSpan(0, _pos).CopyTo(bigger);
-                ArrayPool<byte>.Shared.Return(_buf);
+                Pools<byte>.Pool.Return(_buf);
                 _buf = bigger;
             }
             else
@@ -389,7 +389,7 @@ internal sealed class JpegBitWriter : IDisposable
         _buf = [];
         if (b.Length > 0)
         {
-            ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 }

@@ -113,7 +113,7 @@ internal sealed class ClipNode : Node
     {
         int bpp = Format.BytesPerPixel;
         int ch = _work.ChannelCount;
-        float[] buffer = ArrayPool<float>.Shared.Rent(3 * Tile.Size * ch);
+        float[] buffer = Pools<float>.Pool.Rent(3 * Tile.Size * ch);
         try
         {
             for (int r = 0; r < rect.Height; r++)
@@ -157,7 +157,7 @@ internal sealed class ClipNode : Node
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(buffer);
+            Pools<float>.Pool.Return(buffer);
         }
     }
 

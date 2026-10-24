@@ -198,7 +198,7 @@ public sealed class ImageFrameReader
             int bandTop = bandRow << Tile.Shift;
             if (_bandRow != bandRow)
             {
-                _band ??= System.Buffers.ArrayPool<byte>.Shared.Rent(checked(rowBytes * Tile.Size));
+                _band ??= Pools<byte>.Pool.Rent(checked(rowBytes * Tile.Size));
                 _bandRow = -1;
                 Render.ReadRegion(_node, new ImageRect(0, bandTop, Width, Math.Min(Tile.Size, Height - bandTop)), _band, rowBytes, Format, _context);
                 _bandRow = bandRow;
@@ -217,7 +217,7 @@ public sealed class ImageFrameReader
         _bandRow = -1;
         if (b != null)
         {
-            System.Buffers.ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 

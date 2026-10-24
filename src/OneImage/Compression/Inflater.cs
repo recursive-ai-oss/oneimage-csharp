@@ -102,7 +102,7 @@ internal sealed class Inflater : IDisposable
     /// </param>
     public Inflater(bool zlib, long maxOutputBytes = long.MaxValue, double maxExpansionRatio = 0)
     {
-        _win = ArrayPool<byte>.Shared.Rent(BufferSize + 272);
+        _win = Pools<byte>.Pool.Rent(BufferSize + 272);
         Reset(zlib, maxOutputBytes, maxExpansionRatio);
     }
 
@@ -138,7 +138,7 @@ internal sealed class Inflater : IDisposable
         _win = null;
         if (w is not null)
         {
-            ArrayPool<byte>.Shared.Return(w);
+            Pools<byte>.Pool.Return(w);
         }
     }
 

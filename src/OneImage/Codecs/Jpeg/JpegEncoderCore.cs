@@ -178,7 +178,7 @@ internal sealed class JpegEncodeSession : IDisposable
         {
             if (c.Blocks.Length > 0)
             {
-                ArrayPool<short>.Shared.Return(c.Blocks);
+                Pools<short>.Pool.Return(c.Blocks);
                 c.Blocks = [];
             }
         }
@@ -250,7 +250,7 @@ internal sealed class JpegEncodeSession : IDisposable
             {
                 foreach (Comp c in _comps)
                 {
-                    c.Blocks = ArrayPool<short>.Shared.Rent(checked(c.BlocksPerLine * c.BlockRows * 64));
+                    c.Blocks = Pools<short>.Pool.Rent(checked(c.BlocksPerLine * c.BlockRows * 64));
                 }
 
                 if (!rowParallel)
@@ -570,8 +570,8 @@ internal sealed class JpegEncodeSession : IDisposable
                 scratch[w] = sc;
                 for (int i = 0; i < _comps.Length; i++)
                 {
-                    sc.Full[i] = ArrayPool<byte>.Shared.Rent(fw * rowsPerMcu);
-                    sc.Planes[i] = ArrayPool<byte>.Shared.Rent(_comps[i].BlocksPerLine * 8 * 8 * _comps[i].V);
+                    sc.Full[i] = Pools<byte>.Pool.Rent(fw * rowsPerMcu);
+                    sc.Planes[i] = Pools<byte>.Pool.Rent(_comps[i].BlocksPerLine * 8 * 8 * _comps[i].V);
                 }
             }
 
@@ -580,7 +580,7 @@ internal sealed class JpegEncodeSession : IDisposable
             {
                 for (int i = 0; i < _comps.Length; i++)
                 {
-                    streamBlocks[i] = ArrayPool<short>.Shared.Rent(checked(_comps[i].BlocksPerLine * _comps[i].V * 64 * batch));
+                    streamBlocks[i] = Pools<short>.Pool.Rent(checked(_comps[i].BlocksPerLine * _comps[i].V * 64 * batch));
                     _comps[i].Blocks = streamBlocks[i];
                 }
             }
@@ -680,7 +680,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     if (b is not null)
                     {
-                        ArrayPool<byte>.Shared.Return(b);
+                        Pools<byte>.Pool.Return(b);
                     }
                 }
 
@@ -688,7 +688,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     if (b is not null)
                     {
-                        ArrayPool<byte>.Shared.Return(b);
+                        Pools<byte>.Pool.Return(b);
                     }
                 }
 
@@ -701,7 +701,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     if (streamBlocks[i] is not null)
                     {
-                        ArrayPool<short>.Shared.Return(streamBlocks[i]);
+                        Pools<short>.Pool.Return(streamBlocks[i]);
                     }
 
                     _comps[i].Blocks = [];
@@ -887,8 +887,8 @@ internal sealed class JpegEncodeSession : IDisposable
                 scratch[w] = sc;
                 for (int i = 0; i < n; i++)
                 {
-                    sc.Full[i] = ArrayPool<byte>.Shared.Rent(fw * rowsPerMcu);
-                    sc.Planes[i] = ArrayPool<byte>.Shared.Rent(_comps[i].BlocksPerLine * 8 * 8 * _comps[i].V);
+                    sc.Full[i] = Pools<byte>.Pool.Rent(fw * rowsPerMcu);
+                    sc.Planes[i] = Pools<byte>.Pool.Rent(_comps[i].BlocksPerLine * 8 * 8 * _comps[i].V);
                 }
 
                 if (!_storesAll)
@@ -896,7 +896,7 @@ internal sealed class JpegEncodeSession : IDisposable
                     sc.Blocks = new short[n][];
                     for (int i = 0; i < n; i++)
                     {
-                        sc.Blocks[i] = ArrayPool<short>.Shared.Rent(checked(_comps[i].BlocksPerLine * _comps[i].V * 64));
+                        sc.Blocks[i] = Pools<short>.Pool.Rent(checked(_comps[i].BlocksPerLine * _comps[i].V * 64));
                     }
                 }
             }
@@ -1111,7 +1111,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     if (b is not null)
                     {
-                        ArrayPool<byte>.Shared.Return(b);
+                        Pools<byte>.Pool.Return(b);
                     }
                 }
 
@@ -1119,7 +1119,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     if (b is not null)
                     {
-                        ArrayPool<byte>.Shared.Return(b);
+                        Pools<byte>.Pool.Return(b);
                     }
                 }
 
@@ -1127,7 +1127,7 @@ internal sealed class JpegEncodeSession : IDisposable
                 {
                     if (b is not null)
                     {
-                        ArrayPool<short>.Shared.Return(b);
+                        Pools<short>.Pool.Return(b);
                     }
                 }
 

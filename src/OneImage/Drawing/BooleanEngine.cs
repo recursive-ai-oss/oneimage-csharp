@@ -124,7 +124,7 @@ internal static class BooleanEngine
     /// <summary>Combines the regions of two sets of paths. Segments of the subject count toward its winding, those of the clip toward theirs.</summary>
     public static Path Run(ReadOnlySpan<Path> subject, ReadOnlySpan<Path> clip, BooleanOperation op, IntersectionRule subjectRule, IntersectionRule clipRule, float tolerance)
     {
-        Seg[] segs = ArrayPool<Seg>.Shared.Rent(256);
+        Seg[] segs = Pools<Seg>.Pool.Rent(256);
         Scratch sc = t_scratch ?? new Scratch();
         t_scratch = null;
         try
@@ -150,7 +150,7 @@ internal static class BooleanEngine
         }
         finally
         {
-            ArrayPool<Seg>.Shared.Return(segs);
+            Pools<Seg>.Pool.Return(segs);
             if (!sc.IsLarge)
             {
                 t_scratch = sc; // reused by the next call on this thread unless it grew big
@@ -161,9 +161,9 @@ internal static class BooleanEngine
     // Pooled arrays that must keep their contents when they grow.
     private static void Grow<T>(ref T[] array, int used)
     {
-        T[] bigger = ArrayPool<T>.Shared.Rent(Math.Max(16, array.Length * 2));
+        T[] bigger = Pools<T>.Pool.Rent(Math.Max(16, array.Length * 2));
         Array.Copy(array, bigger, used);
-        ArrayPool<T>.Shared.Return(array);
+        Pools<T>.Pool.Return(array);
         array = bigger;
     }
 
@@ -358,7 +358,7 @@ internal static class BooleanEngine
     {
         Span<Split> all = splits.Items.AsSpan(0, splits.Count);
         all.Sort(static (a, b) => a.Seg.CompareTo(b.Seg));
-        Seg[] next = ArrayPool<Seg>.Shared.Rent(Math.Max(16, n + splits.Count + 16));
+        Seg[] next = Pools<Seg>.Pool.Rent(Math.Max(16, n + splits.Count + 16));
         int m = 0;
         int s = 0;
         Int128[] keys = new Int128[16];
@@ -434,7 +434,7 @@ internal static class BooleanEngine
             s = e;
         }
 
-        ArrayPool<Seg>.Shared.Return(segs);
+        Pools<Seg>.Pool.Return(segs);
         segs = next;
         n = m;
     }

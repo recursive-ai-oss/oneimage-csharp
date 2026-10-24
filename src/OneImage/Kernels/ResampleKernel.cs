@@ -298,7 +298,7 @@ internal static class ResampleKernel
         int c = l.Channels;
         int cc = l.Colors;
         int p = l.Stride;
-        float[]? rented = scratch.Length >= width * c ? null : ArrayPool<float>.Shared.Rent(width * c);
+        float[]? rented = scratch.Length >= width * c ? null : Pools<float>.Pool.Rent(width * c);
         Span<float> tmp = rented ?? scratch;
         try
         {
@@ -340,7 +340,7 @@ internal static class ResampleKernel
         {
             if (rented != null)
             {
-                ArrayPool<float>.Shared.Return(rented);
+                Pools<float>.Pool.Return(rented);
             }
         }
     }
@@ -350,7 +350,7 @@ internal static class ResampleKernel
         int c = l.Channels;
         int cc = l.Colors;
         int p = l.Stride;
-        float[]? rented = scratch.Length >= width * c ? null : ArrayPool<float>.Shared.Rent(width * c);
+        float[]? rented = scratch.Length >= width * c ? null : Pools<float>.Pool.Rent(width * c);
         Span<float> tmp = rented ?? scratch;
         try
         {
@@ -389,7 +389,7 @@ internal static class ResampleKernel
         {
             if (rented != null)
             {
-                ArrayPool<float>.Shared.Return(rented);
+                Pools<float>.Pool.Return(rented);
             }
         }
     }

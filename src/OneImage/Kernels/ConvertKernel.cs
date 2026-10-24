@@ -48,8 +48,8 @@ internal static class ConvertKernel
     {
         int sch = sourceFormat.ChannelCount;
         int dch = destinationFormat.ChannelCount;
-        float[] sbuf = ArrayPool<float>.Shared.Rent(width * sch);
-        float[] dbuf = ArrayPool<float>.Shared.Rent(width * dch);
+        float[] sbuf = Pools<float>.Pool.Rent(width * sch);
+        float[] dbuf = Pools<float>.Pool.Rent(width * dch);
         try
         {
             Unpack(src, sourceFormat.Sample, sbuf.AsSpan(0, width * sch));
@@ -58,8 +58,8 @@ internal static class ConvertKernel
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(sbuf);
-            ArrayPool<float>.Shared.Return(dbuf);
+            Pools<float>.Pool.Return(sbuf);
+            Pools<float>.Pool.Return(dbuf);
         }
     }
 

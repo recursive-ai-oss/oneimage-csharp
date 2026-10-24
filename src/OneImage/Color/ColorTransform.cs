@@ -77,8 +77,8 @@ internal sealed class StagePipeline
             return;
         }
 
-        float[] a = ArrayPool<float>.Shared.Rent(Chunk * 4);
-        float[] b = ArrayPool<float>.Shared.Rent(Chunk * 4);
+        float[] a = Pools<float>.Pool.Rent(Chunk * 4);
+        float[] b = Pools<float>.Pool.Rent(Chunk * 4);
         try
         {
             for (int start = 0; start < n; start += Chunk)
@@ -98,8 +98,8 @@ internal sealed class StagePipeline
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(a);
-            ArrayPool<float>.Shared.Return(b);
+            Pools<float>.Pool.Return(a);
+            Pools<float>.Pool.Return(b);
         }
     }
 }
@@ -387,11 +387,11 @@ internal sealed class ColorTransform
         }
 
         bool fast = sf.Sample is SampleType.U8 or SampleType.U16;
-        float[] raw = ArrayPool<float>.Shared.Rent(Px * sch);
-        float[] cin = ArrayPool<float>.Shared.Rent(Px * scs);
-        float[] cout = ArrayPool<float>.Shared.Rent(Px * dcs);
-        float[] outRaw = ArrayPool<float>.Shared.Rent(Px * dch);
-        float[] alpha = ArrayPool<float>.Shared.Rent(Px);
+        float[] raw = Pools<float>.Pool.Rent(Px * sch);
+        float[] cin = Pools<float>.Pool.Rent(Px * scs);
+        float[] cout = Pools<float>.Pool.Rent(Px * dcs);
+        float[] outRaw = Pools<float>.Pool.Rent(Px * dch);
+        float[] alpha = Pools<float>.Pool.Rent(Px);
         try
         {
             int sbpp = sf.BytesPerPixel, dbpp = df.BytesPerPixel;
@@ -441,11 +441,11 @@ internal sealed class ColorTransform
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(raw);
-            ArrayPool<float>.Shared.Return(cin);
-            ArrayPool<float>.Shared.Return(cout);
-            ArrayPool<float>.Shared.Return(outRaw);
-            ArrayPool<float>.Shared.Return(alpha);
+            Pools<float>.Pool.Return(raw);
+            Pools<float>.Pool.Return(cin);
+            Pools<float>.Pool.Return(cout);
+            Pools<float>.Pool.Return(outRaw);
+            Pools<float>.Pool.Return(alpha);
         }
     }
 }

@@ -92,7 +92,7 @@ internal sealed class MaskNode : Node
             }
 
             int mstride = need.Width * 4;
-            scratch = ArrayPool<byte>.Shared.Rent(mstride * need.Height);
+            scratch = Pools<byte>.Pool.Rent(mstride * need.Height);
             Render.ReadRegion(Inputs[1], need, scratch, mstride, PixelFormat.Rgba8, context);
             int bpp = Format.BytesPerPixel;
             int tileStride = Tile.Size * bpp;
@@ -104,10 +104,10 @@ internal sealed class MaskNode : Node
             float[]? work = null;
             try
             {
-                cover = ArrayPool<int>.Shared.Rent(need.Width);
+                cover = Pools<int>.Pool.Rent(need.Width);
                 if (!fast)
                 {
-                    work = ArrayPool<float>.Shared.Rent(need.Width * _work.ChannelCount);
+                    work = Pools<float>.Pool.Rent(need.Width * _work.ChannelCount);
                 }
 
                 for (int r = 0; r < need.Height; r++)
@@ -156,12 +156,12 @@ internal sealed class MaskNode : Node
             {
                 if (cover is not null)
                 {
-                    ArrayPool<int>.Shared.Return(cover);
+                    Pools<int>.Pool.Return(cover);
                 }
 
                 if (work is not null)
                 {
-                    ArrayPool<float>.Shared.Return(work);
+                    Pools<float>.Pool.Return(work);
                 }
             }
 
@@ -177,7 +177,7 @@ internal sealed class MaskNode : Node
             back.Release();
             if (scratch is not null)
             {
-                ArrayPool<byte>.Shared.Return(scratch);
+                Pools<byte>.Pool.Return(scratch);
             }
         }
     }

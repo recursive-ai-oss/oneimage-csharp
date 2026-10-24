@@ -651,14 +651,14 @@ public sealed class PixelResizer : IDisposable
             }
 
             Drop(ref array);
-            array = ArrayPool<float>.Shared.Rent((int)length);
+            array = Pools<float>.Pool.Rent((int)length);
         }
 
         private static void Drop(ref float[] array)
         {
             if (array.Length > 0)
             {
-                ArrayPool<float>.Shared.Return(array);
+                Pools<float>.Pool.Return(array);
                 array = [];
             }
         }

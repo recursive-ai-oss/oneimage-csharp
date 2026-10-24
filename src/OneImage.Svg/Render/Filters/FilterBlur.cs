@@ -62,7 +62,7 @@ internal static class FilterBlur
     private static void ApplyReference(float[] data, int w, int h, double sigmaX, double sigmaY)
     {
         int n = w * h * 4;
-        float[] scratch = ArrayPool<float>.Shared.Rent(n);
+        float[] scratch = Pools<float>.Pool.Rent(n);
         try
         {
             float[] res = FilterBlurReference.Apply(data, scratch, w, h, sigmaX, sigmaY);
@@ -73,7 +73,7 @@ internal static class FilterBlur
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(scratch);
+            Pools<float>.Pool.Return(scratch);
         }
     }
 
@@ -130,8 +130,8 @@ internal static class FilterBlur
         {
             int y0 = band * groupsPerBand * 4;
             int y1 = Math.Min(h, y0 + (groupsPerBand * 4));
-            float[] ra = ArrayPool<float>.Shared.Rent(4 * rowLen);
-            float[] rb = ArrayPool<float>.Shared.Rent(4 * rowLen);
+            float[] ra = Pools<float>.Pool.Rent(4 * rowLen);
+            float[] rb = Pools<float>.Pool.Rent(4 * rowLen);
             try
             {
                 for (int y = y0; y < y1; y += 4)
@@ -157,8 +157,8 @@ internal static class FilterBlur
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(ra);
-                ArrayPool<float>.Shared.Return(rb);
+                Pools<float>.Pool.Return(ra);
+                Pools<float>.Pool.Return(rb);
             }
         });
     }
@@ -176,8 +176,8 @@ internal static class FilterBlur
         bool parallel = (long)w * h >= ParallelPixels;
         ForBands(bandCount, parallel, band =>
         {
-            float[] ra = ArrayPool<float>.Shared.Rent(4 * lineLen);
-            float[] rb = ArrayPool<float>.Shared.Rent(4 * lineLen);
+            float[] ra = Pools<float>.Pool.Rent(4 * lineLen);
+            float[] rb = Pools<float>.Pool.Rent(4 * lineLen);
             try
             {
                 int xEnd = Math.Min(w, (band + 1) * BandPixels);
@@ -204,8 +204,8 @@ internal static class FilterBlur
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(ra);
-                ArrayPool<float>.Shared.Return(rb);
+                Pools<float>.Pool.Return(ra);
+                Pools<float>.Pool.Return(rb);
             }
         });
     }

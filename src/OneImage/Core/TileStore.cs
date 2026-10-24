@@ -45,7 +45,7 @@ internal sealed class PooledTileStore : ITileStore
         int shift = Shift(length);
         if (shift > MaxShift)
         {
-            return ArrayPool<byte>.Shared.Rent(length);
+            return Pools<byte>.Pool.Rent(length);
         }
 
         byte[] buf;
@@ -73,7 +73,7 @@ internal sealed class PooledTileStore : ITileStore
         if (shift > MaxShift || buffer.Length != 1 << shift)
         {
             // Not one of ours (a larger rental, or a size that is not a power of two): the shared pool decides.
-            ArrayPool<byte>.Shared.Return(buffer);
+            Pools<byte>.Pool.Return(buffer);
             return;
         }
 

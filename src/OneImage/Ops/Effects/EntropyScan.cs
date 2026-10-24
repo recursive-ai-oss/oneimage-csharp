@@ -59,7 +59,7 @@ internal static class EntropyScan
     {
         int w = edges.Width;
         int rows = Math.Min(Band, edges.Height - y);
-        byte[] buf = ArrayPool<byte>.Shared.Rent(w * rows * 4);
+        byte[] buf = Pools<byte>.Pool.Rent(w * rows * 4);
         try
         {
             Render.ReadRegion(edges, new ImageRect(0, y, w, rows), buf, w * 4, PixelFormat.Rgba8, context);
@@ -90,7 +90,7 @@ internal static class EntropyScan
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buf);
+            Pools<byte>.Pool.Return(buf);
         }
     }
 }

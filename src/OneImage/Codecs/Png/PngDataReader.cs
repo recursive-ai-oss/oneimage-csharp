@@ -30,7 +30,7 @@ internal sealed class PngDataReader : IDisposable
         _type = fdat ? PngChunk.fdAT : PngChunk.IDAT;
         _streamLength = s.Length;
         s.Position = dataOffset;
-        _in = ArrayPool<byte>.Shared.Rent(32768);
+        _in = Pools<byte>.Pool.Rent(32768);
         _inflater = new Inflater(true, maxOutput, maxRatio);
     }
 

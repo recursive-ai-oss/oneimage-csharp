@@ -243,14 +243,14 @@ internal sealed class ConvolveNode : Node
         int rowF = (o.Width + (2 * rx)) * p;
         int hstride = o.Width * p;
         bool separable = _spec.Horizontal != null;
-        float[] padded = ArrayPool<float>.Shared.Rent((need.Height + 1) * rowF);
-        float[]? hbuf = separable ? ArrayPool<float>.Shared.Rent((need.Height + 1) * hstride) : null;
-        float[] vrow = ArrayPool<float>.Shared.Rent(hstride);
-        byte[] bytes = ArrayPool<byte>.Shared.Rent(need.Width * need.Height * ibpp);
+        float[] padded = Pools<float>.Pool.Rent((need.Height + 1) * rowF);
+        float[]? hbuf = separable ? Pools<float>.Pool.Rent((need.Height + 1) * hstride) : null;
+        float[] vrow = Pools<float>.Pool.Rent(hstride);
+        byte[] bytes = Pools<byte>.Pool.Rent(need.Width * need.Height * ibpp);
         int tapCount = separable ? (2 * ry) + 1 : _fullW.Length;
-        int[] offA = ArrayPool<int>.Shared.Rent(Math.Max(1, tapCount));
-        int[] offB = ArrayPool<int>.Shared.Rent(Math.Max(1, ry));
-        float[] tapW = ArrayPool<float>.Shared.Rent(Math.Max(1, tapCount));
+        int[] offA = Pools<int>.Pool.Rent(Math.Max(1, tapCount));
+        int[] offB = Pools<int>.Pool.Rent(Math.Max(1, ry));
+        float[] tapW = Pools<float>.Pool.Rent(Math.Max(1, tapCount));
         Tile tile = Tile.Rent(Tile.ByteSize(Format), clear: false);
         try
         {
@@ -357,17 +357,17 @@ internal sealed class ConvolveNode : Node
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(padded);
+            Pools<float>.Pool.Return(padded);
             if (hbuf != null)
             {
-                ArrayPool<float>.Shared.Return(hbuf);
+                Pools<float>.Pool.Return(hbuf);
             }
 
-            ArrayPool<float>.Shared.Return(vrow);
-            ArrayPool<byte>.Shared.Return(bytes);
-            ArrayPool<int>.Shared.Return(offA);
-            ArrayPool<int>.Shared.Return(offB);
-            ArrayPool<float>.Shared.Return(tapW);
+            Pools<float>.Pool.Return(vrow);
+            Pools<byte>.Pool.Return(bytes);
+            Pools<int>.Pool.Return(offA);
+            Pools<int>.Pool.Return(offB);
+            Pools<float>.Pool.Return(tapW);
         }
     }
 

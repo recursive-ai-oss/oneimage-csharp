@@ -148,7 +148,7 @@ internal sealed class HandleStream : Stream
         }
         else
         {
-            _block ??= ArrayPool<byte>.Shared.Rent(BlockSize);
+            _block ??= Pools<byte>.Pool.Rent(BlockSize);
             _blockLength = 0;
             int got = ReadAt(_block.AsSpan(0, BlockSize), _position);
             _blockStart = _position;
@@ -193,7 +193,7 @@ internal sealed class HandleStream : Stream
         _blockLength = 0;
         if (b != null)
         {
-            ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
 
         base.Dispose(disposing);
@@ -239,7 +239,7 @@ internal sealed class PooledBytes
     {
         long hint = stream.CanSeek ? Math.Max(0, stream.Length - stream.Position) : 0;
         int cap = (int)Math.Clamp(hint + 1, 4096, int.MaxValue / 2);
-        byte[] buf = ArrayPool<byte>.Shared.Rent(cap);
+        byte[] buf = Pools<byte>.Pool.Rent(cap);
         int len = 0;
         try
         {
@@ -247,9 +247,9 @@ internal sealed class PooledBytes
             {
                 if (len == buf.Length)
                 {
-                    byte[] bigger = ArrayPool<byte>.Shared.Rent(checked(buf.Length * 2));
+                    byte[] bigger = Pools<byte>.Pool.Rent(checked(buf.Length * 2));
                     buf.AsSpan(0, len).CopyTo(bigger);
-                    ArrayPool<byte>.Shared.Return(buf);
+                    Pools<byte>.Pool.Return(buf);
                     buf = bigger;
                 }
 
@@ -264,7 +264,7 @@ internal sealed class PooledBytes
         }
         catch
         {
-            ArrayPool<byte>.Shared.Return(buf);
+            Pools<byte>.Pool.Return(buf);
             throw;
         }
 
@@ -275,7 +275,7 @@ internal sealed class PooledBytes
     {
         long hint = stream.CanSeek ? Math.Max(0, stream.Length - stream.Position) : 0;
         int cap = (int)Math.Clamp(hint + 1, 4096, int.MaxValue / 2);
-        byte[] buf = ArrayPool<byte>.Shared.Rent(cap);
+        byte[] buf = Pools<byte>.Pool.Rent(cap);
         int len = 0;
         try
         {
@@ -283,9 +283,9 @@ internal sealed class PooledBytes
             {
                 if (len == buf.Length)
                 {
-                    byte[] bigger = ArrayPool<byte>.Shared.Rent(checked(buf.Length * 2));
+                    byte[] bigger = Pools<byte>.Pool.Rent(checked(buf.Length * 2));
                     buf.AsSpan(0, len).CopyTo(bigger);
-                    ArrayPool<byte>.Shared.Return(buf);
+                    Pools<byte>.Pool.Return(buf);
                     buf = bigger;
                 }
 
@@ -300,7 +300,7 @@ internal sealed class PooledBytes
         }
         catch
         {
-            ArrayPool<byte>.Shared.Return(buf);
+            Pools<byte>.Pool.Return(buf);
             throw;
         }
 
@@ -312,7 +312,7 @@ internal sealed class PooledBytes
         byte[]? b = Interlocked.Exchange(ref _buffer, null);
         if (b != null)
         {
-            ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 }

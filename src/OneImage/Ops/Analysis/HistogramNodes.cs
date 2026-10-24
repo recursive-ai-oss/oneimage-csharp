@@ -229,9 +229,9 @@ internal sealed class AdaptiveThresholdNode : Node
         ImageRect need = RequiredInput(0, rect);
         int w = need.Width;
         int h = need.Height;
-        byte[] px = ArrayPool<byte>.Shared.Rent(w * h * 4);
-        int[] lum = ArrayPool<int>.Shared.Rent(w * h);
-        int[] column = ArrayPool<int>.Shared.Rent(w);
+        byte[] px = Pools<byte>.Pool.Rent(w * h * 4);
+        int[] lum = Pools<int>.Pool.Rent(w * h);
+        int[] column = Pools<int>.Pool.Rent(w);
         try
         {
             Render.ReadRegion(Inputs[0], need, px, w * 4, PixelFormat.Rgba8, context);
@@ -308,9 +308,9 @@ internal sealed class AdaptiveThresholdNode : Node
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(px);
-            ArrayPool<int>.Shared.Return(lum);
-            ArrayPool<int>.Shared.Return(column);
+            Pools<byte>.Pool.Return(px);
+            Pools<int>.Pool.Return(lum);
+            Pools<int>.Pool.Return(column);
         }
     }
 }

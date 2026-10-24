@@ -32,7 +32,7 @@ internal sealed class StripToTileBuffer : IRowSink, IDisposable
         Height = height;
         Format = format;
         _rowBytes = checked(Width * Format.BytesPerPixel);
-        _band = ArrayPool<byte>.Shared.Rent(checked(_rowBytes * Tile.Size));
+        _band = Pools<byte>.Pool.Rent(checked(_rowBytes * Tile.Size));
     }
 
     public int Width { get; }
@@ -77,7 +77,7 @@ internal sealed class StripToTileBuffer : IRowSink, IDisposable
         _band = null;
         if (b != null)
         {
-            ArrayPool<byte>.Shared.Return(b);
+            Pools<byte>.Pool.Return(b);
         }
     }
 
@@ -290,7 +290,7 @@ internal sealed class DirectRowSink : IRowSink
         else
         {
             Drain();
-            byte[]? scratch = _converter == null ? null : System.Buffers.ArrayPool<byte>.Shared.Rent(_stageRowBytes);
+            byte[]? scratch = _converter == null ? null : Pools<byte>.Pool.Rent(_stageRowBytes);
             try
             {
                 for (int r = 0; r < rowCount; r++)
@@ -302,7 +302,7 @@ internal sealed class DirectRowSink : IRowSink
             {
                 if (scratch != null)
                 {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(scratch);
+                    Pools<byte>.Pool.Return(scratch);
                 }
             }
         }
@@ -365,7 +365,7 @@ internal sealed class DirectRowSink : IRowSink
         {
             if (_chunks[i] is { } c)
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(c);
+                Pools<byte>.Pool.Return(c);
                 _chunks[i] = null;
             }
         }
@@ -377,11 +377,11 @@ internal sealed class DirectRowSink : IRowSink
         // delivery must be finished with before its buffer is reused (which Drain guarantees).
         Drain();
         int bytes = rowCount * _sourceRowBytes;
-        byte[] chunk = _chunks[_nextChunk] ??= System.Buffers.ArrayPool<byte>.Shared.Rent(bytes);
+        byte[] chunk = _chunks[_nextChunk] ??= Pools<byte>.Pool.Rent(bytes);
         if (chunk.Length < bytes)
         {
-            System.Buffers.ArrayPool<byte>.Shared.Return(chunk);
-            chunk = _chunks[_nextChunk] = System.Buffers.ArrayPool<byte>.Shared.Rent(bytes);
+            Pools<byte>.Pool.Return(chunk);
+            chunk = _chunks[_nextChunk] = Pools<byte>.Pool.Rent(bytes);
         }
 
         rows.Slice(0, bytes).CopyTo(chunk);
@@ -390,7 +390,7 @@ internal sealed class DirectRowSink : IRowSink
         _pending = Task.Run(() => Parallel.For(0, rowCount, options, r =>
         {
             // A format change after the stage goes through a scratch row, rented per row so the workers share nothing.
-            byte[]? scratch = _converter == null ? null : System.Buffers.ArrayPool<byte>.Shared.Rent(_stageRowBytes);
+            byte[]? scratch = _converter == null ? null : Pools<byte>.Pool.Rent(_stageRowBytes);
             try
             {
                 ConvertOne(chunk.AsSpan(r * _sourceRowBytes, _sourceRowBytes), y + r, scratch);
@@ -399,7 +399,7 @@ internal sealed class DirectRowSink : IRowSink
             {
                 if (scratch != null)
                 {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(scratch);
+                    Pools<byte>.Pool.Return(scratch);
                 }
             }
         }));

@@ -84,14 +84,14 @@ internal sealed class Upsampler : IDisposable
         _bpp = sink.Format.BytesPerPixel;
         _rowBytes = width * _bpp;
         _token = token;
-        _batch = ArrayPool<byte>.Shared.Rent(_rowBytes * (Batch + 2));
-        _chroma = ArrayPool<byte>.Shared.Rent(4 * width);
+        _batch = Pools<byte>.Pool.Rent(_rowBytes * (Batch + 2));
+        _chroma = Pools<byte>.Pool.Rent(4 * width);
     }
 
     public void Dispose()
     {
-        ArrayPool<byte>.Shared.Return(_batch);
-        ArrayPool<byte>.Shared.Return(_chroma);
+        Pools<byte>.Pool.Return(_batch);
+        Pools<byte>.Pool.Return(_chroma);
     }
 
     private void Flush()
@@ -207,7 +207,7 @@ internal static class AlphaDecoder
                 throw new ImageFormatException("The alpha plane is truncated.");
             }
 
-            byte[] raw = ArrayPool<byte>.Shared.Rent((int)size);
+            byte[] raw = Pools<byte>.Pool.Rent((int)size);
             for (int y = 0; y < height; y++)
             {
                 Unfilter(filter, data.AsSpan(1 + (y * width), width), raw, y, width);
@@ -295,21 +295,21 @@ internal static class AlphaDecoder
             _filter = filter;
             _total = (long)width * height;
             _row = new byte[width];
-            Plane = ArrayPool<byte>.Shared.Rent((int)Math.Min(_total, 1 << 16));
+            Plane = Pools<byte>.Pool.Rent((int)Math.Min(_total, 1 << 16));
         }
 
         public byte[] Plane { get; private set; }
 
-        public void Release() => ArrayPool<byte>.Shared.Return(Plane);
+        public void Release() => Pools<byte>.Pool.Return(Plane);
 
         public void WriteRow(int y, ReadOnlySpan<uint> argb)
         {
             long need = (y + 1L) * _width;
             if (need > Plane.Length)
             {
-                byte[] bigger = ArrayPool<byte>.Shared.Rent((int)Math.Min(Math.Max(need, Plane.Length * 2L), _total));
+                byte[] bigger = Pools<byte>.Pool.Rent((int)Math.Min(Math.Max(need, Plane.Length * 2L), _total));
                 Plane.AsSpan(0, y * _width).CopyTo(bigger);
-                ArrayPool<byte>.Shared.Return(Plane);
+                Pools<byte>.Pool.Return(Plane);
                 Plane = bigger;
             }
 

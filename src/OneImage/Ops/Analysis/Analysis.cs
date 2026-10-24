@@ -112,7 +112,7 @@ public sealed partial class ImageFrame
             RenderContext.Create(maxDegree, cancellationToken),
             (rect, tile) =>
             {
-                uint[] counts = ArrayPool<uint>.Shared.Rent(c * bins);
+                uint[] counts = Pools<uint>.Pool.Rent(c * bins);
                 counts.AsSpan(0, c * bins).Clear();
                 long n = AnalysisKernel.HistogramTile(tile, rect.Width, rect.Height, fmt, bins, skipTransparent, counts);
                 return (counts, n);
@@ -125,7 +125,7 @@ public sealed partial class ImageFrame
                 }
 
                 pixels += part.Pixels;
-                ArrayPool<uint>.Shared.Return(part.Counts);
+                Pools<uint>.Pool.Return(part.Counts);
             });
         return new ImageHistogram(c, bins, pixels, total);
     }

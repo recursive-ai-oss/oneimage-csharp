@@ -78,7 +78,7 @@ public sealed class PixelLock<T> : IDisposable
         }
         finally
         {
-            ArrayPool<T>.Shared.Return(staging);
+            Pools<T>.Pool.Return(staging);
         }
     }
 

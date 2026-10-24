@@ -414,7 +414,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
 
     private static uint[]? ReadPalette(GifByteReader r, int count)
     {
-        byte[] raw = ArrayPool<byte>.Shared.Rent(count * 3);
+        byte[] raw = Pools<byte>.Pool.Rent(count * 3);
         try
         {
             if (r.Read(raw.AsSpan(0, count * 3)) < count * 3)
@@ -434,7 +434,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(raw);
+            Pools<byte>.Pool.Return(raw);
         }
     }
 
@@ -481,7 +481,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
             }
 
             int outRow = region.Width * 4;
-            byte[] tmp = ArrayPool<byte>.Shared.Rent(outRow * Math.Min(region.Height, 64));
+            byte[] tmp = Pools<byte>.Pool.Rent(outRow * Math.Min(region.Height, 64));
             try
             {
                 int cx0 = Math.Max(region.X, state.BoxX);
@@ -505,7 +505,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(tmp);
+                Pools<byte>.Pool.Return(tmp);
             }
         }
     }
@@ -519,7 +519,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         }
 
         int chunk = Math.Min(rows, 64);
-        byte[] zeros = ArrayPool<byte>.Shared.Rent(chunk * rowBytes);
+        byte[] zeros = Pools<byte>.Pool.Rent(chunk * rowBytes);
         try
         {
             zeros.AsSpan(0, chunk * rowBytes).Clear();
@@ -532,7 +532,7 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(zeros);
+            Pools<byte>.Pool.Return(zeros);
         }
     }
 
@@ -666,8 +666,8 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         // The decoder's tables are about 68 KB, so one is reused across frames; the frame limit is set again by Reset.
         LzwDecoder lzw = Interlocked.Exchange(ref s_lzw, null) ?? new LzwDecoder(LzwVariant.Gif);
         lzw.Reset(f.MinCodeSize, (long)f.Width * f.Height, 0);
-        byte[] rowBuf = ArrayPool<byte>.Shared.Rent(f.Width);
-        byte[] inBuf = ArrayPool<byte>.Shared.Rent(4096);
+        byte[] rowBuf = Pools<byte>.Pool.Rent(f.Width);
+        byte[] inBuf = Pools<byte>.Pool.Rent(4096);
         try
         {
             int inPos = 0;
@@ -730,8 +730,8 @@ internal sealed class GifDecoder : IImageDecoder, ICheapTileDecoder
         finally
         {
             Interlocked.CompareExchange(ref s_lzw, lzw, null);
-            ArrayPool<byte>.Shared.Return(rowBuf);
-            ArrayPool<byte>.Shared.Return(inBuf);
+            Pools<byte>.Pool.Return(rowBuf);
+            Pools<byte>.Pool.Return(inBuf);
         }
     }
 

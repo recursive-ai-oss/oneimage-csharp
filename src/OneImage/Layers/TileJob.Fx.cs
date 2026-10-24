@@ -47,10 +47,10 @@ internal sealed partial class TileJob
         int bpp = _format.BytesPerPixel;
         int stride = Tile.Size * bpp;
         float fill = plan.FillOpacity;
-        float[] surface = ArrayPool<float>.Shared.Rent(w * h * channels);
-        float[] cov = ArrayPool<float>.Shared.Rent(w * h);
-        float[] shape = ArrayPool<float>.Shared.Rent(w * h);
-        float[] over = ArrayPool<float>.Shared.Rent(w * channels);
+        float[] surface = Pools<float>.Pool.Rent(w * h * channels);
+        float[] cov = Pools<float>.Pool.Rent(w * h);
+        float[] shape = Pools<float>.Pool.Rent(w * h);
+        float[] over = Pools<float>.Pool.Rent(w * channels);
         float[]? paint = null;
         Tile? result = null;
         try
@@ -83,7 +83,7 @@ internal sealed partial class TileJob
                 }
 
                 // Effects with more than one color (gradients, patterns) bring a color per pixel.
-                paint ??= ArrayPool<float>.Shared.Rent(w * h * 4);
+                paint ??= Pools<float>.Pool.Rent(w * h * 4);
                 bool painted = EffectRenderer.Paint(item, source, _rect, cov, paint);
                 Rgba32 color = item.Color;
                 float r = color.R / 255f;
@@ -158,13 +158,13 @@ internal sealed partial class TileJob
         finally
         {
             content.Release();
-            ArrayPool<float>.Shared.Return(surface);
-            ArrayPool<float>.Shared.Return(cov);
-            ArrayPool<float>.Shared.Return(shape);
-            ArrayPool<float>.Shared.Return(over);
+            Pools<float>.Pool.Return(surface);
+            Pools<float>.Pool.Return(cov);
+            Pools<float>.Pool.Return(shape);
+            Pools<float>.Pool.Return(over);
             if (paint != null)
             {
-                ArrayPool<float>.Shared.Return(paint);
+                Pools<float>.Pool.Return(paint);
             }
         }
     }
@@ -185,7 +185,7 @@ internal sealed partial class TileJob
 
         var source = new FxSource(this, l);
         int n = _rect.Width * _rect.Height;
-        float[] cov = ArrayPool<float>.Shared.Rent(n);
+        float[] cov = Pools<float>.Pool.Rent(n);
         float[]? paint = null;
         try
         {
@@ -206,7 +206,7 @@ internal sealed partial class TileJob
                         continue;
                     }
 
-                    paint ??= ArrayPool<float>.Shared.Rent(n * 4);
+                    paint ??= Pools<float>.Pool.Rent(n * 4);
                     tile = EffectTile(item.Color, cov, EffectRenderer.Paint(item, source, _rect, cov, paint) ? paint : null);
                 }
                 catch
@@ -220,10 +220,10 @@ internal sealed partial class TileJob
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(cov);
+            Pools<float>.Pool.Return(cov);
             if (paint != null)
             {
-                ArrayPool<float>.Shared.Return(paint);
+                Pools<float>.Pool.Return(paint);
             }
         }
 
@@ -237,7 +237,7 @@ internal sealed partial class TileJob
         int bpp = _format.BytesPerPixel;
         int channels = _work.ChannelCount;
         int stride = Tile.Size * bpp;
-        float[] row = ArrayPool<float>.Shared.Rent(w * channels);
+        float[] row = Pools<float>.Pool.Rent(w * channels);
         Tile? tile = null;
         try
         {
@@ -290,7 +290,7 @@ internal sealed partial class TileJob
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(row);
+            Pools<float>.Pool.Return(row);
         }
     }
 
@@ -326,7 +326,7 @@ internal sealed partial class TileJob
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(cov);
+                    Pools<byte>.Pool.Return(cov);
                 }
 
                 return;
@@ -340,8 +340,8 @@ internal sealed partial class TileJob
 
             int channels = job._work.ChannelCount;
             int hn = hit.Width * hit.Height;
-            byte[] bytes = ArrayPool<byte>.Shared.Rent(hn * channels * sizeof(float));
-            float[] samples = ArrayPool<float>.Shared.Rent(hn * channels);
+            byte[] bytes = Pools<byte>.Pool.Rent(hn * channels * sizeof(float));
+            float[] samples = Pools<float>.Pool.Rent(hn * channels);
             byte[]? mask = null;
             try
             {
@@ -373,11 +373,11 @@ internal sealed partial class TileJob
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(bytes);
-                ArrayPool<float>.Shared.Return(samples);
+                Pools<byte>.Pool.Return(bytes);
+                Pools<float>.Pool.Return(samples);
                 if (mask != null)
                 {
-                    ArrayPool<byte>.Shared.Return(mask);
+                    Pools<byte>.Pool.Return(mask);
                 }
             }
         }

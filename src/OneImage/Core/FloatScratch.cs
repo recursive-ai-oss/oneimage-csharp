@@ -15,11 +15,19 @@ internal static class FloatScratch
     private static readonly System.Collections.Concurrent.ConcurrentQueue<float[]>[] s_queues = CreateQueues();
     private static long s_pooledBytes;
 
+    /// <summary>Gets or sets a pool that replaces the queues; only tests set it, to check how scratch arrays are used.</summary>
+    public static System.Buffers.ArrayPool<float>? Override { get; set; }
+
     /// <summary>Gets the bytes currently idle in the pool (diagnostics).</summary>
     public static long PooledBytes => Interlocked.Read(ref s_pooledBytes);
 
     public static float[] Rent(int length)
     {
+        if (Override is { } over)
+        {
+            return over.Rent(length);
+        }
+
         int shift = Shift(length);
         if (shift > MaxShift)
         {
@@ -39,6 +47,12 @@ internal static class FloatScratch
     {
         if (array == null)
         {
+            return;
+        }
+
+        if (Override is { } over)
+        {
+            over.Return(array);
             return;
         }
 

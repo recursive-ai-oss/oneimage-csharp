@@ -338,8 +338,8 @@ internal sealed partial class EqualizeNode : Node
         uint[]? lanes = tiled ? null : new uint[4 * levels];
         bool same = input.Format == _work;
         int ibpp = input.Format.BytesPerPixel;
-        byte[]? converted = same ? null : ArrayPool<byte>.Shared.Rent(Tile.Size * _wbpp);
-        ushort[] bins = ArrayPool<ushort>.Shared.Rent(Tile.Size);
+        byte[]? converted = same ? null : Pools<byte>.Pool.Rent(Tile.Size * _wbpp);
+        ushort[] bins = Pools<ushort>.Pool.Rent(Tile.Size);
         try
         {
             for (int ty = y0 >> Tile.Shift; ty <= (y1 - 1) >> Tile.Shift; ty++)
@@ -407,10 +407,10 @@ internal sealed partial class EqualizeNode : Node
         }
         finally
         {
-            ArrayPool<ushort>.Shared.Return(bins);
+            Pools<ushort>.Pool.Return(bins);
             if (converted != null)
             {
-                ArrayPool<byte>.Shared.Return(converted);
+                Pools<byte>.Pool.Return(converted);
             }
         }
     }
@@ -434,10 +434,10 @@ internal sealed partial class EqualizeNode : Node
         int n = _tiles;
         int levels = _levels;
         Tile source = input.GetTile(tx, ty, context);
-        ushort[] bins = ArrayPool<ushort>.Shared.Rent(w);
-        int[] vals = ArrayPool<int>.Shared.Rent(w);
-        byte[]? workRow = convert ? ArrayPool<byte>.Shared.Rent(w * wbpp) : null;
-        byte[]? outRow = convert ? ArrayPool<byte>.Shared.Rent(w * wbpp) : null;
+        ushort[] bins = Pools<ushort>.Pool.Rent(w);
+        int[] vals = Pools<int>.Pool.Rent(w);
+        byte[]? workRow = convert ? Pools<byte>.Pool.Rent(w * wbpp) : null;
+        byte[]? outRow = convert ? Pools<byte>.Pool.Rent(w * wbpp) : null;
         int[]? table = null;
         int[]? xa = null;
         int[]? xb = null;
@@ -447,7 +447,7 @@ internal sealed partial class EqualizeNode : Node
         {
             if (global)
             {
-                table = ArrayPool<int>.Shared.Rent(levels);
+                table = Pools<int>.Pool.Rent(levels);
                 for (int i = 0; i < levels; i++)
                 {
                     table[i] = Quantize(luts[i]);
@@ -455,9 +455,9 @@ internal sealed partial class EqualizeNode : Node
             }
             else
             {
-                xa = ArrayPool<int>.Shared.Rent(w);
-                xb = ArrayPool<int>.Shared.Rent(w);
-                xf = ArrayPool<float>.Shared.Rent(w);
+                xa = Pools<int>.Pool.Rent(w);
+                xb = Pools<int>.Pool.Rent(w);
+                xf = Pools<float>.Pool.Rent(w);
                 for (int x = 0; x < w; x++)
                 {
                     Axis(o.X + x, _tileW, n, out xa[x], out xb[x], out xf[x]);
@@ -540,24 +540,24 @@ internal sealed partial class EqualizeNode : Node
         finally
         {
             source.Release();
-            ArrayPool<ushort>.Shared.Return(bins);
-            ArrayPool<int>.Shared.Return(vals);
+            Pools<ushort>.Pool.Return(bins);
+            Pools<int>.Pool.Return(vals);
             if (workRow != null)
             {
-                ArrayPool<byte>.Shared.Return(workRow);
-                ArrayPool<byte>.Shared.Return(outRow!);
+                Pools<byte>.Pool.Return(workRow);
+                Pools<byte>.Pool.Return(outRow!);
             }
 
             if (table != null)
             {
-                ArrayPool<int>.Shared.Return(table);
+                Pools<int>.Pool.Return(table);
             }
 
             if (xa != null)
             {
-                ArrayPool<int>.Shared.Return(xa);
-                ArrayPool<int>.Shared.Return(xb!);
-                ArrayPool<float>.Shared.Return(xf!);
+                Pools<int>.Pool.Return(xa);
+                Pools<int>.Pool.Return(xb!);
+                Pools<float>.Pool.Return(xf!);
             }
         }
     }
