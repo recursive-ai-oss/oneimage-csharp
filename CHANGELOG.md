@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-24
+
 ### Changed
 
 - `RecursiveAI.OneImage.Text` is built on [`RecursiveAI.OneFont`](https://github.com/recursive-ai-oss/onefont-csharp) 1.2 or later for font parsing and shaping, instead of carrying its own copy: the sfnt, CFF and TrueType outline readers, the GSUB/GPOS engine and the script shapers, the bidirectional algorithm, line breaking and grapheme segmentation, and the Unicode tables. WOFF, WOFF2, hinting, color glyphs, vertical metrics, word-breaking modes and the layout stay here. The public API of `OneImage.Text` is unchanged and drawing and measuring are byte-identical to 1.9.0 over the test fonts, the complex-script case files and the SVG text tests. `OneFont` is the package's one new dependency; `RecursiveAI.OneImage` itself gains none.
@@ -193,7 +195,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.7.0...v1.8.0
