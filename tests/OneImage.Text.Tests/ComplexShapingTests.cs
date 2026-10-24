@@ -3,8 +3,6 @@ using System.Diagnostics;
 using System.Globalization;
 using OneImage.Text.Fonts;
 using OneImage.Text.Layout;
-using OneImage.Text.Shaping;
-using OneImage.Text.Unicode;
 
 namespace OneImage.Text.Tests;
 
@@ -27,21 +25,6 @@ public class ComplexShapingTests
     }
 
     private static int Gid(string file, int cp) => ComplexScriptReferenceTests.Load(file).Face.GetGlyphIndex(cp);
-
-    [Fact]
-    public void TablesKnowTheCharacters()
-    {
-        Assert.Equal(ShapedScript.Devanagari, IndicProps.Lookup(0x93F, out IndicSyllabicCategory isc, out IndicPositionalCategory ipc));
-        Assert.Equal(IndicSyllabicCategory.VowelDependent, isc);
-        Assert.Equal(IndicPositionalCategory.Left, ipc);
-        Assert.Equal(ShapedScript.Khmer, IndicProps.Lookup(0x17D2, out isc, out _));
-        Assert.Equal(IndicSyllabicCategory.InvisibleStacker, isc);
-        Assert.Equal(ShapedScript.None, IndicProps.Lookup('A', out _, out _));
-        Assert.True(IndicProps.Decompose(0x9CB, out int a, out int b));
-        Assert.Equal((0x9C7, 0x9BE), (a, b));
-        Assert.Equal(Scripts.Of(0x915), Scripts.TagOf(ShapedScript.Devanagari));
-        Assert.Equal(Scripts.Of(0xE01), Scripts.TagOf(ShapedScript.Thai));
-    }
 
     [Fact]
     public void PreBaseMatraComesBeforeItsConsonant()

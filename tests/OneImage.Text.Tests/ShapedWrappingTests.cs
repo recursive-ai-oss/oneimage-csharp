@@ -1,5 +1,4 @@
 using OneImage.Text.Layout;
-using OneImage.Text.Unicode;
 
 namespace OneImage.Text.Tests;
 
@@ -39,7 +38,7 @@ public class ShapedWrappingTests
         TextLayout flat = TextLayout.Create(Prose, Options());
         var glyphStarts = new HashSet<int>(flat.Glyphs.Select(g => g.Cluster)) { 0, Prose.Length };
         var clusters = new byte[Prose.Length + 1];
-        Graphemes.Fill(Prose, clusters);
+        OneFont.TextSegmentation.FillGraphemeStarts(Prose, clusters);
 
         int cases = 0;
         for (float wrap = 40; wrap <= 400; wrap += 7)

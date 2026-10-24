@@ -45,7 +45,7 @@ internal static class Woff2
     }
 
     /// <summary>Parses every face of a WOFF2 file.</summary>
-    public static List<FontFace> Parse(byte[] data)
+    public static List<Dictionary<uint, ReadOnlyMemory<byte>>> Parse(byte[] data)
     {
         // Header: signature, flavor, length, numTables, reserved, totalSfntSize, totalCompressedSize, versions, meta and private blocks.
         if (data.Length < 48)
@@ -193,7 +193,7 @@ internal static class Woff2
             pos += entries[i].Length;
         }
 
-        var faces = new List<FontFace>();
+        var faces = new List<Dictionary<uint, ReadOnlyMemory<byte>>>();
         var glyfCache = new Dictionary<int, GlyfResult>();
         if (faceIndices is null)
         {
@@ -203,13 +203,13 @@ internal static class Woff2
                 all[i] = i;
             }
 
-            faces.Add(FontFace.Create(BuildFace(all, entries, block, glyfCache)));
+            faces.Add(BuildFace(all, entries, block, glyfCache));
         }
         else
         {
             foreach (int[] idx in faceIndices)
             {
-                faces.Add(FontFace.Create(BuildFace(idx, entries, block, glyfCache)));
+                faces.Add(BuildFace(idx, entries, block, glyfCache));
             }
         }
 

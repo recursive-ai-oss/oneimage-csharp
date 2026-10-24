@@ -28,11 +28,11 @@ public class Woff2Tests
             Assert.Equal(x.NumGlyphs, y.NumGlyphs);
             Assert.Equal(x.FamilyName, y.FamilyName);
             Assert.Equal(x.UnitsPerEm, y.UnitsPerEm);
-            Assert.Equal(x.IsCff, y.IsCff);
+            Assert.Equal(x.Inner.IsCff, y.Inner.IsCff);
             for (int g = 0; g < x.NumGlyphs; g++)
             {
                 Assert.Equal(x.GetAdvance(g), y.GetAdvance(g));
-                Assert.Equal(x.GetLeftSideBearing(g), y.GetLeftSideBearing(g));
+                Assert.Equal(x.Inner.GetLeftSideBearing(g), y.Inner.GetLeftSideBearing(g));
                 Outline o = x.GetOutline(g);
                 Outline p = y.GetOutline(g);
                 Assert.Equal(o.Verbs, p.Verbs);
@@ -49,8 +49,7 @@ public class Woff2Tests
             {
                 foreach (int r in some)
                 {
-                    Assert.Equal(x.GetKerning(l, r), y.GetKerning(l, r));
-                    Assert.Equal(x.GetLegacyKerning(l, r), y.GetLegacyKerning(l, r));
+                    Assert.Equal(x.Inner.GetKerning(l, r), y.Inner.GetKerning(l, r));
                 }
             }
         }

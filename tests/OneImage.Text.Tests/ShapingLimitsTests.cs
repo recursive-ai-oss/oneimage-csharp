@@ -121,18 +121,6 @@ public class ShapingLimitsTests
     }
 
     [Fact]
-    public void ALookupListThatPointsAtItselfDoesNotLoop()
-    {
-        // A GSUB whose only lookup is an extension subtable that points at itself, and a context that nests itself.
-        byte[] selfExt = LayoutFont.Table(false, [new FeatureSpec("ccmp", 0)], [new LookupSpec(1, 0, new Blob().U16(1).Ref(Blob.Cov(1)).U16(1).Build())]);
-        byte[] font = LayoutFont.Font(Enumerable.Repeat(100, 10).ToArray(), null, selfExt);
-        FontFace face = LayoutFont.Face(font);
-        var output = new List<Shaping.ShapedRunGlyph>();
-        Shaping.TextShaper.ShapeGlyphs(face, [1, 1, 1], 0, Shaping.FeatureSet.Empty, output);
-        Assert.Equal(3, output.Count);
-    }
-
-    [Fact]
     public void ManyGlyphsShapeInLinearishTime()
     {
         // 200,000 characters with ligature and mark lookups must not behave quadratically on the glyph buffer.

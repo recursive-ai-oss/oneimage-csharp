@@ -24,7 +24,7 @@ public class LoadingTests
     public void CffFontLoadsWithCidKeyedOutlines()
     {
         FontFace face = TestFonts.Face(TestFonts.Cff);
-        Assert.True(face.IsCff);
+        Assert.True(face.Inner.IsCff);
         Assert.Equal(1000, face.UnitsPerEm);
         int ideograph = face.GetGlyphIndex(0x65E5);
         Assert.NotEqual(0, ideograph);
@@ -166,7 +166,7 @@ public class LoadingTests
                     int g = face.GetGlyphIndex(c);
                     _ = face.GetAdvance(g);
                     _ = face.GetOutline(g).TightBox();
-                    _ = face.GetKerning(prev, g);
+                    _ = face.Inner.GetKerning(prev, g);
                     prev = g;
                 }
 

@@ -1,195 +1,77 @@
 using System.Collections.Concurrent;
-using OneImage.Text.Shaping;
+using OneFontFace = global::OneFont.FontFace;
+using OneFontOutline = global::OneFont.GlyphOutline;
 
 namespace OneImage.Text.Fonts;
 
-/// <summary>One parsed face: header tables read eagerly and validated, outlines, cmap and kerning read on demand. Thread-safe.</summary>
+/// <summary>
+/// One face as the layout needs it: a OneFont face (tables, character map, metrics, unhinted outlines, shaping) together with what this
+/// package adds on top, which is vertical metrics, color glyph tables, TrueType hinting and the outline form the drawing code takes.
+/// Thread-safe.
+/// </summary>
 internal sealed class FontFace
 {
     private const int MaxCachedOutlines = 8192;
     private const int MaxCachedHinters = 16;
-    private const int MaxCachedKerningPairs = 1 << 16;
 
-    private readonly Dictionary<uint, ReadOnlyMemory<byte>> _tables;
-    private readonly ReadOnlyMemory<byte> _hmtx;
-    private readonly int _numHMetrics;
-    private readonly CmapTable _cmap;
-    private readonly TrueTypeGlyphs? _glyf;
-    private readonly CffGlyphs? _cff;
-    private readonly KernTable? _kern;
     private readonly ConcurrentDictionary<int, Outline> _outlines = new();
-    private readonly ConcurrentDictionary<uint, int> _kerning = new();
     private readonly ConcurrentDictionary<int, HinterSlot> _hinters = new();
     private readonly ConcurrentDictionary<(int Glyph, int Size), Outline> _hinted = new();
+    private readonly object _glyfGate = new();
+    private TrueTypeGlyphs? _glyf;
+    private bool _glyfRead;
 
-    private FontFace(Dictionary<uint, ReadOnlyMemory<byte>> tables)
+    public FontFace(OneFontFace face)
     {
-        _tables = tables;
-        ReadOnlySpan<byte> head = Table("head", required: true).Span;
-        if (head.Length < 54)
+        Inner = face;
+        Vertical = VerticalMetrics.TryCreate(face, NumGlyphs);
+        Color = ColorGlyphs.TryCreate(face.GetTable("COLR"), face.GetTable("CPAL"));
+
+        // The OS/2 subscript and superscript recommendations: sizes are not in OneFont's API, so they are read from the table.
+        ReadOnlySpan<byte> os2 = face.GetTable("OS/2").Span;
+        if (os2.Length >= 78)
         {
-            throw Be.Truncated();
-        }
-
-        UnitsPerEm = Be.U16(head, 18);
-        if (UnitsPerEm < 16 || UnitsPerEm > 16384)
-        {
-            throw new FontFormatException("The font's units per em is out of range.");
-        }
-
-        XMin = Be.I16(head, 36);
-        YMin = Be.I16(head, 38);
-        XMax = Be.I16(head, 40);
-        YMax = Be.I16(head, 42);
-        int macStyle = Be.U16(head, 44);
-        int locaFormat = Be.I16(head, 50);
-
-        ReadOnlySpan<byte> hhea = Table("hhea", required: true).Span;
-        if (hhea.Length < 36)
-        {
-            throw Be.Truncated();
-        }
-
-        Ascender = Be.I16(hhea, 4);
-        Descender = Be.I16(hhea, 6);
-        LineGap = Be.I16(hhea, 8);
-        _numHMetrics = Be.U16(hhea, 34);
-
-        ReadOnlySpan<byte> maxp = Table("maxp", required: true).Span;
-        NumGlyphs = Be.U16(maxp, 4);
-
-        _hmtx = Table("hmtx", required: true);
-        _numHMetrics = Math.Min(_numHMetrics, _hmtx.Length / 4);
-        if (_numHMetrics == 0)
-        {
-            throw new FontFormatException("The font has no horizontal metrics.");
-        }
-
-        _cmap = CmapTable.Create(Table("cmap", required: true)) ?? throw new FontFormatException("The font has no usable Unicode character map.");
-
-        if (_tables.TryGetValue(Be.Tag("CFF "), out ReadOnlyMemory<byte> cff))
-        {
-            _cff = new CffGlyphs(cff);
-            NumGlyphs = Math.Max(NumGlyphs, 0);
-        }
-        else if (_tables.ContainsKey(Be.Tag("CFF2")))
-        {
-            throw new FontFormatException("CFF2 outlines are not supported.");
-        }
-        else
-        {
-            _glyf = new TrueTypeGlyphs(Table("glyf", required: true), Table("loca", required: true), locaFormat != 0, NumGlyphs);
-        }
-
-        int fsSelection = 0;
-        if (_tables.TryGetValue(Be.Tag("OS/2"), out ReadOnlyMemory<byte> os2m) && os2m.Length >= 78)
-        {
-            ReadOnlySpan<byte> os2 = os2m.Span;
-            int version = Be.U16(os2, 0);
-            WeightClass = Be.U16(os2, 4);
             SubscriptXSize = Be.I16(os2, 10);
             SubscriptYSize = Be.I16(os2, 12);
             SubscriptYOffset = Be.I16(os2, 16);
             SuperscriptXSize = Be.I16(os2, 18);
             SuperscriptYSize = Be.I16(os2, 20);
             SuperscriptYOffset = Be.I16(os2, 24);
-            StrikeoutSize = Be.I16(os2, 26);
-            StrikeoutPosition = Be.I16(os2, 28);
-            fsSelection = Be.U16(os2, 62);
-            TypoAscender = Be.I16(os2, 68);
-            TypoDescender = Be.I16(os2, 70);
-            TypoLineGap = Be.I16(os2, 72);
-            WinAscent = Be.U16(os2, 74);
-            WinDescent = Be.U16(os2, 76);
-            HasOs2Metrics = true;
-
-            if (version >= 2 && os2m.Length >= 90)
-            {
-                XHeight = Be.I16(os2, 86);
-                CapHeight = Be.I16(os2, 88);
-            }
-        }
-
-        UseTypoMetrics = (fsSelection & 0x80) != 0;
-        IsItalic = (fsSelection & 1) != 0 || (macStyle & 2) != 0;
-        IsBold = (fsSelection & 0x20) != 0 || (macStyle & 1) != 0 || WeightClass >= 600;
-        if (WeightClass == 0)
-        {
-            WeightClass = IsBold ? 700 : 400;
-        }
-
-        if (_tables.TryGetValue(Be.Tag("post"), out ReadOnlyMemory<byte> post) && post.Length >= 12)
-        {
-            UnderlinePosition = Be.I16(post.Span, 8);
-            UnderlineThickness = Be.I16(post.Span, 10);
-        }
-
-        ReadOnlyMemory<byte> name = Table("name", required: false);
-        string? family = NameTable.Get(name, NameTable.TypographicFamily) ?? NameTable.Get(name, NameTable.Family);
-        string? sub = NameTable.Get(name, NameTable.TypographicSubfamily) ?? NameTable.Get(name, NameTable.Subfamily);
-        FullName = NameTable.Get(name, NameTable.FullName);
-        PostScriptName = NameTable.Get(name, NameTable.PostScriptName);
-        FamilyName = family ?? FullName ?? PostScriptName ?? "Unknown";
-        SubfamilyName = sub ?? (IsBold ? (IsItalic ? "Bold Italic" : "Bold") : (IsItalic ? "Italic" : "Regular"));
-
-        Vertical = VerticalMetrics.TryCreate(_tables, NumGlyphs);
-
-        Color = ColorGlyphs.TryCreate(Table("COLR", required: false), Table("CPAL", required: false));
-
-        // GSUB, GPOS and GDEF with an unusable header are ignored: the font then shapes with plain advances.
-        Layout = new OtFace(_tables, NumGlyphs);
-        if (_tables.TryGetValue(Be.Tag("kern"), out ReadOnlyMemory<byte> kern))
-        {
-            _kern = KernTable.Create(kern);
         }
     }
+
+    /// <summary>The OneFont face.</summary>
+    public OneFontFace Inner { get; }
 
     /// <summary>Vertical metrics (<c>vhea</c>, <c>vmtx</c>, <c>VORG</c>), or null when the font has none.</summary>
     public VerticalMetrics? Vertical { get; }
 
-    public int UnitsPerEm { get; }
+    /// <summary>The layered color glyphs (COLR version 0 records and CPAL), or null when the font has none or they are damaged.</summary>
+    public ColorGlyphs? Color { get; }
 
-    public int NumGlyphs { get; }
+    public int UnitsPerEm => Inner.UnitsPerEm;
 
-    public int XMin { get; }
+    public int NumGlyphs => Inner.GlyphCount;
 
-    public int YMin { get; }
+    public int WeightClass => Inner.Weight;
 
-    public int XMax { get; }
+    public bool IsItalic => Inner.IsItalic;
 
-    public int YMax { get; }
+    public bool IsBold => Inner.IsBold;
 
-    public int Ascender { get; }
+    public string FamilyName => Inner.FamilyName;
 
-    public int Descender { get; }
+    public string SubfamilyName => Inner.SubfamilyName;
 
-    public int LineGap { get; }
+    public string? FullName => Inner.FullName;
 
-    public int TypoAscender { get; }
+    public int UnderlinePosition => Inner.Metrics.UnderlinePosition;
 
-    public int TypoDescender { get; }
+    public int UnderlineThickness => Inner.Metrics.UnderlineThickness;
 
-    public int TypoLineGap { get; }
+    public int StrikeoutPosition => Inner.Metrics.StrikeoutPosition;
 
-    public int WinAscent { get; }
-
-    public int WinDescent { get; }
-
-    public bool HasOs2Metrics { get; }
-
-    public bool UseTypoMetrics { get; }
-
-    public int WeightClass { get; private set; }
-
-    public bool IsItalic { get; }
-
-    public bool IsBold { get; }
-
-    public int UnderlinePosition { get; }
-
-    public int UnderlineThickness { get; }
-
-    public int StrikeoutPosition { get; }
+    public int StrikeoutSize => Inner.Metrics.StrikeoutSize;
 
     // OS/2 subscript and superscript recommendations, in font units (0 when the font has no OS/2 table).
     public int SubscriptXSize { get; }
@@ -204,60 +86,33 @@ internal sealed class FontFace
 
     public int SuperscriptYOffset { get; }
 
-    public int StrikeoutSize { get; }
+    // OneFont reads tables on demand and reports damage with its own exception type; callers of this package expect ours.
+    public int GetGlyphIndex(int codePoint)
+    {
+        try
+        {
+            return Inner.GetGlyphIndex(codePoint);
+        }
+        catch (OneFont.FontFormatException ex)
+        {
+            throw new FontFormatException(ex.Message);
+        }
+    }
 
-    public int XHeight { get; }
-
-    public int CapHeight { get; }
-
-    public string FamilyName { get; }
-
-    public string SubfamilyName { get; }
-
-    public string? FullName { get; }
-
-    public string? PostScriptName { get; }
-
-    public bool IsCff => _cff is not null;
-
-    /// <summary>The layered color glyphs (COLR version 0 records and CPAL), or null when the font has none or they are damaged.</summary>
-    public ColorGlyphs? Color { get; }
-
-    /// <summary>GSUB, GPOS and GDEF, with the shape plans built from them.</summary>
-    public OtFace Layout { get; }
-
-    /// <summary>Whether the font has a legacy <c>kern</c> table. It is used only where GPOS has no kern feature.</summary>
-    public bool HasLegacyKerning => _kern is not null;
-
-    /// <summary>The legacy <c>kern</c> table's adjustment for a pair, in font units.</summary>
-    public int GetLegacyKerning(int left, int right) => _kern is null ? 0 : _kern.Get(left, right);
-
-    public static FontFace Create(Dictionary<uint, ReadOnlyMemory<byte>> tables) => new(tables);
-
-    /// <summary>The glyph for a code point; 0 (.notdef) when the font lacks it.</summary>
-    public int GetGlyphIndex(int codePoint) => _cmap.Lookup(codePoint);
-
-    /// <summary>Advance width in font units.</summary>
+    /// <summary>Horizontal advance in font units; glyphs past the long metrics share the last one.</summary>
     public int GetAdvance(int glyph)
     {
-        int i = Math.Min(Math.Max(glyph, 0), _numHMetrics - 1);
-        return Be.U16(_hmtx.Span, 4 * i);
-    }
-
-    /// <summary>Left side bearing in font units.</summary>
-    public int GetLeftSideBearing(int glyph)
-    {
-        ReadOnlySpan<byte> h = _hmtx.Span;
-        if (glyph < _numHMetrics)
+        try
         {
-            return Be.I16(h, (4 * Math.Max(glyph, 0)) + 2);
+            return Inner.GetAdvance(glyph);
         }
-
-        int o = (4 * _numHMetrics) + (2 * (glyph - _numHMetrics));
-        return o + 2 <= h.Length ? Be.I16(h, o) : 0;
+        catch (OneFont.FontFormatException ex)
+        {
+            throw new FontFormatException(ex.Message);
+        }
     }
 
-    /// <summary>The unhinted outline in font units, y up. Cached; shared between callers, so treat as read-only.</summary>
+    /// <summary>The unhinted outline in font units. Cached; shared between callers, so treat as read-only.</summary>
     public Outline GetOutline(int glyph)
     {
         if (_outlines.TryGetValue(glyph, out Outline? o))
@@ -265,7 +120,15 @@ internal sealed class FontFace
             return o;
         }
 
-        o = _cff is not null ? _cff.Load(glyph) : _glyf!.Load(glyph);
+        try
+        {
+            o = ToOutline(Inner.GetOutline(glyph));
+        }
+        catch (OneFont.FontFormatException ex)
+        {
+            throw new FontFormatException(ex.Message);
+        }
+
         if (_outlines.Count >= MaxCachedOutlines)
         {
             _outlines.Clear();
@@ -275,9 +138,42 @@ internal sealed class FontFace
         return o;
     }
 
+    private static Outline ToOutline(OneFontOutline source)
+    {
+        if (source.IsEmpty)
+        {
+            return Outline.Empty;
+        }
+
+        var b = new OutlineBuilder();
+        source.Write(b);
+        return b.Build();
+    }
+
     private sealed class HinterSlot(TrueTypeHinter? hinter)
     {
         public readonly TrueTypeHinter? Hinter = hinter;
+    }
+
+    // The glyf reader is only needed for hinting (unhinted outlines come from OneFont), so it is set up on first use.
+    private TrueTypeGlyphs? Glyf()
+    {
+        lock (_glyfGate)
+        {
+            if (!_glyfRead)
+            {
+                if (!Inner.IsCff)
+                {
+                    ReadOnlySpan<byte> head = Inner.GetTable("head").Span;
+                    int locaFormat = head.Length >= 52 ? Be.I16(head, 50) : 0;
+                    _glyf = new TrueTypeGlyphs(Inner.GetTable("glyf"), Inner.GetTable("loca"), locaFormat != 0, NumGlyphs);
+                }
+
+                _glyfRead = true;
+            }
+
+            return _glyf;
+        }
     }
 
     /// <summary>
@@ -286,7 +182,7 @@ internal sealed class FontFace
     /// </summary>
     public Outline GetHintedOutline(int glyph, float pixelSize)
     {
-        if (_glyf is null || !(pixelSize >= 4 && pixelSize <= 400))
+        if (Inner.IsCff || !(pixelSize >= 4 && pixelSize <= 400) || Glyf() is not { } glyf)
         {
             return GetOutline(glyph);
         }
@@ -299,7 +195,7 @@ internal sealed class FontFace
 
         if (!_hinters.TryGetValue(sizeKey, out HinterSlot? slot))
         {
-            slot = new HinterSlot(TrueTypeHinter.Create(UnitsPerEm, pixelSize, Table("fpgm", required: false), Table("prep", required: false), Table("cvt ", required: false), Table("maxp", required: true)));
+            slot = new HinterSlot(TrueTypeHinter.Create(UnitsPerEm, pixelSize, Inner.GetTable("fpgm"), Inner.GetTable("prep"), Inner.GetTable("cvt "), Inner.GetTable("maxp")));
             if (_hinters.Count >= MaxCachedHinters)
             {
                 _hinters.Clear();
@@ -308,7 +204,7 @@ internal sealed class FontFace
             _hinters[sizeKey] = slot;
         }
 
-        Outline o = slot.Hinter is null ? GetOutline(glyph) : _glyf.Load(glyph, slot.Hinter);
+        Outline o = slot.Hinter is null ? GetOutline(glyph) : glyf.Load(glyph, slot.Hinter);
         if (_hinted.Count >= MaxCachedOutlines)
         {
             _hinted.Clear();
@@ -316,40 +212,5 @@ internal sealed class FontFace
 
         _hinted[(glyph, sizeKey)] = o;
         return o;
-    }
-
-    /// <summary>Kerning between two glyphs for Latin text: the change to the first glyph's advance, in font units (GPOS kern, else the legacy table).</summary>
-    public int GetKerning(int left, int right)
-    {
-        // Pair lookups walk coverage tables and class definitions; text repeats the same pairs, so remember them.
-        uint key = ((uint)left << 16) | (uint)(right & 0xFFFF);
-        if (_kerning.TryGetValue(key, out int cached))
-        {
-            return cached;
-        }
-
-        int value = TextShaper.PairKerning(this, left, right);
-        if (_kerning.Count >= MaxCachedKerningPairs)
-        {
-            _kerning.Clear();
-        }
-
-        _kerning[key] = value;
-        return value;
-    }
-
-    private ReadOnlyMemory<byte> Table(string tag, bool required)
-    {
-        if (_tables.TryGetValue(Be.Tag(tag), out ReadOnlyMemory<byte> t))
-        {
-            return t;
-        }
-
-        if (required)
-        {
-            throw new FontFormatException($"The font has no '{tag}' table.");
-        }
-
-        return default;
     }
 }

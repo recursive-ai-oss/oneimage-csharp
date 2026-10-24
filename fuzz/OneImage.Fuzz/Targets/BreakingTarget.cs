@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using OneImage.Text;
-using OneImage.Text.Unicode;
 
 /// <summary>
 /// Arbitrary text through line breaking, grapheme segmentation and layout in every word breaking and justification mode. The input
@@ -35,8 +34,8 @@ internal static class BreakingTarget
         {
             byte[] breaks = new byte[text.Length + 1];
             byte[] clusters = new byte[text.Length + 1];
-            LineBreaker.Fill(text, breaks);
-            Graphemes.Fill(text, clusters);
+            OneFont.TextSegmentation.FillLineBreakOpportunities(text, breaks);
+            OneFont.TextSegmentation.FillGraphemeStarts(text, clusters);
             Check(breaks[0] == 0 || text.Length == 0, "break before the first character");
             for (int i = 1; i < text.Length; i++)
             {
@@ -47,7 +46,7 @@ internal static class BreakingTarget
             }
 
             int total = 0;
-            for (int i = 0; i < text.Length; i += Graphemes.NextLength(text.AsSpan(i)))
+            for (int i = 0; i < text.Length; i += OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(i)))
             {
                 total++;
                 Check(clusters[i] == 1, "cluster start not marked");

@@ -1,5 +1,4 @@
 using System.Text;
-using OneImage.Text.Unicode;
 
 namespace OneImage.Text.Tests;
 
@@ -210,7 +209,7 @@ public class LineBreakingTests
         foreach (string text in ClusterTexts)
         {
             var starts = new HashSet<int> { text.Length };
-            for (int i = 0; i < text.Length; i += Graphemes.NextLength(text.AsSpan(i)))
+            for (int i = 0; i < text.Length; i += OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(i)))
             {
                 starts.Add(i);
             }
@@ -246,7 +245,7 @@ public class LineBreakingTests
         foreach (string text in ClusterTexts)
         {
             int clusters = 0;
-            for (int i = 0; i < text.Length; i += Graphemes.NextLength(text.AsSpan(i)))
+            for (int i = 0; i < text.Length; i += OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(i)))
             {
                 clusters++;
             }
@@ -259,7 +258,7 @@ public class LineBreakingTests
             foreach (GlyphBounds b in boxes)
             {
                 Assert.Equal(expected, b.Index);
-                expected += Graphemes.NextLength(text.AsSpan(expected));
+                expected += OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(expected));
             }
         }
     }
@@ -272,7 +271,7 @@ public class LineBreakingTests
         foreach (GlyphBounds b in TextMeasurer.GetCharacterBounds(text, o))
         {
             // The index of every box is a place a caret or a cut can go.
-            Assert.True(b.Index == 0 || Graphemes.NextLength(text.AsSpan(0, b.Index)) > 0);
+            Assert.True(b.Index == 0 || OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(0, b.Index)) > 0);
             Assert.Equal(b.Index, ClusterStartAtOrBefore(text, b.Index));
         }
     }
@@ -282,7 +281,7 @@ public class LineBreakingTests
         int start = 0;
         while (start < text.Length)
         {
-            int next = start + Graphemes.NextLength(text.AsSpan(start));
+            int next = start + OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(start));
             if (next > index)
             {
                 return start;
@@ -341,7 +340,7 @@ public class LineBreakingTests
 
             string text = sb.ToString();
             var starts = new HashSet<int> { text.Length };
-            for (int i = 0; i < text.Length; i += Graphemes.NextLength(text.AsSpan(i)))
+            for (int i = 0; i < text.Length; i += OneFont.TextSegmentation.GetGraphemeLength(text.AsSpan(i)))
             {
                 starts.Add(i);
             }
@@ -380,8 +379,8 @@ public class LineBreakingTests
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
         for (int warm = 0; warm < 40 || System.Diagnostics.Stopwatch.GetElapsedTime(start) < TimeSpan.FromMilliseconds(400); warm++)
         {
-            LineBreaker.Fill(text, breaks);
-            Graphemes.Fill(text, clusters);
+            OneFont.TextSegmentation.FillLineBreakOpportunities(text, breaks);
+            OneFont.TextSegmentation.FillGraphemeStarts(text, clusters);
         }
 
         // A real allocation in the segmenters would show in every window. The per-thread allocation counter can also read a few KB
@@ -393,8 +392,8 @@ public class LineBreakingTests
             long before = GC.GetAllocatedBytesForCurrentThread();
             for (int i = 0; i < 20; i++)
             {
-                LineBreaker.Fill(text, breaks);
-                Graphemes.Fill(text, clusters);
+                OneFont.TextSegmentation.FillLineBreakOpportunities(text, breaks);
+                OneFont.TextSegmentation.FillGraphemeStarts(text, clusters);
             }
 
             allocated = Math.Min(allocated, GC.GetAllocatedBytesForCurrentThread() - before);

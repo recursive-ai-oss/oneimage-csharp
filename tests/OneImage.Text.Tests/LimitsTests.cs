@@ -10,7 +10,7 @@ public class LimitsTests
     private static Outline Load(byte[] font, bool cff = true)
     {
         FontFace face = FontFile.Parse(font)[0];
-        Assert.Equal(cff, face.IsCff);
+        Assert.Equal(cff, face.Inner.IsCff);
         return face.GetOutline(face.GetGlyphIndex('A'));
     }
 

@@ -1,5 +1,3 @@
-using OneImage.Text.Fonts;
-
 namespace OneImage.Text;
 
 /// <summary>
@@ -8,30 +6,19 @@ namespace OneImage.Text;
 /// </summary>
 public sealed class FontMetrics
 {
-    internal FontMetrics(FontFace face)
+    internal FontMetrics(global::OneFont.FontMetrics m)
     {
-        UnitsPerEm = face.UnitsPerEm;
-        if (face.HasOs2Metrics && (face.UseTypoMetrics || (face.Ascender == 0 && face.Descender == 0)))
-        {
-            // The font asks for the typographic metrics (OS/2 fsSelection bit 7), or has no usable hhea ones.
-            Ascender = face.TypoAscender;
-            Descender = face.TypoDescender;
-            LineGap = face.TypoLineGap;
-        }
-        else
-        {
-            Ascender = face.Ascender;
-            Descender = face.Descender;
-            LineGap = face.LineGap;
-        }
-
-        UnderlinePosition = face.UnderlinePosition;
-        UnderlineThickness = face.UnderlineThickness;
-        StrikeoutPosition = face.StrikeoutPosition;
-        StrikeoutSize = face.StrikeoutSize;
-        XHeight = face.XHeight;
-        CapHeight = face.CapHeight;
-        GlyphCount = face.NumGlyphs;
+        UnitsPerEm = m.UnitsPerEm;
+        Ascender = m.Ascender;
+        Descender = m.Descender;
+        LineGap = m.LineGap;
+        UnderlinePosition = m.UnderlinePosition;
+        UnderlineThickness = m.UnderlineThickness;
+        StrikeoutPosition = m.StrikeoutPosition;
+        StrikeoutSize = m.StrikeoutSize;
+        XHeight = m.XHeight;
+        CapHeight = m.CapHeight;
+        GlyphCount = m.GlyphCount;
     }
 
     /// <summary>Gets the number of design units per em square.</summary>

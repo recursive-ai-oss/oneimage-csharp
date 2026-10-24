@@ -170,7 +170,7 @@ public class HintingTests
             }
 
             tables[Be.Tag(table)] = Loop;
-            FontFace bad = FontFace.Create(tables);
+            FontFace bad = FontFile.Parse(FontFile.BuildSfnt(tables))[0];
             var sw = Stopwatch.StartNew();
             for (int g = 0; g < 100; g++)
             {

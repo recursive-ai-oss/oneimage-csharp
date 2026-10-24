@@ -223,7 +223,7 @@ public class WrapReferenceTests
         plain.WrappingLength = 0;
         IReadOnlyList<GlyphBounds> boxes = TextMeasurer.GetCharacterBounds(text, plain);
         byte[] flags = new byte[text.Length + 1];
-        OneImage.Text.Unicode.LineBreaker.Fill(text, flags);
+        OneFont.TextSegmentation.FillLineBreakOpportunities(text, flags);
         static bool Space(int cp) => cp is ' ' or '\t' or 0x1680 or (>= 0x2000 and <= 0x2006) or (>= 0x2008 and <= 0x200A) or 0x205F or 0x3000;
         var starts = new List<int> { 0 };
         float lineW = 0;

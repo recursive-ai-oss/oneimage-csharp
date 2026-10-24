@@ -1,6 +1,6 @@
 # Text
 
-Fonts and text for `Image` and `Canvas`, in the separate package `RecursiveAI.OneImage.Text` (namespace `OneImage.Text`, no dependency beyond OneImage). Text is drawn through the vector drawing layer: the laid-out text becomes one `Path` of glyph outlines, filled with a `Brush` and/or stroked with a `Pen` like any other path. See [drawing.md](drawing.md) for brushes, pens, blend modes and anti-aliasing.
+Fonts and text for `Image` and `Canvas`, in the separate package `RecursiveAI.OneImage.Text` (namespace `OneImage.Text`, one dependency besides OneImage, the font library [`RecursiveAI.OneFont`](https://www.nuget.org/packages/RecursiveAI.OneFont) 1.2 or later, which has none of its own). Text is drawn through the vector drawing layer: the laid-out text becomes one `Path` of glyph outlines, filled with a `Brush` and/or stroked with a `Pen` like any other path. See [drawing.md](drawing.md) for brushes, pens, blend modes and anti-aliasing.
 
 ```csharp
 using OneImage;
@@ -24,6 +24,16 @@ Image img = Image.Load("photo.jpg")
 TextMetrics m = TextMeasurer.Measure("Hello", options);   // advance size, ink bounds, lines
 Path outline = TextBuilder.GeneratePath("Hello", options);  // fill, stroke, transform or clip it yourself
 ```
+
+## Built on OneFont
+
+Font parsing and text shaping come from `RecursiveAI.OneFont`; this package adds what is specific to drawing text on images. From OneFont:
+
+- TrueType, OpenType (CFF) and TrueType Collection parsing, the character map, metrics, kerning and unhinted glyph outlines;
+- the GSUB/GPOS engine and the Arabic, Indic, Universal Shaping Engine, Thai and Lao shapers, through `ShapeCodePoints` (code points in, glyphs with their code points and clusters out, with the script carried from run to run) and `ShapedRun` (flat arrays, no allocation per call once warm);
+- the Unicode bidirectional algorithm (levels, rule L1, display order), line break opportunities, grapheme clusters, East Asian width, joining types.
+
+Here: WOFF 1.0 and WOFF 2.0 (with the library's own inflate and Brotli), which are unpacked and handed to OneFont as a plain font; TrueType hinting; vertical metrics; COLR/CPAL color glyphs; the Vertical_Orientation data (UAX #50); word breaking modes and justification; the layout of paragraphs, runs, fallback, decorations and paths; measuring; and turning outlines into paths and pixels. A glyph id the shaper returns that the font does not have (a damaged character map) is drawn and measured as the missing glyph. Damage in a font is reported as this package's `FontFormatException`, not OneFont's.
 
 ## Fonts
 
@@ -68,7 +78,7 @@ What the engine does not do yet: canonical reordering and composition of combini
 
 ## Direction and right-to-left text
 
-Text is split into paragraphs at line feeds, and each paragraph runs the Unicode Bidirectional Algorithm (UAX #9, Unicode 17 data; the official `BidiTest.txt` and `BidiCharacterTest.txt` pass in full, and they are committed as test data). `TextOptions.TextDirection` sets the base direction: `Auto` (the default) takes each paragraph's direction from its first strong character and falls back to left to right; `LeftToRight` and `RightToLeft` force the paragraph level, and the algorithm still reorders embedded runs of the other direction. Plain left-to-right text, with no right-to-left capable character, skips the algorithm entirely.
+Text is split into paragraphs at line feeds, and each paragraph runs the Unicode Bidirectional Algorithm (UAX #9, Unicode 17 data, from OneFont, which passes the official `BidiTest.txt` and `BidiCharacterTest.txt` in full). `TextOptions.TextDirection` sets the base direction: `Auto` (the default) takes each paragraph's direction from its first strong character and falls back to left to right; `LeftToRight` and `RightToLeft` force the paragraph level, and the algorithm still reorders embedded runs of the other direction. Plain left-to-right text, with no right-to-left capable character, skips the algorithm entirely.
 
 - **Reordering.** Runs are reordered per wrapped line (rules L1 and L2), on the characters of the line, so a line break in the middle of a mixed paragraph reorders each line on its own. Trailing white space of a line takes the paragraph level and hangs past the line's visible end. Brackets are mirrored (rule L4 and bracket pairs, rule N0), by code point, or through the font's `rtlm` feature when it has one. Explicit embeddings, overrides and isolates (up to depth 125) are honored; their control characters have no advance and no glyph.
 - **Alignment.** `TextAlignment.Start` and `End` follow the paragraph direction: `Start` is the right edge of a right-to-left paragraph. `HorizontalAlignment` is the physical left, center or right of the block and ignores direction. Justification stretches every line but the last and counts hanging spaces out.
@@ -99,7 +109,7 @@ Deliberate differences:
 
 ## Complex scripts: Indic, Southeast Asian and the Universal Shaping Engine
 
-Three shapers sit on the `ScriptShaper` seam, chosen by the script of a run (tags come from generated Unicode tables, `tools/gen_unicode_tables.py`, which also derives Indic_Syllabic_Category, Indic_Positional_Category and the canonical two-part decompositions from the Unicode Character Database 17.0.0).
+Three shapers, in OneFont, are chosen by the script of a run (the tags, Indic_Syllabic_Category, Indic_Positional_Category and the canonical two-part decompositions come from the Unicode Character Database 17.0.0).
 
 - **Indic shaper:** Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam, following Microsoft's Indic script-development documents (the v2 tags `dev2`, `bng2`... first, then the v1 tags). Text is cut into syllables (consonant clusters with halants, ZWJ/ZWNJ, matras, nukta, modifiers, standalone vowels), split vowels are decomposed, the base consonant is found, a reph is moved, pre-base matras go to the front, and features run in the documented order: `locl`, `ccmp`, then `nukt`, `akhn`, `rphf`, `rkrf`, `pref`, `blwf`, `abvf`, `half`, `pstf`, `vatu`, `cjct`, then `init`, `pres`, `abvs`, `blws`, `psts`, `haln`, `dist`, `abvm`, `blwm` with the default positioning features. A mark with no base gets a dotted circle (U+25CC) as its base.
 - **Universal Shaping Engine shaper:** Khmer, Myanmar, Sinhala, Tibetan, Balinese, Javanese and the other scripts of the USE list, from the USE specification (syllable categories from the Indic_Syllabic_Category and Indic_Positional_Category properties) with Khmer and Myanmar specifics: coeng + ro, pre-base vowels and medials, the Khmer split vowels (U+17BE, 17BF, 17C0, 17C4, 17C5 become U+17C1 plus a sign), kinzi and stacked consonants.
@@ -148,7 +158,7 @@ Tolerances are exact for glyph ids and 0.01 font units for origins (lossless lay
 
 ## Line breaking and segmentation
 
-Where a wrapped line may end is decided by the Unicode line breaking algorithm, UAX #14, with the data of Unicode 17.0 (`UnicodeData.g.cs`, generated by `tools/gen_unicode_tables.py` from the Unicode Character Database and checked in; about 70 KiB of read-only tables, no runtime dependency). The default rules are used as written, with the small kana of class CJ treated as NS (the annex's strict reading). All of `LineBreakTest.txt` (19,338 cases) and `GraphemeBreakTest.txt` (766 cases) pass; the tests read the unmodified files from `tests/testdata/unicode`.
+Where a wrapped line may end is decided by the Unicode line breaking algorithm, UAX #14, with the data of Unicode 17.0 (in OneFont). The default rules are used as written, with the small kana of class CJ treated as NS (the annex's strict reading). All of `LineBreakTest.txt` (19,338 cases) and `GraphemeBreakTest.txt` (766 cases) pass; the tests read the unmodified files from `tests/testdata/unicode`.
 
 - **What breaks.** After spaces, hyphens (HY, HH) and en/em dashes, around the soft hyphen (U+00AD, a break after it, nothing drawn), after the zero width space, between ideographs and kana but not before closing punctuation or small kana, after a solidus before a letter ("a/b" in a URL or path), between emoji sequences and flag pairs but never inside one, and after hard breaks. It does not break in "$1,234.56", "-5.25", "12.5%", "(s)he", inside a word, after an opening bracket or quote even across spaces, before a closing bracket or quote, around the no-break space (U+00A0, U+202F), the word joiner (U+2060) or the zero width joiner, or inside a Korean syllable block. A line break character in the text always starts a new line first; the algorithm runs on each paragraph.
 - **Grapheme clusters.** UAX #29 extended grapheme clusters (combining marks, emoji ZWJ sequences and modifiers, flags, Hangul jamo and syllables, Indic conjuncts) are never split: a line never starts inside one in any `WordBreaking` mode, and `GetCharacterBounds` returns one box per cluster (`Index` and `CodePoint` are the cluster's first code point; the box and ink cover the whole cluster).
@@ -331,8 +341,8 @@ foreach (ShapedCluster c in clusters)
 
 `Layout/TextLayout.cs` is the whole layout in four steps with narrow seams between them.
 
-- **Shaping** is `Shape` calling `Shaping/TextShaper`: code points in, `ShapedGlyph`s (glyph id, cluster, advance with kerning, offsets) out. Script-specific shapers (Arabic joining, Indic, Universal Shaping Engine and Thai/Lao) are `ScriptShaper`s with its own feature stages; the lookup engine (`Shaping/Engine`) is shared.
-- **Line breaking** is `PrepareBreaks` and `CanBreakBefore`: the break opportunities and cluster starts of a paragraph are computed from its text (`Unicode/LineBreaker.cs`, `Unicode/Graphemes.cs`) and reach the glyphs only through each glyph's text offset, so a shaper that merges or reorders glyphs needs no change here. Hyphenation, language-tagged tailoring and dictionary breaking for Thai, Lao, Khmer and Burmese (their characters are treated as letters, so there is no break inside a word) would extend `LineBreaker`.
+- **Shaping** is `Shape` calling OneFont's `TextShaping.ShapeCodePoints`: code points and the clusters the layout chose in, glyphs (glyph id, cluster, code point, advance with kerning, offsets) out. Script-specific shapers live in OneFont.
+- **Line breaking** is `PrepareBreaks` and `CanBreakBefore`: the break opportunities and cluster starts of a paragraph are computed from its text (OneFont's `TextSegmentation`) and reach the glyphs only through each glyph's text offset, so a shaper that merges or reorders glyphs needs no change here. Hyphenation, language-tagged tailoring and dictionary breaking for Thai, Lao, Khmer and Burmese (their characters are treated as letters, so there is no break inside a word) would be new work in OneFont.
 - **Color fonts** beyond COLR (SVG and bitmap glyphs) extend the color branch of `BuildParts`, which already turns the layers of a version 0 color glyph into one fill per layer index and color, and hands a version 1 glyph to `ColrPainter`.
 - **Runs, fallback, decorations and paths** live in `Layout/TextLayout.cs`: `ResolveRuns` maps every offset to a run, `Shape` splits shaping runs by (run, face) and every `ShapedGlyph` carries a `GlyphStyle` (face, scale, shift, line and decoration measures); `BuildParts` writes outlines and decoration rectangles per paint, with `GlyphMatrix` giving the straight or on-path placement (`Layout/PathRoute.cs`).
 

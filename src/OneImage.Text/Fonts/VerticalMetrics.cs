@@ -25,10 +25,11 @@ internal sealed class VerticalMetrics
     public bool HasOrigins => _vorgCount >= 0;
 
     /// <summary>Reads the tables; null when <c>vhea</c> or <c>vmtx</c> is missing or too short for what it declares.</summary>
-    public static VerticalMetrics? TryCreate(Dictionary<uint, ReadOnlyMemory<byte>> tables, int glyphCount)
+    public static VerticalMetrics? TryCreate(global::OneFont.FontFace face, int glyphCount)
     {
-        if (!tables.TryGetValue(Be.Tag("vhea"), out ReadOnlyMemory<byte> vhea) || vhea.Length < 36
-            || !tables.TryGetValue(Be.Tag("vmtx"), out ReadOnlyMemory<byte> vmtx))
+        ReadOnlyMemory<byte> vhea = face.GetTable("vhea");
+        ReadOnlyMemory<byte> vmtx = face.GetTable("vmtx");
+        if (vhea.Length < 36 || !face.HasTable("vmtx"))
         {
             return null;
         }
@@ -42,7 +43,8 @@ internal sealed class VerticalMetrics
         ReadOnlyMemory<byte> vorg = default;
         int count = -1;
         int def = 0;
-        if (tables.TryGetValue(Be.Tag("VORG"), out ReadOnlyMemory<byte> v) && v.Length >= 8 && Be.U16(v.Span, 0) == 1)
+        ReadOnlyMemory<byte> v = face.GetTable("VORG");
+        if (v.Length >= 8 && Be.U16(v.Span, 0) == 1)
         {
             int c = Be.U16(v.Span, 6);
             if (8L + (4L * c) <= v.Length)

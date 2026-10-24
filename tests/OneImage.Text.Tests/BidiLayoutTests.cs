@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using OneImage.Text.Fonts;
 using OneImage.Text.Layout;
-using OneImage.Text.Unicode;
 
 namespace OneImage.Text.Tests;
 
@@ -35,9 +34,10 @@ public class BidiLayoutTests
     {
         int[] c = Cps(text);
         byte[] lev = new byte[c.Length];
-        Bidi.ResolveLevels(c, dir switch { TextDirection.LeftToRight => 0, TextDirection.RightToLeft => 1, _ => -1 }, lev);
+        int para = OneFont.TextShaping.ResolveBidiLevels(c, dir switch { TextDirection.LeftToRight => OneFont.TextDirection.LeftToRight, TextDirection.RightToLeft => OneFont.TextDirection.RightToLeft, _ => OneFont.TextDirection.Auto }, lev);
+        OneFont.TextShaping.ResetTrailingWhitespace(c, lev, para);
         int[] order = new int[c.Length];
-        int m = Bidi.VisualOrder(lev, order);
+        int m = OneFont.TextShaping.GetVisualOrder(lev, order);
         var sb = new StringBuilder();
         for (int i = 0; i < m; i++)
         {

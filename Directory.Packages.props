@@ -4,6 +4,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- The PDF bridge builds against OnePDF 1.2 or later. -->
+    <!-- Text builds on OneFont 1.2.0 or later (shaping, bidi, segmentation, font tables). -->
+    <PackageVersion Include="RecursiveAI.OneFont" Version="1.2.0" />
     <PackageVersion Include="RecursiveAI.OnePdf" Version="1.2.0" />
     <PackageVersion Include="RecursiveAI.OnePdf.Fonts" Version="1.2.0" />
     <PackageVersion Include="xunit.v3" Version="4.0.2" />

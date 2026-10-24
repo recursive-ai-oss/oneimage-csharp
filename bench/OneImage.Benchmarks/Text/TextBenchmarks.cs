@@ -152,8 +152,8 @@ public class TextBenchmarks : IDisposable
     [BenchmarkCategory("wrap")]
     public int SegmentOnly()
     {
-        OneImage.Text.Unicode.LineBreaker.Fill(_long, _breaks);
-        OneImage.Text.Unicode.Graphemes.Fill(_long, _clusters);
+        OneFont.TextSegmentation.FillLineBreakOpportunities(_long, _breaks);
+        OneFont.TextSegmentation.FillGraphemeStarts(_long, _clusters);
         return _breaks[100] + _clusters[100];
     }
 

@@ -166,7 +166,7 @@ internal sealed class Outline
 }
 
 /// <summary>Collects outline segments with a hard cap, so a hostile font cannot grow it without bound.</summary>
-internal sealed class OutlineBuilder
+internal sealed class OutlineBuilder : global::OneFont.IOutlineSink
 {
     public const int MaxVerbs = 1 << 18;
 

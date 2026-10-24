@@ -4,6 +4,15 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- `RecursiveAI.OneImage.Text` is built on [`RecursiveAI.OneFont`](https://github.com/recursive-ai-oss/onefont-csharp) 1.2 or later for font parsing and shaping, instead of carrying its own copy: the sfnt, CFF and TrueType outline readers, the GSUB/GPOS engine and the script shapers, the bidirectional algorithm, line breaking and grapheme segmentation, and the Unicode tables. WOFF, WOFF2, hinting, color glyphs, vertical metrics, word-breaking modes and the layout stay here. The public API of `OneImage.Text` is unchanged and drawing and measuring are byte-identical to 1.9.0 over the test fonts, the complex-script case files and the SVG text tests. `OneFont` is the package's one new dependency; `RecursiveAI.OneImage` itself gains none.
+
+### Fixed
+
+- `TextShaping.ShapeRun` returns clusters that start at offset 0 and meet without gaps even when the shaper drops characters: a leading zero width non-joiner before a Kannada letter now belongs to the first cluster, and text of only joiners gives one empty cluster instead of none.
+- A glyph id that the font does not have (a character map or shaping result pointing past the glyph count) is drawn and measured as the missing glyph instead of taking the last glyph's advance.
+
 ## [1.9.0] - 2026-10-24
 
 ### Added

@@ -3,7 +3,10 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using OneImage.Drawing;
 using OneImage.Text.Fonts;
-using OneImage.Text.Shaping;
+using OneCodePointGlyph = global::OneFont.CodePointGlyph;
+using OneTextSegmentation = global::OneFont.TextSegmentation;
+using OneTextShaping = global::OneFont.TextShaping;
+using OneUnicode = global::OneFont.UnicodeProperties;
 using OneImage.Text.Unicode;
 
 using Path = OneImage.Drawing.Path;
@@ -133,8 +136,7 @@ internal sealed class TextLayout
     private readonly float _wrap;
     private readonly float _lineSpacing;
     private readonly float _tabWidth;
-    private readonly FeatureSet _features;
-    private readonly uint _language;
+    private readonly global::OneFont.ShapingOptions _options;
     private readonly WordBreaking _wordBreaking;
     private readonly TextJustification _justification;
     private readonly Font _baseFont;
@@ -144,7 +146,7 @@ internal sealed class TextLayout
     private readonly bool _vertical;
     private readonly bool _mixed;
     private readonly bool _hinting;
-    private readonly FeatureSet _verticalFeatures;
+    private readonly global::OneFont.ShapingOptions _verticalOptions;
     private bool _curUpright = true;
     private bool _runUpright;
 
@@ -174,22 +176,7 @@ internal sealed class TextLayout
         _wrap = o.WrappingLength;
         _lineSpacing = o.LineSpacing;
         _tabWidth = o.TabWidth;
-        _language = Languages.ToTag(o.Language);
-        var settings = new List<(uint, int)>();
-        if (o.Kerning != KerningMode.Normal)
-        {
-            settings.Add((Tag.Kern, 0));
-        }
-
-        foreach (FontFeature f in o.Features)
-        {
-            if (f.Tag is not null)
-            {
-                settings.Add((Fonts.Be.Tag(f.Tag), f.Value));
-            }
-        }
-
-        _features = FeatureSet.Create(settings);
+        _options = FontBridge.Options(o.Language, o.Kerning, o.Features, vertical: false);
         _mode = o.LayoutMode;
         _vertical = _mode is LayoutMode.VerticalLeftRight or LayoutMode.VerticalRightLeft or LayoutMode.VerticalMixedLeftRight or LayoutMode.VerticalMixedRightLeft;
         _hinting = o.HintingMode == HintingMode.Standard;
@@ -198,9 +185,7 @@ internal sealed class TextLayout
         // Upright glyphs advance down the column: horizontal kerning is off and the font's vertical forms are on (vrt2 and vert
         // are alternatives in a font; both are asked for, and a font normally has one). The caller's own feature settings come
         // last, so they win.
-        var vsettings = new List<(uint, int)> { (Tag.Kern, 0), (Fonts.Be.Tag("vert"), 1), (Fonts.Be.Tag("vrt2"), 1) };
-        vsettings.AddRange(settings);
-        _verticalFeatures = FeatureSet.Create(vsettings);
+        _verticalOptions = FontBridge.Options(o.Language, o.Kerning, o.Features, vertical: true);
         _direction = o.TextDirection;
         _wordBreaking = o.WordBreaking;
         _justification = o.TextJustification;
@@ -597,7 +582,12 @@ internal sealed class TextLayout
         return 0;
     }
 
-    private readonly List<ShapedRunGlyph> _run = [];
+    // The glyphs of the run being shaped. One list per thread is reused by every layout, so building a layout does not allocate a
+    // list of its own for the shaper to fill; a list that a very long run made large is let go afterwards.
+    [ThreadStatic]
+    private static List<OneCodePointGlyph>? s_run;
+
+    private const int RetainedRunGlyphs = 1 << 16;
     private int[] _cps = new int[64];
     private int[] _runClusters = new int[64];
     private int _pending;
@@ -629,8 +619,7 @@ internal sealed class TextLayout
             return false;
         }
 
-        ShapedScript s = IndicProps.ScriptOf(c);
-        return s != ShapedScript.None && s != ShapedScript.Thai && s != ShapedScript.Lao;
+        return OneUnicode.IsSyllableScript(c);
     }
 
     private static bool JoinerMatters(string text, int i, int start, int end)
@@ -655,8 +644,8 @@ internal sealed class TextLayout
             }
         }
 
-        return (before >= 0x600 && UnicodeBidi.GetJoiningType(before) is JoiningType.Dual or JoiningType.Left)
-            || (after >= 0x600 && UnicodeBidi.GetJoiningType(after) is JoiningType.Dual or JoiningType.Right);
+        return (before >= 0x600 && OneUnicode.GetJoiningKind(before) is global::OneFont.JoiningKind.Dual or global::OneFont.JoiningKind.Left)
+            || (after >= 0x600 && OneUnicode.GetJoiningKind(after) is global::OneFont.JoiningKind.Dual or global::OneFont.JoiningKind.Right);
     }
 
     private void FlushRun(int paragraphEnd)
@@ -667,19 +656,37 @@ internal sealed class TextLayout
         }
 
         GlyphStyle st = Styles[_runStyle];
-        _run.Clear();
-        TextShaper.Shape(st.Face, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), _language, _runUpright ? _verticalFeatures : _features, _run, _runRtl, ref _script);
-        for (int k = 0; k < _run.Count; k++)
+        List<OneCodePointGlyph> run = s_run ??= [];
+        run.Clear();
+        try
         {
-            ShapedRunGlyph r = _run[k];
-            int nextCluster = k + 1 < _run.Count ? _run[k + 1].Cluster : paragraphEnd;
+            OneTextShaping.ShapeCodePoints(st.Face.Inner, _cps.AsSpan(0, _pending), _runClusters.AsSpan(0, _pending), run, _runRtl, _runUpright ? _verticalOptions : _options, ref _script);
+        }
+        catch (global::OneFont.FontFormatException ex)
+        {
+            throw new FontFormatException(ex.Message);
+        }
+
+        for (int k = 0; k < run.Count; k++)
+        {
+            OneCodePointGlyph r = run[k];
+            int glyphId = r.GlyphId;
+            int xAdvance = r.XAdvance;
+            if ((uint)glyphId >= (uint)st.Face.NumGlyphs)
+            {
+                // A damaged substitution table named a glyph the font does not have: it is the missing glyph.
+                xAdvance += st.Face.GetAdvance(0) - st.Face.GetAdvance(glyphId);
+                glyphId = 0;
+            }
+
+            int nextCluster = k + 1 < run.Count ? run[k + 1].Cluster : paragraphEnd;
             Glyphs.Add(new ShapedGlyph
             {
-                GlyphId = r.GlyphId,
+                GlyphId = glyphId,
                 CodePoint = r.CodePoint,
                 Cluster = r.Cluster,
                 Length = Math.Max(nextCluster - r.Cluster, 1),
-                Advance = _runUpright ? VerticalAdvance(st, r.GlyphId) : r.XAdvance * st.Sx,
+                Advance = _runUpright ? VerticalAdvance(st, glyphId) : xAdvance * st.Sx,
                 Upright = _runUpright,
                 XOffset = r.XOffset * st.Sx,
                 YOffset = (r.YOffset * st.Sy) + st.Shift,
@@ -687,6 +694,12 @@ internal sealed class TextLayout
                 Level = LevelAt(r.Cluster - _paragraphStart),
                 Style = _runStyle,
             });
+        }
+
+        run.Clear();
+        if (run.Capacity > RetainedRunGlyphs)
+        {
+            s_run = null;
         }
 
         _pending = 0;
@@ -725,8 +738,8 @@ internal sealed class TextLayout
         }
 
         ReadOnlySpan<char> span = text.AsSpan(start, length);
-        LineBreaker.Fill(span, _breaks);
-        Graphemes.Fill(span, _clusters);
+        OneTextSegmentation.FillLineBreakOpportunities(span, _breaks);
+        OneTextSegmentation.FillGraphemeStarts(span, _clusters);
         switch (_wordBreaking)
         {
             case WordBreaking.BreakAll:
@@ -735,7 +748,7 @@ internal sealed class TextLayout
                 {
                     if (_clusters[i] != 0 && !char.IsWhiteSpace(span[i]))
                     {
-                        _breaks[i] = LineBreaker.Allowed;
+                        _breaks[i] = 1;
                     }
                 }
 
@@ -744,7 +757,7 @@ internal sealed class TextLayout
                 // No opportunity right after an East Asian wide or fullwidth character; spaces still break.
                 for (int i = 1; i < length; i++)
                 {
-                    if (_breaks[i] == LineBreaker.Allowed)
+                    if (_breaks[i] == 1)
                     {
                         int prev = span[i - 1];
                         if (char.IsLowSurrogate(span[i - 1]) && i >= 2 && char.IsHighSurrogate(span[i - 2]))
@@ -752,9 +765,9 @@ internal sealed class TextLayout
                             prev = char.ConvertToUtf32(span[i - 2], span[i - 1]);
                         }
 
-                        if (LineBreaker.IsEastAsianWide(prev))
+                        if (OneTextSegmentation.IsEastAsianWide(prev))
                         {
-                            _breaks[i] = LineBreaker.None;
+                            _breaks[i] = 0;
                         }
                     }
                 }
@@ -861,15 +874,14 @@ internal sealed class TextLayout
                 }
             }
 
-            int request = _direction switch { TextDirection.LeftToRight => 0, TextDirection.RightToLeft => 1, _ => -1 };
-            _paraLevel = Bidi.ResolveLevels(cps.AsSpan(0, n), request, lev.AsSpan(0, n), lineEndRule: false);
+            _paraLevel = OneTextShaping.ResolveBidiLevels(cps.AsSpan(0, n), _direction switch { TextDirection.LeftToRight => global::OneFont.TextDirection.LeftToRight, TextDirection.RightToLeft => global::OneFont.TextDirection.RightToLeft, _ => global::OneFont.TextDirection.Auto }, lev.AsSpan(0, n));
             byte[] levels = ArrayPool<byte>.Shared.Rent(length + 1);
             byte[] raw = ArrayPool<byte>.Shared.Rent(length + 1);
             byte prev = (byte)_paraLevel;
             for (int k = 0; k < n; k++)
             {
                 // A character removed by rule X9 (an embedding control) takes the level of the one before it.
-                byte l = lev[k] == Bidi.Removed ? prev : lev[k];
+                byte l = lev[k] == OneTextShaping.BidiRemoved ? prev : lev[k];
                 prev = l;
                 int to = k + 1 < n ? at[k + 1] : length;
                 for (int j = at[k]; j < to; j++)
@@ -971,8 +983,8 @@ internal sealed class TextLayout
                 i += len;
             }
 
-            Bidi.ResetTrailingWhitespace(cps.AsSpan(0, m), lev.AsSpan(0, m), _paraLevel);
-            int shown = Bidi.VisualOrder(lev.AsSpan(0, m), order.AsSpan(0, m));
+            OneTextShaping.ResetTrailingWhitespace(cps.AsSpan(0, m), lev.AsSpan(0, m), _paraLevel);
+            int shown = OneTextShaping.GetVisualOrder(lev.AsSpan(0, m), order.AsSpan(0, m));
 
             // The display rank of every character, then of every glyph by the character it starts at.
             int[] rankByIndex = ArrayPool<int>.Shared.Rent(m);
@@ -987,7 +999,7 @@ internal sealed class TextLayout
                 int last = 0;
                 for (int c = 0; c < m; c++)
                 {
-                    if (lev[c] == Bidi.Removed)
+                    if (lev[c] == OneTextShaping.BidiRemoved)
                     {
                         rankByIndex[c] = last;
                     }

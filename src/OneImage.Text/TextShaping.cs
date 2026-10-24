@@ -1,9 +1,11 @@
-using System.Buffers;
 using System.Numerics;
 using OneImage.Drawing;
 using OneImage.Text.Fonts;
-using OneImage.Text.Shaping;
 using OneImage.Text.Unicode;
+using OneFontShaping = global::OneFont.TextShaping;
+using OneShapedClusterRange = global::OneFont.ShapedClusterRange;
+using OneShapedGlyph = global::OneFont.ShapedGlyph;
+using OneShapedRun = global::OneFont.ShapedRun;
 using Path = OneImage.Drawing.Path;
 
 namespace OneImage.Text;
@@ -199,58 +201,15 @@ public static class TextShaping
             throw new ArgumentException("The text is too long.", nameof(text));
         }
 
-        paragraphLevel = 0;
-        int length = text.Length;
-        var result = new byte[length];
-        if (length == 0)
-        {
-            return result;
-        }
-
-        int[] cps = ArrayPool<int>.Shared.Rent(length);
-        byte[] lev = ArrayPool<byte>.Shared.Rent(length);
-        int[] at = ArrayPool<int>.Shared.Rent(length);
-        try
-        {
-            int n = 0;
-            for (int i = 0; i < length; n++)
-            {
-                at[n] = i;
-                if (char.IsHighSurrogate(text[i]) && i + 1 < length && char.IsLowSurrogate(text[i + 1]))
-                {
-                    cps[n] = char.ConvertToUtf32(text[i], text[i + 1]);
-                    i += 2;
-                }
-                else
-                {
-                    cps[n] = char.IsSurrogate(text[i]) ? 0xFFFD : text[i];
-                    i++;
-                }
-            }
-
-            int request = direction switch { TextDirection.LeftToRight => 0, TextDirection.RightToLeft => 1, _ => -1 };
-            paragraphLevel = Bidi.ResolveLevels(cps.AsSpan(0, n), request, lev.AsSpan(0, n), lineEndRule: false);
-            byte prev = (byte)paragraphLevel;
-            for (int k = 0; k < n; k++)
-            {
-                byte l = lev[k] == Bidi.Removed ? prev : lev[k];
-                prev = l;
-                int to = k + 1 < n ? at[k + 1] : length;
-                for (int j = at[k]; j < to; j++)
-                {
-                    result[j] = l;
-                }
-            }
-
-            return result;
-        }
-        finally
-        {
-            ArrayPool<int>.Shared.Return(cps);
-            ArrayPool<byte>.Shared.Return(lev);
-            ArrayPool<int>.Shared.Return(at);
-        }
+        return OneFontShaping.GetBidiLevels(text, ToOneFont(direction), out paragraphLevel);
     }
+
+    private static global::OneFont.TextDirection ToOneFont(TextDirection d) => d switch
+    {
+        TextDirection.LeftToRight => global::OneFont.TextDirection.LeftToRight,
+        TextDirection.RightToLeft => global::OneFont.TextDirection.RightToLeft,
+        _ => global::OneFont.TextDirection.Auto,
+    };
 
     /// <summary>
     /// Gives the display order of items that have embedding levels (Unicode Bidirectional Algorithm, rule L2): from the highest level down to
@@ -260,9 +219,7 @@ public static class TextShaping
     /// <returns>The logical indices in left-to-right display order; every index appears once.</returns>
     public static int[] GetVisualOrder(ReadOnlySpan<byte> levels)
     {
-        var order = new int[levels.Length];
-        int shown = Bidi.VisualOrder(levels, order);
-        return shown == order.Length ? order : order.AsSpan(0, shown).ToArray();
+        return OneFontShaping.GetVisualOrder(levels);
     }
 
     /// <summary>
@@ -303,120 +260,52 @@ public static class TextShaping
         }
 
         FontFace face = font.Face.Data;
-        uint language = Languages.ToTag(options?.Language);
-        var settings = new List<(uint, int)>();
-        if (options is not null)
-        {
-            if (options.Vertical)
-            {
-                settings.Add((Tag.Kern, 0));
-                settings.Add((Be.Tag("vert"), 1));
-                settings.Add((Be.Tag("vrt2"), 1));
-            }
-
-            if (options.Kerning != KerningMode.Normal)
-            {
-                settings.Add((Tag.Kern, 0));
-            }
-
-            foreach (FontFeature f in options.Features)
-            {
-                if (f.Tag is not null)
-                {
-                    settings.Add((Be.Tag(f.Tag), f.Value));
-                }
-            }
-        }
-
-        FeatureSet features = FeatureSet.Create(settings);
-
-        // Code points with the UTF-16 offset of the grapheme cluster each belongs to: marks and the like shape with their base.
-        byte[] starts = ArrayPool<byte>.Shared.Rent(length + 1);
-        int[] cps = ArrayPool<int>.Shared.Rent(length);
-        int[] cl = ArrayPool<int>.Shared.Rent(length);
+        OneShapedRun run = Scratch ??= new OneShapedRun();
         try
         {
-            Graphemes.Fill(text, starts);
-            int n = 0;
-            int cluster = 0;
-            for (int i = 0; i < length; n++)
-            {
-                if (starts[i] != 0)
-                {
-                    cluster = i;
-                }
-
-                int cp;
-                if (char.IsHighSurrogate(text[i]) && i + 1 < length && char.IsLowSurrogate(text[i + 1]))
-                {
-                    cp = char.ConvertToUtf32(text[i], text[i + 1]);
-                    i += 2;
-                }
-                else
-                {
-                    cp = char.IsSurrogate(text[i]) ? 0xFFFD : text[i];
-                    i++;
-                }
-
-                cps[n] = cp;
-                cl[n] = cluster;
-            }
-
-            var run = new List<ShapedRunGlyph>(n + 4);
-            var pending = new List<(int Start, float Advance, bool Missing, ShapedGlyphRef[] Glyphs)>();
-            TextShaping_Shape(face, cps.AsSpan(0, n), cl.AsSpan(0, n), language, features, run, rightToLeft);
-
+            OneFontShaping.ShapeRun(text, face.Inner, run, rightToLeft, FontBridge.Options(options?.Language, options?.Kerning ?? KerningMode.Normal, options?.Features, options?.Vertical ?? false));
             float scale = font.Size / face.UnitsPerEm;
-            int g = 0;
-            while (g < run.Count)
+            ReadOnlySpan<OneShapedGlyph> all = run.Glyphs;
+            foreach (OneShapedClusterRange r in run.Clusters)
             {
-                int c = run[g].Cluster;
-                int e = g;
-                while (e < run.Count && run[e].Cluster == c)
+                ReadOnlySpan<OneShapedGlyph> glyphs = all.Slice(r.GlyphStart, r.GlyphCount);
+                var refs = new ShapedGlyphRef[glyphs.Length];
+                int advance = r.Advance;
+                bool missing = r.HasMissingGlyph;
+                for (int k = 0; k < glyphs.Length; k++)
                 {
-                    e++;
+                    OneShapedGlyph g = glyphs[k];
+                    if ((uint)g.GlyphId >= (uint)face.NumGlyphs)
+                    {
+                        // A damaged substitution table named a glyph the font does not have: it is the missing glyph.
+                        int notdef = g.XAdvance - face.GetAdvance(g.GlyphId) + face.GetAdvance(0);
+                        advance += notdef - g.XAdvance;
+                        g = g with { GlyphId = 0, XAdvance = notdef };
+                        missing = true;
+                    }
+
+                    refs[k] = new ShapedGlyphRef(g.GlyphId, g.XAdvance, g.XOffset, g.YOffset);
                 }
 
-                var refs = new ShapedGlyphRef[e - g];
-                int advance = 0;
-                bool missing = false;
-                for (int k = g; k < e; k++)
-                {
-                    ShapedRunGlyph r = run[k];
-                    refs[k - g] = new ShapedGlyphRef(r.GlyphId, r.XAdvance, r.XOffset, r.YOffset);
-                    advance += r.XAdvance;
-                    missing |= r.GlyphId == 0 && !IsInvisible(r.CodePoint);
-                }
-
-                pending.Add((c, advance * scale, missing, refs));
-                g = e;
-            }
-
-            // Lengths run to the next cluster's start (the last to the end of the text); clusters come out in logical order.
-            pending.Sort(static (x, y) => x.Start.CompareTo(y.Start));
-            for (int k = 0; k < pending.Count; k++)
-            {
-                int end = k + 1 < pending.Count ? pending[k + 1].Start : length;
-                int first = pending[k].Start;
+                int first = r.Start;
                 int cp0 = char.IsHighSurrogate(text[first]) && first + 1 < length && char.IsLowSurrogate(text[first + 1]) ? char.ConvertToUtf32(text[first], text[first + 1]) : text[first];
-                clusters.Add(new ShapedCluster(font, first, Math.Max(end - first, 1), pending[k].Advance, pending[k].Missing, pending[k].Glyphs, cp0));
+                clusters.Add(new ShapedCluster(font, first, Math.Max(r.Length, 1), advance * scale, missing, refs, cp0));
             }
 
             return clusters;
         }
+        catch (global::OneFont.FontFormatException ex)
+        {
+            throw new FontFormatException(ex.Message);
+        }
         finally
         {
-            ArrayPool<byte>.Shared.Return(starts);
-            ArrayPool<int>.Shared.Return(cps);
-            ArrayPool<int>.Shared.Return(cl);
+            run.Clear();
         }
     }
 
-    private static void TextShaping_Shape(FontFace face, ReadOnlySpan<int> cps, ReadOnlySpan<int> clusters, uint language, FeatureSet features, List<ShapedRunGlyph> output, bool rtl) =>
-        Shaping.TextShaper.Shape(face, cps, clusters, language, features, output, rtl);
-
-    private static bool IsInvisible(int cp) =>
-        cp is >= 0x200B and <= 0x200F or 0x2060 or 0xFEFF or 0x00AD or (>= 0x202A and <= 0x202E) or (>= 0x2066 and <= 0x2069) or < 0x20;
+    [ThreadStatic]
+    private static OneShapedRun? Scratch;
 }
 
 /// <summary>Reads descriptive properties of a font's face that <see cref="Font"/> does not expose.</summary>

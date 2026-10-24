@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../OneImage/OneImage.csproj" />
+    <PackageReference Include="RecursiveAI.OneFont" />
   </ItemGroup>
 
   <ItemGroup>

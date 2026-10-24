@@ -8,7 +8,7 @@ internal sealed class FaceEntry
     public FaceEntry(FontFace data)
     {
         Data = data;
-        Metrics = new FontMetrics(data);
+        Metrics = new FontMetrics(data.Inner.Metrics);
         Style = data.IsBold ? (data.IsItalic ? FontStyle.BoldItalic : FontStyle.Bold) : (data.IsItalic ? FontStyle.Italic : FontStyle.Regular);
     }
 

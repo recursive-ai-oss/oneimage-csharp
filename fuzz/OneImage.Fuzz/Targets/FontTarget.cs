@@ -4,7 +4,6 @@ using System.Text;
 using OneImage;
 using OneImage.Text;
 using OneImage.Text.Fonts;
-using OneImage.Text.Shaping;
 
 /// <summary>
 /// Font files of every supported container: parse, read the header tables, walk glyph outlines and kerning, then lay out, measure and
@@ -37,9 +36,9 @@ internal static class FontTarget
         for (int g = 0; g < glyphs; g++)
         {
             _ = face.GetAdvance(g);
-            _ = face.GetLeftSideBearing(g);
+            _ = face.Inner.GetLeftSideBearing(g);
             _ = face.GetOutline(g).TightBox();
-            _ = face.GetKerning(g, (g * 7) % glyphs);
+            _ = face.Inner.GetKerning(g, (g * 7) % glyphs);
 
             // Grid fitting runs the font's own instructions: at two sizes, so a font program and a control value program
             // meet different scales, and the COLR version 1 paint graph is flattened for every glyph that has one.
@@ -62,28 +61,48 @@ internal static class FontTarget
 
     private static readonly string[] FeatureTags = ["smcp", "onum", "salt", "aalt", "ss01", "dlig", "frac", "calt", "ccmp", "locl", "kern", "mark", "mkmk", "curs"];
 
-    // Shapes runs of glyph ids straight through GSUB/GPOS, so every lookup the font has meets glyphs it covers, whatever its character map says.
+    // Shapes the characters the font covers through every feature it might have, so the lookups meet glyphs they cover. The shaping
+    // itself is OneFont's; this checks that what comes back can be used by this package.
     private static void ShapeGlyphIds(FontFace face)
     {
-        int n = Math.Min(face.NumGlyphs, 600);
-        if (n == 0)
+        var text = new StringBuilder();
+        for (int cp = 0x20; cp < 0x1F000 && text.Length < 600; cp += cp < 0x500 ? 1 : 11)
+        {
+            if (cp is >= 0xD800 and <= 0xDFFF)
+            {
+                continue;
+            }
+
+            if (face.GetGlyphIndex(cp) != 0)
+            {
+                text.Append(char.ConvertFromUtf32(cp));
+            }
+        }
+
+        if (text.Length == 0)
         {
             return;
         }
 
-        int[] glyphs = new int[Math.Min(n * 2, 1200)];
-        for (int i = 0; i < glyphs.Length; i++)
-        {
-            glyphs[i] = i < n ? i : (i * 37) % n;
-        }
-
         foreach (int value in new[] { 1, 2 })
         {
-            var features = FeatureSet.Create(Array.ConvertAll(FeatureTags, t => (Be.Tag(t), value)));
-            foreach (uint language in new[] { 0u, Be.Tag("ROM "), Be.Tag("SRB ") })
+            var options = new OneFont.ShapingOptions();
+            foreach (string tag in FeatureTags)
             {
-                var output = new List<ShapedRunGlyph>();
-                TextShaper.ShapeGlyphs(face, glyphs, language, features, output);
+                options.Features.Add(new OneFont.FontFeature(tag, value));
+            }
+
+            foreach (string language in new[] { "en", "ro", "sr" })
+            {
+                options.Language = language;
+                try
+                {
+                    _ = OneFont.TextShaping.ShapeRun(text.ToString(), face.Inner, false, options);
+                }
+                catch (OneFont.FontFormatException)
+                {
+                    // A damaged font reports damage with a typed error.
+                }
             }
         }
     }

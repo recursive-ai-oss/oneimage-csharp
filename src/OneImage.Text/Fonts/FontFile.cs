@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using OneImage.Compression;
 
 namespace OneImage.Text.Fonts;
@@ -13,14 +14,14 @@ internal static class FontFile
     public const int MaxTableBytes = 128 << 20;
     public const int MaxWoffBytes = 256 << 20;
 
-    private const uint TagTtcf = 0x74746366;
     private const uint TagWoff = 0x774F4646;
     private const uint TagWoff2 = 0x774F4632;
     private const uint TagOtto = 0x4F54544F;
-    private const uint TagTrue = 0x74727565;
-    private const uint TagTyp1 = 0x74797031;
 
-    /// <summary>Parses every face in the file.</summary>
+    /// <summary>
+    /// Parses every face in the file. A plain sfnt or collection is handed to OneFont as it is; a WOFF or WOFF2 file is unpacked and its
+    /// tables are laid out again as an sfnt, which is what OneFont reads.
+    /// </summary>
     public static List<FontFace> Parse(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -31,74 +32,78 @@ internal static class FontFile
 
         uint magic = Be.U32(data, 0);
         var faces = new List<FontFace>();
-        if (magic == TagTtcf)
+        if (magic == TagWoff)
         {
-            // TTC header: tag, version, numFonts, offsets[numFonts].
-            uint count = Be.U32(data, 8);
-            if (count == 0 || count > MaxFacesPerCollection || 12L + (4L * count) > data.Length)
-            {
-                throw new FontFormatException("The font collection header is invalid.");
-            }
-
-            for (int i = 0; i < count; i++)
-            {
-                uint off = Be.U32(data, 12 + (4 * i));
-                faces.Add(FontFace.Create(ReadSfntDirectory(data, off)));
-            }
-        }
-        else if (magic == TagWoff)
-        {
-            faces.Add(FontFace.Create(ReadWoff(data)));
+            faces.Add(Load(BuildSfnt(ReadWoff(data)), 0));
         }
         else if (magic == TagWoff2)
         {
-            faces.AddRange(Woff2.Parse(data));
+            foreach (Dictionary<uint, ReadOnlyMemory<byte>> tables in Woff2.Parse(data))
+            {
+                faces.Add(Load(BuildSfnt(tables), 0));
+            }
         }
         else
         {
-            faces.Add(FontFace.Create(ReadSfntDirectory(data, 0)));
+            int count = Translate(() => OneFont.FontFace.GetFaceCount(data));
+            for (int i = 0; i < count; i++)
+            {
+                faces.Add(Load(data, i));
+            }
         }
 
         return faces;
     }
 
-    private static Dictionary<uint, ReadOnlyMemory<byte>> ReadSfntDirectory(byte[] data, uint offset)
+    private static FontFace Load(byte[] sfnt, int index) => new(Translate(() => OneFont.FontFace.Load(sfnt, index)));
+
+    // OneFont's exception type is its own; the package reports the one its callers already catch.
+    private static T Translate<T>(Func<T> read)
     {
-        if (offset > data.Length - 12L)
+        try
         {
-            throw Be.Truncated();
+            return read();
+        }
+        catch (OneFont.FontFormatException ex)
+        {
+            throw new FontFormatException(ex.Message);
+        }
+    }
+
+    // Lays the tables of an unpacked WOFF or WOFF2 face out as a plain sfnt: header, directory sorted by tag, 4-byte aligned tables.
+    // Checksums are not filled in; readers of the font do not check them.
+    internal static byte[] BuildSfnt(Dictionary<uint, ReadOnlyMemory<byte>> tables)
+    {
+        var tags = new List<uint>(tables.Keys);
+        tags.Sort();
+        long size = 12 + (16L * tags.Count);
+        foreach (uint tag in tags)
+        {
+            size += (tables[tag].Length + 3L) & ~3L;
         }
 
-        int o = (int)offset;
-        uint version = Be.U32(data, o);
-        if (version != 0x00010000 && version != TagOtto && version != TagTrue && version != TagTyp1)
+        if (size > int.MaxValue)
         {
-            throw new FontFormatException("Not an sfnt font: unknown version tag.");
+            throw new FontFormatException("The font tables are too large.");
         }
 
-        int numTables = Be.U16(data, o + 4);
-        if (numTables == 0 || numTables > MaxTablesPerFace || o + 12L + (16L * numTables) > data.Length)
+        var sfnt = new byte[size];
+        Span<byte> o = sfnt;
+        BinaryPrimitives.WriteUInt32BigEndian(o, tables.ContainsKey(Be.Tag("CFF ")) ? TagOtto : 0x00010000u);
+        BinaryPrimitives.WriteUInt16BigEndian(o[4..], (ushort)tags.Count);
+        int at = 12 + (16 * tags.Count);
+        for (int i = 0; i < tags.Count; i++)
         {
-            throw new FontFormatException("The table directory is invalid.");
+            ReadOnlyMemory<byte> t = tables[tags[i]];
+            Span<byte> e = o.Slice(12 + (16 * i), 16);
+            BinaryPrimitives.WriteUInt32BigEndian(e, tags[i]);
+            BinaryPrimitives.WriteUInt32BigEndian(e[8..], (uint)at);
+            BinaryPrimitives.WriteUInt32BigEndian(e[12..], (uint)t.Length);
+            t.Span.CopyTo(o[at..]);
+            at += (t.Length + 3) & ~3;
         }
 
-        var tables = new Dictionary<uint, ReadOnlyMemory<byte>>(numTables);
-        for (int i = 0; i < numTables; i++)
-        {
-            int e = o + 12 + (16 * i);
-            uint tag = Be.U32(data, e);
-            uint tOff = Be.U32(data, e + 8);
-            uint tLen = Be.U32(data, e + 12);
-            if (tOff > data.Length || tLen > data.Length - tOff)
-            {
-                // A table running past the end of the file: skip it rather than fail the whole font; a required one is reported later.
-                continue;
-            }
-
-            tables.TryAdd(tag, new ReadOnlyMemory<byte>(data, (int)tOff, (int)tLen));
-        }
-
-        return tables;
+        return sfnt;
     }
 
     // WOFF 1.0 (W3C): 44-byte header, then 20-byte table records; each table is stored raw or zlib-compressed.
