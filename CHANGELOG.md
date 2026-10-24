@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-24
+
 ### Changed
 
 - Reading an 8-bit RGB or RGBA image as `Gray8`, `Gray16` or gray+alpha (`CopyPixelsTo`, `ToArray`, direct decodes, region reads) is several times faster: the RGB-to-gray conversion now runs in integer SIMD (AVX2, 128-bit, scalar) instead of through float32 rows. A pixel whose exact value lies close to a rounding boundary is recomputed with the float expression, so every output byte is identical to before (checked for all 2^24 RGB triples and every alpha). A 4 MP-class page read as `Gray8` now costs about the same as the `Rgb24` read.
@@ -171,7 +173,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.5.0...v1.6.0
