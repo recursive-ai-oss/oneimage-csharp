@@ -41,6 +41,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="../testdata/text/**" Link="testdata/text/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="../testdata/brotli/**" Link="testdata/brotli/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

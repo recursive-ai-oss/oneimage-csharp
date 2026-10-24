@@ -32,7 +32,7 @@ public sealed partial class ResvgConformance
     /// The configuration for a collection: the SVG format with the collection's own fonts when it has a <c>fonts</c> folder (the full collection
     /// does; the committed subset does not), with the generic families the reference images were made with and no installed fonts.
     /// </summary>
-    private static ImageConfiguration ConfigFor(string root)
+    internal static ImageConfiguration ConfigFor(string root)
     {
         lock (Configs)
         {
