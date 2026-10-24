@@ -115,7 +115,9 @@ public sealed class ReleaseDecodedPixelsTests : IDisposable
         var all = new Gray8[2480 * 3508];
         long baseline = LiveHeap.Total(collect: true) - all.Length;
         ReadBands(reader, all, true);
-        Assert.True(LiveHeap.Total(collect: true) - baseline - all.Length > 6L << 20);
+
+        // The reads built the plane (checked on the plane itself: a heap delta here also counts whatever earlier tests left behind).
+        Assert.True(image.Frames[0].Node.PlanesIfCreated!.PlaneBytes >= 2480L * 3508 / 2);
 
         releaser.ReleaseDecodedPixels();
         long after = LiveHeap.Total(collect: true) - baseline - all.Length;
