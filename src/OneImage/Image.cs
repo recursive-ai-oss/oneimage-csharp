@@ -138,6 +138,20 @@ public sealed partial class Image
     /// <returns>A canvas; dispose it when done.</returns>
     public Canvas ToCanvas() => new(_frames[0].Node);
 
+    /// <summary>
+    /// Gives back the decoded pixels this image keeps so that repeated region reads are cheap: the rows <see cref="CopyPixelsTo{T}"/>
+    /// has read (up to <see cref="ImageEngine.RegionCacheBytes"/> per frame) and any rows its sequential decode holds. The image stays valid; a later
+    /// read decodes again. Images made from the same load share one decode, so they recompute too. Does nothing for images that
+    /// are not decoded from a file or buffer lazily.
+    /// </summary>
+    public void ReleaseDecodedPixels()
+    {
+        foreach (ImageFrame f in _frames)
+        {
+            f.ReleaseDecodedPixels();
+        }
+    }
+
     /// <summary>Computes a rectangle of frame 0 only; for another frame use <c>Frames[i].CopyPixelsTo</c>. See <see cref="ImageFrame.CopyPixelsTo{T}"/>.</summary>
     /// <typeparam name="T">The pixel struct.</typeparam>
     /// <param name="destination">Receives the pixels.</param>

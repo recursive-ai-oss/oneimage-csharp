@@ -138,6 +138,34 @@ internal abstract class Node
         }
     }
 
+    /// <summary>Lists the decode sources in the graph below <paramref name="root"/> (including the root), each once.</summary>
+    public static List<DecodeSourceNode> DecodeSources(Node root)
+    {
+        var found = new List<DecodeSourceNode>();
+        var seen = new HashSet<Node>(ReferenceEqualityComparer.Instance);
+        var stack = new Stack<Node>();
+        stack.Push(root);
+        while (stack.TryPop(out Node? n))
+        {
+            if (!seen.Add(n))
+            {
+                continue;
+            }
+
+            if (n is DecodeSourceNode d)
+            {
+                found.Add(d);
+            }
+
+            foreach (Node input in n.Inputs)
+            {
+                stack.Push(input);
+            }
+        }
+
+        return found;
+    }
+
     /// <summary>Returns a tile with one reference for the caller, who must release it.</summary>
     public Tile GetTile(int tx, int ty, RenderContext context) => GetTile(tx, ty, context, useCache: true);
 

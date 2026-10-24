@@ -31,7 +31,9 @@ internal sealed class PngDecoder : IImageDecoder
         ArgumentNullException.ThrowIfNull(limits);
         long length = source.Length;
         source.Position = 0;
-        Span<byte> hdr = stackalloc byte[8];
+        // A small array rather than stackalloc: a method with both a loop and stackalloc cannot be compiled by the quick tier,
+        // and the optimizing compile of this large method cost several MB of resident memory on the first load.
+        Span<byte> hdr = new byte[8];
         if (ContainerIo.ReadUpTo(source, hdr) < 8 || !hdr.SequenceEqual(PngChunk.Signature))
         {
             throw new ImageFormatException("Not a PNG file: bad signature.");
@@ -82,20 +84,8 @@ internal sealed class PngDecoder : IImageDecoder
             Channels = colorType switch { 0 or 3 => 1, 2 => 3, 4 => 2, _ => 4 },
         };
 
-        byte[]? plte = null;
-        byte[]? trns = null;
-        byte[]? icc = null;
-        byte[]? exif = null;
-        byte[]? xmp = null;
-        var frames = new List<PngFrameDesc>();
-        bool animation = false;
-        uint numFrames = 0;
-        uint numPlays = 0;
-        bool seenIdat = false;
-        long firstIdat = -1;
-        int pending = -1;
+        var sc = new PngScan();
 
-        Span<byte> kw = stackalloc byte[17];
         while (ContainerIo.ReadUpTo(source, hdr) == 8)
         {
             long chunkStart = source.Position - 8;
@@ -110,7 +100,7 @@ internal sealed class PngDecoder : IImageDecoder
             long end = bodyStart + len + 4;
             if (end > length)
             {
-                if (seenIdat)
+                if (sc.SeenIdat)
                 {
                     break;
                 }
@@ -123,261 +113,7 @@ internal sealed class PngDecoder : IImageDecoder
                 break;
             }
 
-            switch (type)
-            {
-                case PngChunk.PLTE:
-                    {
-                        if (len % 3 != 0 || len == 0 || len > 768)
-                        {
-                            throw new ImageFormatException("Invalid PLTE chunk length.");
-                        }
-
-                        byte[] body = ReadBody(source, len, type, length, out bool ok);
-                        if (!ok)
-                        {
-                            throw new ImageFormatException("CRC mismatch in PLTE.");
-                        }
-
-                        if (!seenIdat && plte == null)
-                        {
-                            plte = body;
-                        }
-
-                        break;
-                    }
-
-                case PngChunk.IDAT:
-                    if (!seenIdat)
-                    {
-                        seenIdat = true;
-                        firstIdat = chunkStart;
-                        if (pending >= 0)
-                        {
-                            PngFrameDesc f = frames[pending];
-                            f.DataOffset = chunkStart;
-                            frames[pending] = f;
-                            pending = -1;
-                        }
-                    }
-
-                    source.Position = end;
-                    break;
-                case PngChunk.tRNS:
-                    if (!seenIdat && len <= 256)
-                    {
-                        byte[] body = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            trns = body;
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.gAMA:
-                    if (len == 4)
-                    {
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            st.Gamma = ContainerIo.U32Be(b);
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.cHRM:
-                    if (len == 32)
-                    {
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            var v = new int[8];
-                            for (int i = 0; i < 8; i++)
-                            {
-                                v[i] = (int)ContainerIo.U32Be(b.AsSpan(i * 4));
-                            }
-
-                            st.Chromaticities = v;
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.sRGB:
-                    if (len == 1)
-                    {
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            st.SrgbIntent = b[0];
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.cICP:
-                    if (len == 4)
-                    {
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            st.CicP = new int[] { b[0], b[1], b[2], b[3] };
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.iCCP:
-                    if (icc == null && !seenIdat && len >= 4)
-                    {
-                        CheckMetadataSize(len, limits);
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            icc = ParseIccp(b, limits);
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.eXIf:
-                    if (exif == null && len >= 8)
-                    {
-                        CheckMetadataSize(len, limits);
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            exif = b;
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.iTXt:
-                case PngChunk.tEXt:
-                    if (xmp == null && len >= 22)
-                    {
-                        // Cheap pre-check of the keyword so unrelated text chunks are never read into memory.
-                        ContainerIo.ReadFully(source, kw);
-                        source.Position = bodyStart;
-                        if (kw.SequenceEqual("XML:com.adobe.xmp"u8))
-                        {
-                            CheckMetadataSize(len, limits);
-                            byte[] b = ReadBody(source, len, type, length, out bool ok);
-                            if (ok)
-                            {
-                                xmp = ParseXmp(b, type == PngChunk.iTXt, limits);
-                            }
-
-                            break;
-                        }
-                    }
-
-                    source.Position = end;
-                    break;
-                case PngChunk.acTL:
-                    if (!seenIdat && len == 8 && !animation)
-                    {
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            numFrames = ContainerIo.U32Be(b);
-                            numPlays = ContainerIo.U32Be(b.AsSpan(4));
-                            animation = numFrames > 0 && numFrames <= 0x7FFFFFFF;
-                            if (numFrames > limits.MaxFrames)
-                            {
-                                throw new ImageLimitException($"Frame count {numFrames} exceeds the limit of {limits.MaxFrames}.");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.fcTL:
-                    if (animation && len == 26)
-                    {
-                        byte[] b = ReadBody(source, len, type, length, out bool ok);
-                        if (ok)
-                        {
-                            if (frames.Count >= limits.MaxFrames)
-                            {
-                                throw new ImageLimitException($"Frame count exceeds the limit of {limits.MaxFrames}.");
-                            }
-
-                            var f = new PngFrameDesc
-                            {
-                                Width = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(4)), int.MaxValue),
-                                Height = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(8)), int.MaxValue),
-                                X = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(12)), int.MaxValue),
-                                Y = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(16)), int.MaxValue),
-                                DelayNum = ContainerIo.U16Be(b.AsSpan(20)),
-                                DelayDen = ContainerIo.U16Be(b.AsSpan(22)),
-                                Dispose = b[24],
-                                Blend = b[25],
-                                DataOffset = -1,
-                                IsFdat = seenIdat,
-                            };
-                            if (f.Width <= 0 || f.Height <= 0 || f.Width > st.Width || f.Height > st.Height
-                                || f.X > st.Width - f.Width || f.Y > st.Height - f.Height || f.Dispose > 2 || f.Blend > 1)
-                            {
-                                throw new ImageFormatException("Invalid APNG frame control chunk.");
-                            }
-
-                            frames.Add(f);
-                            pending = frames.Count - 1;
-                        }
-                    }
-                    else
-                    {
-                        source.Position = end;
-                    }
-
-                    break;
-                case PngChunk.fdAT:
-                    if (pending >= 0 && seenIdat)
-                    {
-                        PngFrameDesc f = frames[pending];
-                        f.DataOffset = chunkStart;
-                        frames[pending] = f;
-                        pending = -1;
-                    }
-
-                    source.Position = end;
-                    break;
-                default:
-                    if (PngChunk.IsCritical(type))
-                    {
-                        throw new ImageFormatException($"Unknown critical chunk {(char)(type >> 24)}{(char)((type >> 16) & 0xFF)}{(char)((type >> 8) & 0xFF)}{(char)(type & 0xFF)}.");
-                    }
-
-                    source.Position = end;
-                    break;
-            }
+            ReadChunk(source, st, sc, type, len, chunkStart, bodyStart, end, length, limits);
 
             if (source.Position != end)
             {
@@ -385,27 +121,27 @@ internal sealed class PngDecoder : IImageDecoder
             }
         }
 
-        if (!seenIdat)
+        if (!sc.SeenIdat)
         {
             throw new ImageFormatException("The file has no image data.");
         }
 
-        if (colorType == 3 && (plte == null || plte.Length == 0))
+        if (colorType == 3 && (sc.Plte == null || sc.Plte.Length == 0))
         {
             throw new ImageFormatException("A palette image needs a PLTE chunk.");
         }
 
-        Configure(st, plte, trns, depth, colorType);
+        Configure(st, sc.Plte, sc.Trns, depth, colorType);
 
         PngFrameDesc[] descs;
-        if (animation && frames.Count > 0)
+        if (sc.Animation && sc.Frames.Count > 0)
         {
-            if (frames.Count != numFrames)
+            if (sc.Frames.Count != sc.NumFrames)
             {
                 throw new ImageFormatException("The number of frame control chunks does not match acTL.");
             }
 
-            foreach (PngFrameDesc f in frames)
+            foreach (PngFrameDesc f in sc.Frames)
             {
                 if (f.DataOffset < 0)
                 {
@@ -413,14 +149,14 @@ internal sealed class PngDecoder : IImageDecoder
                 }
             }
 
-            descs = frames.ToArray();
+            descs = sc.Frames.ToArray();
             st.IsAnimated = true;
             st.CanvasFormat = depth == 16 ? PixelFormat.Rgba16 : PixelFormat.Rgba8;
         }
         else
         {
-            descs = [new PngFrameDesc { Width = st.Width, Height = st.Height, DataOffset = firstIdat }];
-            numPlays = 0;
+            descs = [new PngFrameDesc { Width = st.Width, Height = st.Height, DataOffset = sc.FirstIdat }];
+            sc.NumPlays = 0;
         }
 
         st.Frames = descs;
@@ -433,11 +169,298 @@ internal sealed class PngDecoder : IImageDecoder
 
         var meta = new ImageMetadata
         {
-            IccProfile = icc ?? default,
-            Exif = exif ?? default,
-            Xmp = xmp ?? default,
+            IccProfile = sc.Icc ?? default,
+            Exif = sc.Exif ?? default,
+            Xmp = sc.Xmp ?? default,
         };
-        return new ImageInfo(PngFormat.Instance, infos, (int)Math.Min(numPlays, int.MaxValue), meta, st);
+        return new ImageInfo(PngFormat.Instance, infos, (int)Math.Min(sc.NumPlays, int.MaxValue), meta, st);
+    }
+
+    // The per-chunk work of ReadInfo lives in its own method: one method holding every chunk type's locals is a very large
+    // function for the JIT, and compiling it on the first load cost several MB of resident memory.
+    private static void ReadChunk(Stream source, PngInfo st, PngScan sc, uint type, uint len, long chunkStart, long bodyStart, long end, long length, ImageLimits limits)
+    {
+        switch (type)
+        {
+            case PngChunk.PLTE:
+                {
+                    if (len % 3 != 0 || len == 0 || len > 768)
+                    {
+                        throw new ImageFormatException("Invalid PLTE chunk length.");
+                    }
+
+                    byte[] body = ReadBody(source, len, type, length, out bool ok);
+                    if (!ok)
+                    {
+                        throw new ImageFormatException("CRC mismatch in PLTE.");
+                    }
+
+                    if (!sc.SeenIdat && sc.Plte == null)
+                    {
+                        sc.Plte = body;
+                    }
+
+                    break;
+                }
+
+            case PngChunk.IDAT:
+                if (!sc.SeenIdat)
+                {
+                    sc.SeenIdat = true;
+                    sc.FirstIdat = chunkStart;
+                    if (sc.Pending >= 0)
+                    {
+                        PngFrameDesc f = sc.Frames[sc.Pending];
+                        f.DataOffset = chunkStart;
+                        sc.Frames[sc.Pending] = f;
+                        sc.Pending = -1;
+                    }
+                }
+
+                source.Position = end;
+                break;
+            case PngChunk.tRNS:
+                if (!sc.SeenIdat && len <= 256)
+                {
+                    byte[]? body = ReadBodyChecked(source, len, type, length);
+                    if (body != null)
+                    {
+                        sc.Trns = body;
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.gAMA:
+                if (len == 4)
+                {
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        st.Gamma = ContainerIo.U32Be(b);
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.cHRM:
+                if (len == 32)
+                {
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        var v = new int[8];
+                        for (int i = 0; i < 8; i++)
+                        {
+                            v[i] = (int)ContainerIo.U32Be(b.AsSpan(i * 4));
+                        }
+
+                        st.Chromaticities = v;
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.sRGB:
+                if (len == 1)
+                {
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        st.SrgbIntent = b[0];
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.cICP:
+                if (len == 4)
+                {
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        st.CicP = new int[] { b[0], b[1], b[2], b[3] };
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.iCCP:
+                if (sc.Icc == null && !sc.SeenIdat && len >= 4)
+                {
+                    CheckMetadataSize(len, limits);
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        sc.Icc = ParseIccp(b, limits);
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.eXIf:
+                if (sc.Exif == null && len >= 8)
+                {
+                    CheckMetadataSize(len, limits);
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        sc.Exif = b;
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.iTXt:
+            case PngChunk.tEXt:
+                if (sc.Xmp == null && len >= 22)
+                {
+                    // Cheap pre-check of the keyword so unrelated text chunks are never read into memory.
+                    if (HasXmpKeyword(source, bodyStart))
+                    {
+                        CheckMetadataSize(len, limits);
+                        byte[]? b = ReadBodyChecked(source, len, type, length);
+                        if (b != null)
+                        {
+                            sc.Xmp = ParseXmp(b, type == PngChunk.iTXt, limits);
+                        }
+
+                        break;
+                    }
+                }
+
+                source.Position = end;
+                break;
+            case PngChunk.acTL:
+                if (!sc.SeenIdat && len == 8 && !sc.Animation)
+                {
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        sc.NumFrames = ContainerIo.U32Be(b);
+                        sc.NumPlays = ContainerIo.U32Be(b.AsSpan(4));
+                        sc.Animation = sc.NumFrames > 0 && sc.NumFrames <= 0x7FFFFFFF;
+                        if (sc.NumFrames > limits.MaxFrames)
+                        {
+                            throw new ImageLimitException($"Frame count {sc.NumFrames} exceeds the limit of {limits.MaxFrames}.");
+                        }
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.fcTL:
+                if (sc.Animation && len == 26)
+                {
+                    byte[]? b = ReadBodyChecked(source, len, type, length);
+                    if (b != null)
+                    {
+                        if (sc.Frames.Count >= limits.MaxFrames)
+                        {
+                            throw new ImageLimitException($"Frame count exceeds the limit of {limits.MaxFrames}.");
+                        }
+
+                        var f = new PngFrameDesc
+                        {
+                            Width = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(4)), int.MaxValue),
+                            Height = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(8)), int.MaxValue),
+                            X = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(12)), int.MaxValue),
+                            Y = (int)Math.Min(ContainerIo.U32Be(b.AsSpan(16)), int.MaxValue),
+                            DelayNum = ContainerIo.U16Be(b.AsSpan(20)),
+                            DelayDen = ContainerIo.U16Be(b.AsSpan(22)),
+                            Dispose = b[24],
+                            Blend = b[25],
+                            DataOffset = -1,
+                            IsFdat = sc.SeenIdat,
+                        };
+                        if (f.Width <= 0 || f.Height <= 0 || f.Width > st.Width || f.Height > st.Height
+                            || f.X > st.Width - f.Width || f.Y > st.Height - f.Height || f.Dispose > 2 || f.Blend > 1)
+                        {
+                            throw new ImageFormatException("Invalid APNG frame control chunk.");
+                        }
+
+                        sc.Frames.Add(f);
+                        sc.Pending = sc.Frames.Count - 1;
+                    }
+                }
+                else
+                {
+                    source.Position = end;
+                }
+
+                break;
+            case PngChunk.fdAT:
+                if (sc.Pending >= 0 && sc.SeenIdat)
+                {
+                    PngFrameDesc f = sc.Frames[sc.Pending];
+                    f.DataOffset = chunkStart;
+                    sc.Frames[sc.Pending] = f;
+                    sc.Pending = -1;
+                }
+
+                source.Position = end;
+                break;
+            default:
+                if (PngChunk.IsCritical(type))
+                {
+                    throw new ImageFormatException($"Unknown critical chunk {(char)(type >> 24)}{(char)((type >> 16) & 0xFF)}{(char)((type >> 8) & 0xFF)}{(char)(type & 0xFF)}.");
+                }
+
+                source.Position = end;
+                break;
+        }
+    }
+
+    /// <summary>What the chunk walk of <see cref="ReadInfo"/> has found so far.</summary>
+    private sealed class PngScan
+    {
+        public byte[]? Plte { get; set; }
+
+        public byte[]? Trns { get; set; }
+
+        public byte[]? Icc { get; set; }
+
+        public byte[]? Exif { get; set; }
+
+        public byte[]? Xmp { get; set; }
+
+        public List<PngFrameDesc> Frames { get; } = [];
+
+        public bool Animation { get; set; }
+
+        public uint NumFrames { get; set; }
+
+        public uint NumPlays { get; set; }
+
+        public bool SeenIdat { get; set; }
+
+        public long FirstIdat { get; set; } = -1;
+
+        public int Pending { get; set; } = -1;
     }
 
     public void DecodeFrame(Stream source, ImageInfo info, int frameIndex, in DecodeRequest request, IRowSink sink, ImageLimits limits, CancellationToken cancellationToken)
@@ -663,6 +686,22 @@ internal sealed class PngDecoder : IImageDecoder
     }
 
     // ---- Header helpers ----
+
+    // Whether the text chunk whose body starts at bodyStart is keyed "XML:com.adobe.xmp"; leaves the stream at bodyStart.
+    private static bool HasXmpKeyword(Stream source, long bodyStart)
+    {
+        Span<byte> kw = stackalloc byte[17];
+        ContainerIo.ReadFully(source, kw);
+        source.Position = bodyStart;
+        return kw.SequenceEqual("XML:com.adobe.xmp"u8);
+    }
+
+    // The body of a chunk whose CRC matched, or null when it did not.
+    private static byte[]? ReadBodyChecked(Stream s, long len, uint type, long streamLength)
+    {
+        byte[] body = ReadBody(s, len, type, streamLength, out bool ok);
+        return ok ? body : null;
+    }
 
     private static byte[] ReadBody(Stream s, long len, uint type, long streamLength, out bool crcOk)
     {

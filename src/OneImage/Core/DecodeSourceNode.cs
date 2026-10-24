@@ -65,6 +65,12 @@ internal sealed class DecodeSourceNode : Node
     /// <summary>How many extra passes a streaming node starts for consumers that go back before it materializes the frame.</summary>
     public const int MaxRestarts = 2;
 
+    /// <summary>
+    /// The most bytes (in the frame's own format) a streaming node keeps decoded when a read asks it to retain rows (see
+    /// <see cref="RenderContext.RetainDecode"/>). Bigger frames go back to restarting passes. Settable so tests can exercise the limit on small images.
+    /// </summary>
+    public static long RetainLimitBytes { get; set; } = 128L * 1024 * 1024;
+
     private readonly DecodeSession _session;
     private readonly int _frame;
     private readonly int _scale;
@@ -78,6 +84,7 @@ internal sealed class DecodeSourceNode : Node
     private StreamingSessionHandle? _stream;
     private int _restarts;
     private int _directPulled;
+    private bool _retainNext;
 
     public DecodeSourceNode(DecodeSession session, int frame, int scale = 1, ImageRect? region = null)
         : this(session, frame, scale, region ?? FullRegion(session, frame, scale, 0, 0), 0, 0, 0)
@@ -118,6 +125,50 @@ internal sealed class DecodeSourceNode : Node
     public override bool Cacheable => _randomAccess && _session.Decoder is not ICheapTileDecoder;
 
     public override bool Streaming => _streaming;
+
+    /// <summary>Gets a value indicating whether this node decodes through a sliding window (a sequential decoder and a frame of at least <see cref="StreamingMinBytes"/>).</summary>
+    public bool IsStreamingDecode => _streaming;
+
+    /// <summary>Gets a value indicating whether a pass that keeps every decoded row is running.</summary>
+    public bool Retaining => Volatile.Read(ref _stream)?.Session.Retaining == true;
+
+    private bool CanRetain => (long)Width * Height * Format.BytesPerPixel <= RetainLimitBytes;
+
+    /// <summary>
+    /// Prepares for a read that will work through the frame from the top: a sliding-window pass that already moved on is dropped so
+    /// the read starts a fresh one, instead of missing its first row and counting a restart. A pass that retains rows is kept: it
+    /// still holds the top.
+    /// </summary>
+    public void BeginForwardPass()
+    {
+        lock (_gate)
+        {
+            if (_grid == null && _stream != null && !_stream.Session.Retaining)
+            {
+                _stream.Dispose();
+                _stream = null;
+            }
+
+            _retainNext = false;
+        }
+    }
+
+    /// <summary>Gives back the decoded rows a pass holds (its window or everything it retained), and the frame if it was materialized: the caller keeps the pixels it needs elsewhere. A later read decodes again.</summary>
+    public void ReleaseDecoded()
+    {
+        lock (_gate)
+        {
+            if (_stream != null)
+            {
+                _stream.Dispose();
+                _stream = null;
+            }
+
+            _retainNext = false;
+        }
+
+        ReleaseMaterialized();
+    }
 
     private bool SupportsRegion => (_session.Decoder.Capabilities & DecoderCapabilities.Region) != 0;
 
@@ -260,7 +311,7 @@ internal sealed class DecodeSourceNode : Node
 
         if (_streaming)
         {
-            return StreamTile(tx, ty, context.CancellationToken);
+            return StreamTile(tx, ty, context.RetainDecode && CanRetain, context.CancellationToken);
         }
 
         return GridTile(tx, ty, context.CancellationToken);
@@ -352,7 +403,7 @@ internal sealed class DecodeSourceNode : Node
         }
     }
 
-    private Tile StreamTile(int tx, int ty, CancellationToken cancellationToken)
+    private Tile StreamTile(int tx, int ty, bool retain, CancellationToken cancellationToken)
     {
         while (true)
         {
@@ -362,7 +413,7 @@ internal sealed class DecodeSourceNode : Node
                 return GridTile(tx, ty, cancellationToken);
             }
 
-            StreamingSessionHandle? handle = CurrentSession(ty);
+            StreamingSessionHandle? handle = CurrentSession(ty, retain);
             if (handle == null)
             {
                 continue;
@@ -374,11 +425,11 @@ internal sealed class DecodeSourceNode : Node
                 return tile;
             }
 
-            Recover(handle, cancellationToken);
+            Recover(handle, retain, cancellationToken);
         }
     }
 
-    private StreamingSessionHandle? CurrentSession(int startRow)
+    private StreamingSessionHandle? CurrentSession(int startRow, bool retain)
     {
         StreamingSessionHandle? h = Volatile.Read(ref _stream);
         if (h != null)
@@ -389,15 +440,17 @@ internal sealed class DecodeSourceNode : Node
         lock (_gate)
         {
             // Null once the frame has been materialized: the caller then reads the grid.
-            return _grid != null ? null : _stream ??= StartPass(startRow);
+            // A reader that retains gets a retaining pass once it has missed (a read that goes back up: a rotated image, a second look
+            // at the top). A reader that only moves down never misses, so it never pays for the rows it leaves behind.
+            return _grid != null ? null : _stream ??= StartPass(startRow, retain && _retainNext);
         }
     }
 
-    private StreamingSessionHandle StartPass(int startRow) =>
-        new(new StreamingSession(_session, _frame, _scale, RequestRegion(), Width, Height, Format, startRow));
+    private StreamingSessionHandle StartPass(int startRow, bool retain) =>
+        new(new StreamingSession(_session, _frame, _scale, RequestRegion(), Width, Height, Format, startRow, retain));
 
     /// <summary>A consumer needed a row that left the window: decode again from the top, or keep the whole frame once restarts run out.</summary>
-    private void Recover(StreamingSessionHandle failed, CancellationToken cancellationToken)
+    private void Recover(StreamingSessionHandle failed, bool retain, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
@@ -408,7 +461,12 @@ internal sealed class DecodeSourceNode : Node
 
             failed.Dispose();
             _stream = null;
-            if (++_restarts > MaxRestarts)
+            if (retain)
+            {
+                // The next pass keeps what it decodes, so this reader (and the ones after it) never miss again: no restart is counted.
+                _retainNext = true;
+            }
+            else if (++_restarts > MaxRestarts)
             {
                 MaterializeLocked(cancellationToken);
             }

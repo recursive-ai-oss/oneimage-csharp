@@ -130,6 +130,7 @@ public static class ImageEngine
 {
     private static int s_maxDegree = Environment.ProcessorCount;
     private static int s_callDegree = Math.Min(4, Environment.ProcessorCount);
+    private static long s_regionCacheBytes = 64L * 1024 * 1024;
 
     /// <summary>Gets or sets the most threads any single call may use (default: processor count).</summary>
     public static int MaxDegree
@@ -164,6 +165,24 @@ public static class ImageEngine
         {
             ArgumentOutOfRangeException.ThrowIfNegative(value);
             TileCache.Global.Budget = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the most memory one image frame keeps to make repeated region reads cheap (default 64 MiB; 0 turns it off).
+    /// A frame decoded by a streaming sequential decoder (a JPEG or PNG whose pixels take 16 MiB or more in their own format)
+    /// normally holds only a few rows, so reading a region it has already moved past would decode the image again. From the second
+    /// region read on, <see cref="ImageFrame.CopyPixelsTo{T}"/> keeps the rows it has read, in the pixel format asked for, up to this
+    /// many bytes per frame (least recently used format first). A frame whose plane would not fit keeps nothing and behaves as
+    /// before. <see cref="Image.ReleaseDecodedPixels"/> gives the memory back.
+    /// </summary>
+    public static long RegionCacheBytes
+    {
+        get => Volatile.Read(ref s_regionCacheBytes);
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            Volatile.Write(ref s_regionCacheBytes, value);
         }
     }
 

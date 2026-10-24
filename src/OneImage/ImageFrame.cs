@@ -32,6 +32,20 @@ public sealed partial class ImageFrame
 
     internal Node Node { get; }
 
+    private FramePlanes? _planes;
+
+    private FramePlanes Planes => Volatile.Read(ref _planes) ?? Interlocked.CompareExchange(ref _planes, new FramePlanes(Node), null) ?? _planes!;
+
+    /// <summary>Gives back everything this frame keeps decoded for region reads, including rows held by the shared decode; later reads decode again.</summary>
+    internal void ReleaseDecodedPixels()
+    {
+        Volatile.Read(ref _planes)?.Release();
+        foreach (DecodeSourceNode d in Node.DecodeSources(Node))
+        {
+            d.ReleaseDecoded();
+        }
+    }
+
     /// <summary>Returns this frame as a single-frame <see cref="Image"/> (no metadata).</summary>
     /// <returns>The image.</returns>
     public Image ToImage() => Image.FromNode(Node, Delay);
@@ -62,10 +76,24 @@ public sealed partial class ImageFrame
         try
         {
             RenderContext context = RenderContext.Create(maxDegree, cancellationToken);
-            if (rect.X == 0 && rect.Y == 0 && rect.Width == Node.Width && rect.Height == Node.Height
-                && Node.TryReadDirect(SpanCast.AsBytes(destination), T.Format, context.Degree, cancellationToken))
+            if (rect.X == 0 && rect.Y == 0 && rect.Width == Node.Width && rect.Height == Node.Height)
             {
-                return;
+                if ((Volatile.Read(ref _planes)?.TryReadWhole(T.Format, SpanCast.AsBytes(destination)) ?? false)
+                    || Node.TryReadDirect(SpanCast.AsBytes(destination), T.Format, context.Degree, cancellationToken))
+                {
+                    return;
+                }
+            }
+            else if (!rect.IsEmpty && rect.IsInside(Node.Width, Node.Height) && ImageEngine.RegionCacheBytes > 0 && Planes.Applies)
+            {
+                // A region of a streaming decode: from the second read on the rows come from a plane kept in the requested format,
+                // and until then a read that goes back above the sliding window keeps the rows it decodes rather than starting over.
+                if (Planes.TryRead(T.Format, rect, SpanCast.AsBytes(destination), context))
+                {
+                    return;
+                }
+
+                context = context.WithRetainDecode();
             }
 
             Render.ReadRegion(Node, rect, SpanCast.AsBytes(destination), 0, T.Format, context);

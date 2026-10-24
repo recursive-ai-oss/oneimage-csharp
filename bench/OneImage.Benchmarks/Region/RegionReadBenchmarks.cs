@@ -212,6 +212,11 @@ internal static class RegionPeak
             return ColdLoad(path, args.Length > 3 ? args[3] : "path");
         }
 
+        if (scenario == "trace-bands")
+        {
+            return TraceBands(path);
+        }
+
         (string Name, int Width, int Height, string Kind) spec = Array.Find(RegionData.Inputs, i => i.Name == name);
         byte[] buffer = RegionScenarios.Buffer(spec.Width, spec.Height);
 
@@ -260,6 +265,9 @@ internal static class RegionPeak
             return ColdDetail(path, bytes);
         }
 
+        // Reading the resident set the first time loads the code that parses it; do that before the baseline.
+        _ = Status("VmRSS:");
+        _ = Status("VmRSS:");
         long start = Status("VmRSS:");
         Image first = Load(path, bytes, mode);
         long afterFirst = Status("VmRSS:");
@@ -336,6 +344,25 @@ internal static class RegionPeak
             default:
                 return Image.Load(path);
         }
+    }
+
+    // Prints resident memory and the decode state after each band of a gray read (to see what an image holds between reads).
+    private static int TraceBands(string path)
+    {
+        Image image = Image.Load(path);
+        var buffer = new byte[image.Width * image.Height];
+        int i = 0;
+        foreach (ImageRect r in RegionScenarios.Bands(image.Width, image.Height))
+        {
+            image.CopyPixelsTo<Gray8>(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Gray8>(buffer.AsSpan()), r);
+            if (i++ % 4 == 0)
+            {
+                var sources = Node.DecodeSources(image.Frames[0].Node);
+                Console.WriteLine($"band {i,2} rss {Status("VmRSS:") / 1024.0,6:F1} MB  heap {GC.GetTotalMemory(false) / 1048576.0,6:F1} MB  retaining {sources.Exists(d => d.Retaining)}");
+            }
+        }
+
+        return 0;
     }
 
     // With REGION_PAUSE set, waits so an outside tool can snapshot /proc/<pid>/smaps at a known point.

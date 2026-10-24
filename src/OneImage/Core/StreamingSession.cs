@@ -33,14 +33,16 @@ internal sealed class StreamingSession : ITileRowReceiver
     private readonly int _height;
     private readonly PixelFormat _format;
     private readonly int _tilesY;
+    private readonly bool _retain;
     private int _maxRequested;
     private int _lowest;
     private int _nextPublish;
     private volatile bool _aborted;
     private ExceptionDispatchInfo? _fault;
 
-    public StreamingSession(DecodeSession decode, int frame, int scale, ImageRect request, int width, int height, PixelFormat format, int startRow)
+    public StreamingSession(DecodeSession decode, int frame, int scale, ImageRect request, int width, int height, PixelFormat format, int startRow, bool retain = false)
     {
+        _retain = retain;
         _decode = decode;
         _frame = frame;
         _scale = scale;
@@ -53,6 +55,12 @@ internal sealed class StreamingSession : ITileRowReceiver
         Interlocked.Increment(ref s_liveThreads);
         new Thread(Run) { IsBackground = true, Name = "OneImage sequential decode" }.Start();
     }
+
+    /// <summary>
+    /// Gets a value indicating whether this pass keeps every row it has decoded (so no consumer ever misses), instead of a sliding
+    /// window. The decoder still runs only as far as the furthest row asked for.
+    /// </summary>
+    public bool Retaining => _retain;
 
     /// <summary>Gets the number of decode threads currently running (test statistic).</summary>
     public static int LiveThreads => Volatile.Read(ref s_liveThreads);
@@ -130,7 +138,7 @@ internal sealed class StreamingSession : ITileRowReceiver
                     throw new OperationCanceledException();
                 }
 
-                if (ty < _maxRequested - Keep)
+                if (!_retain && ty < _maxRequested - Keep)
                 {
                     // Nobody will ask for this row any more (a pass restarted further down the image).
                     ReleaseAll(tiles);
@@ -161,6 +169,11 @@ internal sealed class StreamingSession : ITileRowReceiver
 
     private void EvictLocked()
     {
+        if (_retain)
+        {
+            return;
+        }
+
         int floor = _maxRequested - Keep;
         for (; _lowest < floor && _lowest < _tilesY; _lowest++)
         {

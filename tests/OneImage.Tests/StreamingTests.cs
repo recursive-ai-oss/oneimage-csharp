@@ -6,6 +6,7 @@ namespace OneImage.Tests;
 public sealed class StreamingTests : IDisposable
 {
     private readonly long _savedThreshold = DecodeSourceNode.StreamingMinBytes;
+    private readonly long _savedRegionCache = ImageEngine.RegionCacheBytes;
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "oneimage-stream-" + Guid.NewGuid().ToString("N"));
 
     public StreamingTests() => Directory.CreateDirectory(_dir);
@@ -13,6 +14,7 @@ public sealed class StreamingTests : IDisposable
     public void Dispose()
     {
         DecodeSourceNode.StreamingMinBytes = _savedThreshold;
+        ImageEngine.RegionCacheBytes = _savedRegionCache;
         Directory.Delete(_dir, recursive: true);
     }
 
@@ -91,6 +93,8 @@ public sealed class StreamingTests : IDisposable
     [Fact]
     public void GoingBackRestartsThenFallsBackToMaterializing()
     {
+        // The node's own policy, which the region cache (on by default for reads through CopyPixelsTo) replaces: see RegionCacheTests.
+        ImageEngine.RegionCacheBytes = 0;
         DecodeSourceNode.StreamingMinBytes = 0;
         var raw = new RawFormat();
         Rgba32[] px = Enumerable.Range(0, 200 * 1500).Select(i => new Rgba32((byte)i, (byte)(i >> 8), (byte)(i >> 16), 255)).ToArray();

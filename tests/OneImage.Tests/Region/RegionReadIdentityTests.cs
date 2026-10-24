@@ -72,7 +72,13 @@ public sealed class RegionReadIdentityTests : IDisposable
             foreach (string pattern in RegionPatterns.Names)
             {
                 string key = $"{input.Name}|{mode}|{format}|{pattern}";
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 string hash = RegionPatterns.Run(input, format, pattern);
+                if (Environment.GetEnvironmentVariable("ONEIMAGE_REGION_TIMES") is { } times)
+                {
+                    File.AppendAllText(times, $"{key}\t{System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:F0}\n");
+                }
+
                 lines.Add($"{key}\t{hash}");
                 if (Environment.GetEnvironmentVariable("ONEIMAGE_CAPTURE_REGION") == null
                     && (!s_reference.Value.TryGetValue(key, out string? expected) || expected != hash))
@@ -320,6 +326,9 @@ internal static class RegionInputs
         image.Save(ms, JpegFormat.Instance, new SaveOptions { EncoderOptions = new JpegEncoderOptions { Quality = 80, Progressive = progressive, Subsampling = subsampling } });
         return new Input(name, ms.ToArray(), bandHeight);
     }
+
+    /// <summary>An RGB (3) or RGBA (4) or gray (1) PNG of the page-like pixels.</summary>
+    public static byte[] PngBytes(int w, int h, int channels, bool interlaced) => Png("png", w, h, channels, interlaced, 50).Bytes;
 
     private static Input Png(string name, int w, int h, int channels, bool interlaced, int bandHeight)
     {

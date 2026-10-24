@@ -435,8 +435,18 @@ internal sealed class RenderContext
 
     public TileCache CacheFor(Node node) => node.Streaming ? StreamCache : Cache;
 
+    /// <summary>
+    /// Gets a value indicating whether a sequential decode may keep every row it has produced when a read goes back to rows that left
+    /// its sliding window, instead of starting another pass (see <see cref="DecodeSourceNode"/>). Set for reads a caller makes on a
+    /// loaded image, where later reads are likely to come back to the same rows.
+    /// </summary>
+    public bool RetainDecode { get; private init; }
+
     /// <summary>Gets the context for work done inside an already-parallel tile computation: same token and cache, degree 1.</summary>
-    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken) { OuterDegree = Degree };
+    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken) { OuterDegree = Degree, RetainDecode = RetainDecode };
+
+    /// <summary>Gets a copy of this context whose decodes retain rows (see <see cref="RetainDecode"/>).</summary>
+    public RenderContext WithRetainDecode() => RetainDecode ? this : new RenderContext(Degree, Cache, StreamCache, CancellationToken) { OuterDegree = OuterDegree, RetainDecode = true };
 
     public static RenderContext Create(int maxDegree, CancellationToken cancellationToken) =>
         new(ImageEngine.ResolveDegree(maxDegree), TileCache.Global, TileCache.Streaming, cancellationToken);

@@ -313,49 +313,59 @@ internal static class JpegParser
 
     private static void ParseDht(JpegReader r, int len, JpegTables tables)
     {
-        Span<byte> counts = stackalloc byte[16];
-        Span<byte> values = stackalloc byte[256];
+        // One table per call: a method that loops and also uses stackalloc is compiled with full optimization at once, which
+        // costs far more memory on the first load than the quick tier does.
         while (len > 0)
         {
-            if (len < 17)
-            {
-                throw new ImageFormatException("Truncated JPEG Huffman table.");
-            }
-
-            int tc = r.ReadByte();
-            r.ReadExactly(counts);
-            len -= 17;
-            int total = 0;
-            foreach (byte c in counts)
-            {
-                total += c;
-            }
-
-            if (total > 256 || total > len)
-            {
-                throw new ImageFormatException("Invalid JPEG Huffman table size.");
-            }
-
-            values.Clear();
-            r.ReadExactly(values[..total]);
-            len -= total;
-            int cls = tc >> 4;
-            int id = tc & 15;
-            if (cls > 1 || id > 3)
-            {
-                throw new ImageFormatException("Invalid JPEG Huffman table id.");
-            }
-
-            var t = new JpegHuffmanTable(counts, values);
-            if (cls == 0)
-            {
-                tables.Dc[id] = t;
-            }
-            else
-            {
-                tables.Ac[id] = t;
-            }
+            len = ParseOneDht(r, len, tables);
         }
+    }
+
+    // Reads one Huffman table and returns the bytes left in the segment.
+    private static int ParseOneDht(JpegReader r, int len, JpegTables tables)
+    {
+        Span<byte> counts = stackalloc byte[16];
+        Span<byte> values = stackalloc byte[256];
+        if (len < 17)
+        {
+            throw new ImageFormatException("Truncated JPEG Huffman table.");
+        }
+
+        int tc = r.ReadByte();
+        r.ReadExactly(counts);
+        len -= 17;
+        int total = 0;
+        foreach (byte c in counts)
+        {
+            total += c;
+        }
+
+        if (total > 256 || total > len)
+        {
+            throw new ImageFormatException("Invalid JPEG Huffman table size.");
+        }
+
+        values.Clear();
+        r.ReadExactly(values[..total]);
+        len -= total;
+        int cls = tc >> 4;
+        int id = tc & 15;
+        if (cls > 1 || id > 3)
+        {
+            throw new ImageFormatException("Invalid JPEG Huffman table id.");
+        }
+
+        var t = new JpegHuffmanTable(counts, values);
+        if (cls == 0)
+        {
+            tables.Dc[id] = t;
+        }
+        else
+        {
+            tables.Ac[id] = t;
+        }
+
+        return len;
     }
 
     private static void ParseDac(JpegReader r, int len, JpegTables tables)
