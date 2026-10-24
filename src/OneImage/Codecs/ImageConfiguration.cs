@@ -172,7 +172,7 @@ public static class ImageEngine
     /// Gets or sets the most memory one image frame keeps to make repeated region reads cheap (default 64 MiB; 0 turns it off).
     /// A frame decoded by a streaming sequential decoder (a JPEG or PNG whose pixels take 16 MiB or more in their own format)
     /// normally holds only a few rows, so reading a region it has already moved past would decode the image again. From the second
-    /// region read on, <see cref="ImageFrame.CopyPixelsTo{T}"/> keeps the rows it has read, in the pixel format asked for, up to this
+    /// region read on, <see cref="ImageFrame.CopyPixelsTo{T}(Span{T}, ImageRect, int, CancellationToken)"/> keeps the rows it has read, in the pixel format asked for, up to this
     /// many bytes per frame (least recently used format first). A frame whose plane would not fit keeps nothing and behaves as
     /// before. <see cref="Image.ReleaseDecodedPixels"/> gives the memory back.
     /// </summary>

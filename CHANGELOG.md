@@ -4,6 +4,15 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `ImageFrame.ReleaseDecodedPixels()` is public, so one frame of a multi-frame image can give its decoded pixels back.
+- `CopyPixelsTo(destination, rect, useRegionCache: false)` on `Image` and `ImageFrame`: one region or band read that builds no region plane and counts toward none, whatever `ImageEngine.RegionCacheBytes` says. Bands read from the top down decode the image once and hold only the decoder's few tile rows; a read that has to go back above them decodes again for that call and keeps nothing afterwards. Pixels are identical.
+
+### Fixed
+
+- `ReleaseDecodedPixels()` now gives back everything decode-derived: it also clears the cached tiles of every operation above the decode (a gray conversion, a resize) and of a random-access decode (TIFF), where before only the region plane and sequential-decode rows went. Releasing through `frame.ToImage()` (or the image the frame came from) now frees the frame's region plane; planes used to belong to the frame object, so a single-frame image made from it had its own empty set.
+
 ## [1.8.1] - 2026-10-24
 
 ### Changed

@@ -310,7 +310,7 @@ internal sealed class DecodeSourceNode : Node
 
         if (_streaming)
         {
-            return StreamTile(tx, ty, context.RetainDecode && CanRetain, context.CancellationToken);
+            return StreamTile(tx, ty, context);
         }
 
         return GridTile(tx, ty, context.CancellationToken);
@@ -402,14 +402,16 @@ internal sealed class DecodeSourceNode : Node
         }
     }
 
-    private Tile StreamTile(int tx, int ty, bool retain, CancellationToken cancellationToken)
+    private Tile StreamTile(int tx, int ty, RenderContext context)
     {
         while (true)
         {
+            // Re-read every time round: a read that keeps no rows starts retaining once it has missed twice.
+            bool retain = context.RetainDecode && CanRetain && (context.Misses == null || context.Misses.Count >= 2);
             TileGrid? grid = Volatile.Read(ref _grid);
             if (grid != null)
             {
-                return GridTile(tx, ty, cancellationToken);
+                return GridTile(tx, ty, context.CancellationToken);
             }
 
             StreamingSessionHandle? handle = CurrentSession(ty, retain);
@@ -418,13 +420,13 @@ internal sealed class DecodeSourceNode : Node
                 continue;
             }
 
-            Tile? tile = handle.Session.TryGetTile(tx, ty, cancellationToken);
+            Tile? tile = handle.Session.TryGetTile(tx, ty, context.CancellationToken);
             if (tile != null)
             {
                 return tile;
             }
 
-            Recover(handle, retain, cancellationToken);
+            Recover(handle, retain, context);
         }
     }
 
@@ -449,7 +451,7 @@ internal sealed class DecodeSourceNode : Node
         new(new StreamingSession(_session, _frame, _scale, RequestRegion(), Width, Height, Format, startRow, retain));
 
     /// <summary>A consumer needed a row that left the window: decode again from the top, or keep the whole frame once restarts run out.</summary>
-    private void Recover(StreamingSessionHandle failed, bool retain, CancellationToken cancellationToken)
+    private void Recover(StreamingSessionHandle failed, bool retain, RenderContext context)
     {
         lock (_gate)
         {
@@ -465,9 +467,15 @@ internal sealed class DecodeSourceNode : Node
                 // The next pass keeps what it decodes, so this reader (and the ones after it) never miss again: no restart is counted.
                 _retainNext = true;
             }
+            else if (context.Misses != null && CanRetain)
+            {
+                // A read that keeps no rows: another pass starts at the row it needs and the restart budget (which ends in keeping the
+                // whole frame) is left alone. If this same call misses again, its next pass retains instead.
+                context.Misses.Add();
+            }
             else if (++_restarts > MaxRestarts)
             {
-                MaterializeLocked(cancellationToken);
+                MaterializeLocked(context.CancellationToken);
             }
         }
     }

@@ -11,6 +11,7 @@ internal abstract class Node
 {
     private static long s_nextId;
     private CacheReaper? _reaper;
+    private FramePlanes? _planes;
 
     protected Node(int width, int height, PixelFormat format, OpDescriptor descriptor, params Node[] inputs)
     {
@@ -136,6 +137,50 @@ internal abstract class Node
             TileCache.Global.RemoveNodes(-1, ids);
             TileCache.Streaming.RemoveNodes(-1, ids);
         }
+    }
+
+    /// <summary>The rows kept for region reads of a frame whose pixels are this node (created on first use). Every image and frame over the same node shares them.</summary>
+    public FramePlanes? PlanesIfCreated => Volatile.Read(ref _planes);
+
+    /// <summary>The rows kept for region reads, created on first use.</summary>
+    public FramePlanes Planes => Volatile.Read(ref _planes) ?? Interlocked.CompareExchange(ref _planes, new FramePlanes(this), null) ?? _planes!;
+
+    /// <summary>
+    /// Gives back everything the graphs below <paramref name="roots"/> keep that came from decoding and can be computed again:
+    /// region planes, rows held by sequential decodes, materialized decodes, decoder block caches and the cached tiles of every node.
+    /// Unlike <see cref="ReleaseAfterSave"/> this also clears nodes another pipeline may share, because the caller asked for it.
+    /// </summary>
+    public static void ReleaseDecoded(IEnumerable<Node> roots)
+    {
+        var seen = new HashSet<Node>(ReferenceEqualityComparer.Instance);
+        var ids = new HashSet<long>();
+        var stack = new Stack<Node>(roots);
+        while (stack.TryPop(out Node? n))
+        {
+            if (!seen.Add(n))
+            {
+                continue;
+            }
+
+            ids.Add(n.Id);
+            Volatile.Read(ref n._planes)?.Release();
+            if (n is DecodeSourceNode d)
+            {
+                d.ReleaseDecoded();
+            }
+            else
+            {
+                n.ReleaseMaterialized();
+            }
+
+            foreach (Node input in n.Inputs)
+            {
+                stack.Push(input);
+            }
+        }
+
+        TileCache.Global.RemoveNodes(-1, ids);
+        TileCache.Streaming.RemoveNodes(-1, ids);
     }
 
     /// <summary>Lists the decode sources in the graph below <paramref name="root"/> (including the root), each once.</summary>

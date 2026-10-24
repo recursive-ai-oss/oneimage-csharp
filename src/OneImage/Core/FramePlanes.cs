@@ -55,21 +55,22 @@ internal sealed class FramePlanes
     /// Serves a region read from a plane, creating the plane on the second region read of the frame. Returns false, touching
     /// nothing, when this read should go through the normal path (first read, a frame bigger than the budget, planes off).
     /// </summary>
-    public bool TryRead(PixelFormat format, ImageRect rect, Span<byte> destination, RenderContext context)
+    public bool TryRead(PixelFormat format, ImageRect rect, Span<byte> destination, RenderContext context, bool create = true)
     {
         if (!Applies)
         {
             return false;
         }
 
-        int reads = Interlocked.Increment(ref _reads);
+        // A caller that opted out of planes still reads from one that already exists, but neither counts toward nor builds a new one.
+        int reads = create ? Interlocked.Increment(ref _reads) : 0;
         Plane plane;
         lock (_gate)
         {
             Plane? found = FindLocked(format);
             if (found == null)
             {
-                if (reads < 2 || _creations >= MaxCreations)
+                if (!create || reads < 2 || _creations >= MaxCreations)
                 {
                     return false;
                 }
@@ -105,6 +106,24 @@ internal sealed class FramePlanes
 
         plane.CopyTo(new ImageRect(0, 0, _node.Width, _node.Height), destination, format);
         return true;
+    }
+
+    /// <summary>Gets the bytes of the planes held now.</summary>
+    public long PlaneBytes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                long total = 0;
+                foreach (Plane p in _planes)
+                {
+                    total += p.Bytes;
+                }
+
+                return total;
+            }
+        }
     }
 
     /// <summary>Drops every plane (a reader in the middle of a copy keeps its own reference) and starts counting reads again.</summary>

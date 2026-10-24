@@ -139,10 +139,11 @@ public sealed partial class Image
     public Canvas ToCanvas() => new(_frames[0].Node);
 
     /// <summary>
-    /// Gives back the decoded pixels this image keeps so that repeated region reads are cheap: the rows <see cref="CopyPixelsTo{T}"/>
-    /// has read (up to <see cref="ImageEngine.RegionCacheBytes"/> per frame) and any rows its sequential decode holds. The image stays valid; a later
-    /// read decodes again. Images made from the same load share one decode, so they recompute too. Does nothing for images that
-    /// are not decoded from a file or buffer lazily.
+    /// Gives back, for every frame, the memory this image holds that came from decoding and can be computed again: the plane kept for
+    /// region reads (up to <see cref="ImageEngine.RegionCacheBytes"/> per frame), rows a sequential decode holds, a decode materialized
+    /// into tiles, decoder block caches and the cached tiles of the operations between the decode and the image. The image stays
+    /// valid; a later read decodes again and returns the same pixels. Images and frames made from the same load share one decode, so
+    /// they recompute too. Does nothing for images that are not decoded lazily. See <see cref="ImageFrame.ReleaseDecodedPixels"/>.
     /// </summary>
     public void ReleaseDecodedPixels()
     {
@@ -152,7 +153,7 @@ public sealed partial class Image
         }
     }
 
-    /// <summary>Computes a rectangle of frame 0 only; for another frame use <c>Frames[i].CopyPixelsTo</c>. See <see cref="ImageFrame.CopyPixelsTo{T}"/>.</summary>
+    /// <summary>Computes a rectangle of frame 0 only; for another frame use <c>Frames[i].CopyPixelsTo</c>. See <see cref="ImageFrame.CopyPixelsTo{T}(Span{T}, ImageRect, int, CancellationToken)"/>.</summary>
     /// <typeparam name="T">The pixel struct.</typeparam>
     /// <param name="destination">Receives the pixels.</param>
     /// <param name="rect">The rectangle.</param>
@@ -160,6 +161,20 @@ public sealed partial class Image
     /// <param name="maxDegree">Most threads to use; 0 means the default.</param>
     public void CopyPixelsTo<T>(Span<T> destination, ImageRect rect, int maxDegree = 0, CancellationToken cancellationToken = default)
         where T : unmanaged, IPixel<T> => _frames[0].CopyPixelsTo(destination, rect, maxDegree, cancellationToken);
+
+    /// <summary>
+    /// Computes a rectangle of frame 0 only, choosing whether this read may build the region plane of a large JPEG or PNG. Pass
+    /// <paramref name="useRegionCache"/> <c>false</c> to read bands or regions holding only the decoder's sliding window; see
+    /// <see cref="ImageFrame.CopyPixelsTo{T}(Span{T}, ImageRect, bool, int, CancellationToken)"/> for what that costs and saves.
+    /// </summary>
+    /// <typeparam name="T">The pixel struct.</typeparam>
+    /// <param name="destination">Receives the pixels.</param>
+    /// <param name="rect">The rectangle.</param>
+    /// <param name="useRegionCache">Whether this read may build or count toward the per-frame region plane.</param>
+    /// <param name="maxDegree">Most threads to use; 0 means the default.</param>
+    /// <param name="cancellationToken">Cancels the computation.</param>
+    public void CopyPixelsTo<T>(Span<T> destination, ImageRect rect, bool useRegionCache, int maxDegree = 0, CancellationToken cancellationToken = default)
+        where T : unmanaged, IPixel<T> => _frames[0].CopyPixelsTo(destination, rect, useRegionCache, maxDegree, cancellationToken);
 
     /// <summary>Computes frame 0 only as an array; for another frame use <c>Frames[i].ToArray</c>. See <see cref="ImageFrame.ToArray{T}"/>.</summary>
     /// <typeparam name="T">The pixel struct.</typeparam>

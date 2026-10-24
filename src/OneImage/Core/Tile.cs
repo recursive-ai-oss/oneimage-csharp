@@ -442,12 +442,32 @@ internal sealed class RenderContext
     /// </summary>
     public bool RetainDecode { get; private init; }
 
+    /// <summary>
+    /// Gets the call-wide counter of a read that must not leave rows behind (see <see cref="WithoutKeptRows"/>), or null for other reads.
+    /// A sequential decode counts the times this call had to start another pass; only a call that keeps coming back to rows it has
+    /// already passed (a rotated image) gets a pass that retains them, and that pass is dropped when the call returns.
+    /// </summary>
+    public RowMisses? Misses { get; private init; }
+
     /// <summary>Gets the context for work done inside an already-parallel tile computation: same token and cache, degree 1.</summary>
-    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken) { OuterDegree = Degree, RetainDecode = RetainDecode };
+    public RenderContext Nested => Degree == 1 ? this : _nested ??= new RenderContext(1, Cache, StreamCache, CancellationToken) { OuterDegree = Degree, RetainDecode = RetainDecode, Misses = Misses };
 
     /// <summary>Gets a copy of this context whose decodes retain rows (see <see cref="RetainDecode"/>).</summary>
-    public RenderContext WithRetainDecode() => RetainDecode ? this : new RenderContext(Degree, Cache, StreamCache, CancellationToken) { OuterDegree = OuterDegree, RetainDecode = true };
+    public RenderContext WithRetainDecode() => RetainDecode ? this : new RenderContext(Degree, Cache, StreamCache, CancellationToken) { OuterDegree = OuterDegree, RetainDecode = true, Misses = Misses };
+
+    /// <summary>Gets a copy of this context for a read that keeps no rows after it returns: it may retain, but only once it has itself missed twice.</summary>
+    public RenderContext WithoutKeptRows() => new(Degree, Cache, StreamCache, CancellationToken) { OuterDegree = OuterDegree, RetainDecode = true, Misses = new RowMisses() };
 
     public static RenderContext Create(int maxDegree, CancellationToken cancellationToken) =>
         new(ImageEngine.ResolveDegree(maxDegree), TileCache.Global, TileCache.Streaming, cancellationToken);
+}
+
+/// <summary>How many times one read had to start another sequential pass because it needed rows that already left the window.</summary>
+internal sealed class RowMisses
+{
+    private int _count;
+
+    public int Count => Volatile.Read(ref _count);
+
+    public void Add() => Interlocked.Increment(ref _count);
 }
