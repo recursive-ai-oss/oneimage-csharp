@@ -30,6 +30,12 @@ internal static class ConvertFast
             return false;
         }
 
+        if (sf.Model == ColorModel.Rgb && df.Model == ColorModel.Gray)
+        {
+            // RGB to gray: integer path that reproduces the float reference exactly (see RgbToGrayKernel).
+            return ss == SampleType.U8 && RgbToGrayKernel.TryConvert(src, sf, dst, df, width);
+        }
+
         if (ss != ds && sf.Model == df.Model && sf.Alpha == df.Alpha)
         {
             int n = width * sf.ChannelCount;
@@ -80,7 +86,7 @@ internal static class ConvertFast
         }
     }
 
-    /// <summary>Layouts that change only the channel set (add/drop alpha, replicate gray), not the values. RGB to gray is not one of them.</summary>
+    /// <summary>Layouts that change only the channel set (add/drop alpha, replicate gray), not the values. RGB to gray is not one of them (see RgbToGrayKernel).</summary>
     private static bool LayoutSupported(PixelFormat sf, PixelFormat df)
     {
         if (sf.Model == ColorModel.Rgb && df.Model == ColorModel.Rgb)
@@ -137,7 +143,7 @@ internal static class ConvertFast
             return true;
         }
 
-        // RGB to gray stays on the float path: it must stay bit-identical to the fused tone conversion, which uses the same arithmetic.
+        // RGB to gray is RgbToGrayKernel's (it reproduces the float arithmetic exactly, so tone fusion still matches).
 
         if (sf.Model == ColorModel.Gray && df.Model == ColorModel.Gray && sf.HasAlpha != df.HasAlpha)
         {
@@ -420,7 +426,7 @@ internal static class ConvertFast
     }
 
     // The float reference reads an 8-bit sample as v / 255f; the table holds those exact quotients.
-    private static readonly float[] ByteToUnit = CreateByteToUnit();
+    internal static readonly float[] ByteToUnit = CreateByteToUnit();
 
     private static float[] CreateByteToUnit()
     {
@@ -550,7 +556,7 @@ internal static class ConvertFast
         return (r, g, b, a);
     }
 
-    private static byte ToByte(float unit)
+    internal static byte ToByte(float unit)
     {
         float v = (unit * 255f) + 0.5f;
         return !(v > 0f) ? (byte)0 : v >= 255f ? (byte)255 : (byte)v;

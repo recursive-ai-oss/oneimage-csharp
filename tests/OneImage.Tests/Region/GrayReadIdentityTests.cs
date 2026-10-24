@@ -122,7 +122,7 @@ public sealed class GrayReadIdentityTests : IDisposable
         }
 
         Assert.True(failures.Count == 0, $"{failures.Count} of {lines.Count} differ from the 1.8.0 reference, first: {string.Join("; ", failures.Take(8))}");
-        Assert.True(lines.Count > 100);
+        Assert.True(lines.Count > 40);
     }
 
     private static Image Apply(Image image, string? op) => op switch

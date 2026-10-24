@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- Reading an 8-bit RGB or RGBA image as `Gray8`, `Gray16` or gray+alpha (`CopyPixelsTo`, `ToArray`, direct decodes, region reads) is several times faster: the RGB-to-gray conversion now runs in integer SIMD (AVX2, 128-bit, scalar) instead of through float32 rows. A pixel whose exact value lies close to a rounding boundary is recomputed with the float expression, so every output byte is identical to before (checked for all 2^24 RGB triples and every alpha). A 4 MP-class page read as `Gray8` now costs about the same as the `Rgb24` read.
+
 ## [1.8.0] - 2026-10-24
 
 ### Added
