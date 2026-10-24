@@ -116,6 +116,13 @@ internal sealed class HandleStream : Stream
 
     public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
 
+    /// <summary>Lets tests replace the positional read, to make it return short counts the way some file systems do.</summary>
+    internal delegate int ReadAtHook(SafeFileHandle handle, Span<byte> buffer, long offset);
+
+    internal static ReadAtHook? TestReadAt { get; set; }
+
+    private int ReadAt(Span<byte> buffer, long offset) => TestReadAt is { } hook ? hook(_handle, buffer, offset) : RandomAccess.Read(_handle, buffer, offset);
+
     public override int Read(Span<byte> buffer)
     {
         long remaining = _length - _position;
@@ -137,13 +144,13 @@ internal sealed class HandleStream : Stream
         }
         else if (buffer.Length >= BlockSize)
         {
-            n = RandomAccess.Read(_handle, buffer, _position);
+            n = ReadAt(buffer, _position);
         }
         else
         {
             _block ??= ArrayPool<byte>.Shared.Rent(BlockSize);
             _blockLength = 0;
-            int got = RandomAccess.Read(_handle, _block.AsSpan(0, BlockSize), _position);
+            int got = ReadAt(_block.AsSpan(0, BlockSize), _position);
             _blockStart = _position;
             _blockLength = got;
             n = Math.Min(buffer.Length, got);
@@ -206,8 +213,7 @@ internal sealed class MemoryImageSource : ImageSource
 
     public override Stream Open()
     {
-        GC.KeepAlive(_keepAlive);
-        return new ReadOnlyMemoryStream(_data);
+        return new ReadOnlyMemoryStream(_data, _keepAlive);
     }
 }
 
@@ -317,7 +323,20 @@ internal sealed class ReadOnlyMemoryStream : Stream
     private readonly ReadOnlyMemory<byte> _data;
     private int _position;
 
-    public ReadOnlyMemoryStream(ReadOnlyMemory<byte> data) => _data = data;
+    /// <param name="data">The bytes to read.</param>
+    /// <param name="owner">
+    /// What keeps <paramref name="data"/> valid (for example the <see cref="PooledBytes"/> that rents it). The stream references it for as long as
+    /// the stream is reachable: the owner's finalizer gives the buffer back to the pool, and a decode that outlives the image it started
+    /// from must not read a buffer another thread has since rented.
+    /// </param>
+    public ReadOnlyMemoryStream(ReadOnlyMemory<byte> data, object? owner = null)
+    {
+        _data = data;
+        Owner = owner;
+    }
+
+    /// <summary>Gets the object that keeps the bytes valid, or null when the caller owns them.</summary>
+    internal object? Owner { get; }
 
     /// <summary>Gets the bytes behind the stream, for decoders that read them in place instead of copying.</summary>
     public ReadOnlyMemory<byte> Data => _data;

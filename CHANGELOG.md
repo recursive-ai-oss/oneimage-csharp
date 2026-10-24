@@ -4,6 +4,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- A decode started from an image loaded with `Image.Load(Stream)` or `LoadAsync(Stream)` could read overwritten bytes if the `Image` became unreachable while the decode was still running (for example `Image.Load(stream).Save(...)` or `.ToArray<T>()` on a temporary). The compressed bytes of such an image live in a pooled buffer that is handed back to the pool when the image is collected, and the stream the decoder reads from did not keep that buffer alive; another thread could rent and overwrite it mid-read. Formats with checksums or strict structure (PNG, GIF, WebP, TIFF compression) then failed with a format error such as "Invalid DEFLATE block type", "Too many length or distance codes" or an Adler-32 mismatch; for data without redundancy (raw or lightly compressed pixels, JPEG coefficients) wrong pixels without an error were possible in principle. Present since 1.0.0. The stream now holds the buffer's owner. Loading from a file path or from memory you pass in (`ReadOnlyMemory<byte>`) is not affected by this.
+- Reads that return fewer bytes than asked for (pipes, network and FUSE file systems) were checked in every codec and in the file, stream and memory sources, with seeded short-read tests over PNG (all layouts, one and many IDAT chunks, interlaced, above and below the pipelined and streaming sizes), JPEG, TIFF, GIF, WebP, BMP and ICO; all decode to the same pixels as an ordinary read.
+
 ## [1.10.0] - 2026-10-24
 
 ### Changed
