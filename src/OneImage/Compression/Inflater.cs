@@ -682,6 +682,14 @@ internal sealed class Inflater : IDisposable
             bitcount |= 56;
             for (int k = 0; k < 3; k++)
             {
+                // The refill above guarantees 56 bits, which covers three literals or one whole length/distance pair, but not a
+                // literal followed by a pair (15 + 48 bits). A pair read from fewer than 48 bits would run past the bits that are
+                // counted: the count goes negative and the next refill shifts by it. Go back and refill instead.
+                if (bitcount < 48)
+                {
+                    break;
+                }
+
                 uint e = lit[(int)(bitbuf & LitMask)];
                 if ((e & HuffmanTable.TypeMask) == HuffmanTable.TypeSub)
                 {
