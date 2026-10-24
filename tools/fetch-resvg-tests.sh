@@ -16,5 +16,6 @@ if [[ ! -f "$dest/resvg.tgz" ]]; then
   curl -fsSL -o "$dest/resvg.tgz" "$url"
 fi
 echo "$sha256  $dest/resvg.tgz" | sha256sum -c - >/dev/null || { echo "checksum mismatch for $dest/resvg.tgz" >&2; exit 1; }
-tar -xzf "$dest/resvg.tgz" --strip-components=1 -C "$dest" "resvg-$commit/crates/resvg/tests"
+# The collection also carries the upstream Rust test sources; only the data files are used here.
+tar -xzf "$dest/resvg.tgz" --exclude='*.rs' --strip-components=1 -C "$dest" "resvg-$commit/crates/resvg/tests"
 echo "export ONEIMAGE_RESVG_TESTS=$dest/crates/resvg/tests"
