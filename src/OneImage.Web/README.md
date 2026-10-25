@@ -37,6 +37,6 @@ The ImageSharp.Web query names (`rmode`, `rsampler`, `xy`, `bgcolor` and so on) 
 - Providers for the web root, any folder and any `IFileProvider`, or your own; cache, cache key and hash are replaceable.
 - No reflection; trimmable and NativeAOT-compatible.
 
-[Full guide: commands, ImageSharp.Web compatibility, security defaults, caching](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/web.md)
+[Full guide: commands, ImageSharp.Web compatibility, security defaults, caching](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/web.md)
 
 License: MIT OR Apache-2.0.

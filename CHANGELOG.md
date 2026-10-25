@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-25
+
 ### Fixed
 
 - Valid PNG files could fail to decode, in every release from 1.0.0 to 1.10.0. The deflate decoder's fast loop could read a length/distance pair from bits it had not yet loaded when the pair followed a literal with a long code, which happens in files whose compressed data uses long codes for rare literals and for far, long matches (some optimizing encoders produce this; zlib and this library's own encoder did not in any test file). The stream then went out of step, and the read failed with "Invalid DEFLATE block type", "Stored block length check failed", "Invalid literal/length code", "Invalid scanline filter type", an Adler-32 mismatch, or an `ArgumentOutOfRangeException` from the data reader. The same decoder reads TIFF Deflate strips and tiles, PSD ZIP channels, SVGZ, WOFF tables and PNG `iCCP`/`zTXt` text, so those formats could fail the same way. The decoder now reloads its bits before such a pair.
@@ -202,7 +204,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.0...v1.8.1

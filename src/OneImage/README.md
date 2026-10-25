@@ -13,9 +13,9 @@ How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (log scale, higher is better; slower tasks and ties are
 marked):
 
-![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.10.0/docs/img/oneimage-hero-light.svg)
+![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.10.1/docs/img/oneimage-hero-light.svg)
 
-[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/performance.md)
+[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/performance.md)
 
 ## Install
 
@@ -49,7 +49,13 @@ Image.Load("in.png").Save("out.jpg", new SaveOptions { EncoderOptions = new Jpeg
 The format of `Save` follows the file extension. For streams and buffer
 writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
-## What is new in 1.10.0
+## What is new in 1.10.1
+
+- **Fixed: valid PNG files could fail to decode** (every release since 1.0.0). The deflate decoder could go out of step on compressed data that uses long codes, which some optimizing encoders produce, and the read then failed with a format error. TIFF Deflate, PSD ZIP, SVGZ and WOFF use the same decoder. In tests, whole-image reads of affected files always failed rather than returning wrong pixels. A crop, region or band read could, rarely, return wrong pixels in its last rows. See the changelog for the measurements.
+- Complete reads of deflate data now verify the checksum when it is present: a wrong checksum is an error, while a missing or cut-short one after complete data is still accepted. Reads of part of a PNG cannot verify it and are covered by the chunk CRCs only.
+- Fixed: an image loaded from a `Stream` could have its compressed bytes recycled while a decode was still reading them.
+
+## What was new in 1.10.0
 
 - **Text builds on [OneFont](https://github.com/recursive-ai-oss/onefont-csharp).** `RecursiveAI.OneImage.Text` now uses `RecursiveAI.OneFont` 1.2 or later for font parsing, OpenType shaping, bidi and line breaking instead of its own copy. Rendering is byte for byte the same, measuring a paragraph allocates about 40% less, and the public API is unchanged.
 - Fixed: `TextShaping.ShapeRun` clusters no longer leave gaps when the shaper drops characters, and a character mapped past the font's glyph count is drawn as the missing glyph.
@@ -72,22 +78,22 @@ writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
 ## Learn more
 
-- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/guide.md): the lazy model, errors, operations,
+- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/guide.md): the lazy model, errors, operations,
   `Canvas`, metadata, color, animation, limits, AOT and trimming.
-- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/layers.md): layered documents that render on demand, with
+- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/layers.md): layered documents that render on demand, with
   incremental re-rendering and an optional disk-spill store. Photoshop files
   load into them through the separate `RecursiveAI.OneImage.Psd` package
-  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/psd.md)).
-- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/migrating.md)
-- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/comparison.md), including where the
+  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/psd.md)).
+- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/migrating.md)
+- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/comparison.md), including where the
   others are the better fit
-- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/docs/performance.md)
-- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/CHANGELOG.md) and
-  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/SECURITY.md)
+- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/docs/performance.md)
+- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/CHANGELOG.md) and
+  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/SECURITY.md)
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/LICENSE-MIT) or
-[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.0/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/LICENSE-MIT) or
+[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.1/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.
