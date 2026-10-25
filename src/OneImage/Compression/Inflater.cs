@@ -235,6 +235,33 @@ internal sealed class Inflater : IDisposable
         }
     }
 
+    /// <summary>True once the end of the stream (including the zlib trailer, checked against the Adler-32 of the output) was read.</summary>
+    public bool IsDone => _state == State.Done;
+
+    /// <summary>
+    /// Runs the stream to its end, discarding any further output, so the zlib trailer is read and its Adler-32 is checked. Callers
+    /// that stop asking for output once they hold every byte they expect use this to turn "the expected bytes came out" into
+    /// "the whole stream is intact". Returns <see cref="InflateStatus.Done"/> or <see cref="InflateStatus.NeedInput"/> when
+    /// <paramref name="input"/> ends first; <paramref name="consumed"/> is as for <see cref="Inflate"/>.
+    /// </summary>
+    /// <exception cref="ImageFormatException">The rest of the stream is invalid or its checksum does not match.</exception>
+    /// <exception cref="ImageLimitException">The excess output exceeds a configured limit.</exception>
+    public InflateStatus Drain(ReadOnlySpan<byte> input, out int consumed)
+    {
+        Span<byte> discard = stackalloc byte[512];
+        int used = 0;
+        while (true)
+        {
+            InflateStatus status = Inflate(input[used..], discard, out int c, out _);
+            used += c;
+            if (status != InflateStatus.NeedOutput)
+            {
+                consumed = used;
+                return status;
+            }
+        }
+    }
+
     private void PushBack(ref int ip)
     {
         // Whole bytes left in the bit buffer after the last needed bit belong to whatever follows the stream.

@@ -115,7 +115,7 @@ internal static class PngImageReader
                         }
                     }
 
-                    reader.VerifyCurrentChunk();
+                    CompleteOrVerify(reader, rows == h);
                     return;
                 }
 
@@ -129,7 +129,7 @@ internal static class PngImageReader
 
                 if (rows == h)
                 {
-                    reader.VerifyCurrentChunk();
+                    reader.Complete();
                 }
 
                 return;
@@ -171,7 +171,7 @@ internal static class PngImageReader
                 }
             }
 
-            reader.VerifyCurrentChunk();
+            reader.Complete();
             target.Rows(0, frame.AsSpan(0, (int)frameBytes), h);
         }
         finally
@@ -194,6 +194,19 @@ internal static class PngImageReader
             ContainerIo.Return(ref prev);
             ContainerIo.Return(ref outBuf);
             ContainerIo.Return(ref frame);
+        }
+    }
+
+    // A read of every row can check the whole zlib stream; a read that stops early holds only part of it.
+    private static void CompleteOrVerify(PngDataReader reader, bool wholeImage)
+    {
+        if (wholeImage)
+        {
+            reader.Complete();
+        }
+        else
+        {
+            reader.VerifyCurrentChunk();
         }
     }
 

@@ -4,3 +4,5 @@ tests/testdata/resvg/** binary
 tests/testdata/psd/** binary
 tests/testdata/jbig2/** binary
 testdata/pdf/** binary
+tests/testdata/png/pages/** binary
+tests/testdata/compression/valid-long-codes-* binary

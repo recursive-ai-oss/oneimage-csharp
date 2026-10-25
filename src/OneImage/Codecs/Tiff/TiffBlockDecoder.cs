@@ -167,7 +167,25 @@ internal static class TiffBlockDecoder
             case TiffCodec.Deflate:
             {
                 Inflater inf = CodecCache.RentInflater(zlib: true, raw.Length + 8192L, limits.MaxExpansionRatio);
-                Pump(input, raw, (i, o, out c, out w) => inf.Inflate(i, o, out c, out w));
+                int used = Pump(input, raw, (i, o, out c, out w) => inf.Inflate(i, o, out c, out w));
+
+                // The strip holds every byte asked for, but the zlib trailer (Adler-32) has not been read yet. A strip is always
+                // decoded whole, so run the stream to its end and check it.
+                if (!inf.IsDone)
+                {
+                    try
+                    {
+                        if (inf.Drain(input[used..], out _) != InflateStatus.Done)
+                        {
+                            throw new ImageFormatException("A Deflate TIFF strip or tile ends before its zlib trailer.");
+                        }
+                    }
+                    catch (ImageLimitException)
+                    {
+                        // More data than the block holds: the block is complete and the excess was always ignored; it stays unchecked.
+                    }
+                }
+
                 CodecCache.Return(inf);
                 break;
             }
@@ -202,7 +220,7 @@ internal static class TiffBlockDecoder
 
     private delegate InflateStatus Step(ReadOnlySpan<byte> input, Span<byte> output, out int consumed, out int written);
 
-    private static void Pump(ReadOnlySpan<byte> input, Span<byte> raw, Step step)
+    private static int Pump(ReadOnlySpan<byte> input, Span<byte> raw, Step step)
     {
         int ip = 0;
         int op = 0;
@@ -213,7 +231,7 @@ internal static class TiffBlockDecoder
             op += w;
             if (op >= raw.Length)
             {
-                return;
+                return ip;
             }
 
             if (s == InflateStatus.Done || (s == InflateStatus.NeedInput && ip >= input.Length) || (c == 0 && w == 0))
@@ -221,6 +239,8 @@ internal static class TiffBlockDecoder
                 throw new ImageFormatException("A compressed TIFF strip or tile ended before all of its data was decoded.");
             }
         }
+
+        return ip;
     }
 
     private static void Undo(TiffFrame f, Span<byte> raw, int rowBytes, bool bigEndian)

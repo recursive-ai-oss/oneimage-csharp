@@ -187,10 +187,26 @@ internal sealed class ChannelReader
     {
         byte[] output = new byte[total];
         using var inflater = new Inflater(true, total, imageLimits.MaxExpansionRatio);
-        InflateStatus status = inflater.Inflate(packed, output, out _, out int written);
+        InflateStatus status = inflater.Inflate(packed, output, out int used, out int written);
         if (status == InflateStatus.NeedInput || written < total)
         {
             throw new ImageFormatException("ZIP-compressed channel data ends early.");
+        }
+
+        // The channel is complete, but the zlib trailer may not have been read yet: run the stream to its end so its Adler-32 is checked.
+        if (status != InflateStatus.Done)
+        {
+            try
+            {
+                if (inflater.Drain(packed.AsSpan(used), out _) != InflateStatus.Done)
+                {
+                    throw new ImageFormatException("ZIP-compressed channel data ends before its zlib trailer.");
+                }
+            }
+            catch (ImageLimitException)
+            {
+                // More data than the channel holds: the channel is complete and the excess was always ignored; it stays unchecked.
+            }
         }
 
         if (predictor)

@@ -65,6 +65,45 @@ internal sealed class PngDataReader : IDisposable
     }
 
     /// <summary>
+    /// Called once every row of the image has been read: runs the zlib stream to its end so the Adler-32 trailer is checked, then
+    /// checks the CRC of the chunk the last byte came from. Without this a read that stops at the last row never sees the trailer.
+    /// Reads that stop early (a band, a window) cannot call it: they hold only part of the stream, so only the chunks they read
+    /// are covered, by the chunk CRCs alone.
+    /// </summary>
+    /// <exception cref="ImageFormatException">The stream is damaged, its checksum differs, or it ends before its trailer.</exception>
+    public void Complete()
+    {
+        Inflater inflater = _inflater ?? throw new ObjectDisposedException(nameof(PngDataReader));
+        byte[] input = _in!;
+        try
+        {
+            while (!inflater.IsDone)
+            {
+                if (_inPos == _inLen && !_inputDone && !Fill())
+                {
+                    _inputDone = true;
+                    _inPos = _inLen = 0;
+                }
+
+                InflateStatus status = inflater.Drain(input.AsSpan(_inPos, _inLen - _inPos), out int consumed);
+                _inPos += consumed;
+                if (status == InflateStatus.NeedInput && _inputDone)
+                {
+                    throw new ImageFormatException("The image data ends before the end of its zlib stream.");
+                }
+            }
+        }
+        catch (ImageLimitException)
+        {
+            // The stream carries far more data than the image holds. Every row is already decoded and the extra bytes were never
+            // asked for (they are ignored, as before), so a stream that cannot be run to its end within the limits is not a reason
+            // to refuse the image; its trailer just stays unchecked.
+        }
+
+        VerifyCurrentChunk();
+    }
+
+    /// <summary>
     /// Reads the rest of the chunk the last byte came from and checks its CRC, so a damaged chunk is noticed even when
     /// every row was complete before its end.
     /// </summary>
