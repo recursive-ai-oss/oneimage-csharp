@@ -188,7 +188,7 @@ internal sealed class ChannelReader
         byte[] output = new byte[total];
         using var inflater = new Inflater(true, total, imageLimits.MaxExpansionRatio);
         InflateStatus status = inflater.Inflate(packed, output, out int used, out int written);
-        if (status == InflateStatus.NeedInput || written < total)
+        if (written < total)
         {
             throw new ImageFormatException("ZIP-compressed channel data ends early.");
         }
@@ -198,10 +198,8 @@ internal sealed class ChannelReader
         {
             try
             {
-                if (inflater.Drain(packed.AsSpan(used), out _) != InflateStatus.Done)
-                {
-                    throw new ImageFormatException("ZIP-compressed channel data ends before its zlib trailer.");
-                }
+                // A trailer that is cut short or missing is accepted (the channel is complete); one that is present and wrong throws.
+                _ = inflater.Drain(packed.AsSpan(used), out _);
             }
             catch (ImageLimitException)
             {

@@ -446,7 +446,7 @@ public class InflateSplitTests
     }
 
     [Fact]
-    public void WholeReadChecksTheZlibTrailer()
+    public void WholeReadRejectsAWrongTrailer()
     {
         byte[] png = Page("page-a.png");
         byte[] z = IdatPayload(png);
@@ -459,8 +459,139 @@ public class InflateSplitTests
             Assert.Throws<ImageFormatException>(() => PngTestUtil.Decode(WithIdat(png, bad, chunk)));
         }
 
-        // A stream cut before its trailer is incomplete too.
-        Assert.Throws<ImageFormatException>(() => PngTestUtil.Decode(WithIdat(png, z[..^4])));
+        // Every one of the four trailer bytes is compared.
+        for (int i = 1; i <= 4; i++)
+        {
+            byte[] bad2 = (byte[])z.Clone();
+            bad2[^i] ^= 0x80;
+            Assert.Throws<ImageFormatException>(() => PngTestUtil.Decode(WithIdat(png, bad2)));
+        }
+    }
+
+    [Fact]
+    public void PngWithAMissingOrCutShortTrailerIsAcceptedWithCorrectPixels()
+    {
+        // Every row is there and the file ends right after the data, or after 1 to 3 trailer bytes; IEND and the chunk CRCs are intact.
+        byte[] png = Page("page-a.png");
+        byte[] z = IdatPayload(png);
+        byte[] expected = PngTestUtil.Decode(Restored(png)).Data;
+        for (int present = 0; present <= 3; present++)
+        {
+            byte[] cut = z[..^(4 - present)];
+            AssertSame(expected, PngTestUtil.Decode(WithIdat(png, cut)).Data, $"{present} trailer bytes present");
+
+            // The few trailer bytes that are there arrive in a later chunk / a later refill of the input buffer.
+            for (int split = 1; split <= 3 && cut.Length - split > 0; split++)
+            {
+                AssertSame(expected, PngTestUtil.Decode(WithTwoChunks(png, cut, cut.Length - split)).Data, $"{present} trailer bytes, chunks cut {split} before the end");
+            }
+        }
+
+        // Pipelined (large) and interlaced-style paths take the same route: the other page is above the pipeline threshold.
+        byte[] big = Page("page-b.png");
+        byte[] bz = IdatPayload(big);
+        byte[] bigExpected = PngTestUtil.Decode(Restored(big)).Data;
+        for (int present = 0; present <= 3; present++)
+        {
+            AssertSame(bigExpected, PngTestUtil.Decode(WithIdat(big, bz[..^(4 - present)])).Data, $"page-b, {present} trailer bytes present");
+        }
+    }
+
+    [Fact]
+    public void PngMissingTrailerAndWrongTrailerAreToldApart()
+    {
+        // Four bytes present and different from the checksum is corruption, wherever the chunk boundaries fall.
+        byte[] png = Page("page-a.png");
+        byte[] z = IdatPayload(png);
+        for (int split = 1; split <= 5; split++)
+        {
+            byte[] bad = (byte[])z.Clone();
+            bad[^1] ^= 0x01;
+            Assert.Throws<ImageFormatException>(() => PngTestUtil.Decode(WithTwoChunks(png, bad, bad.Length - split)));
+        }
+    }
+
+    // --- TIFF Deflate -------------------------------------------------------------------------------------------------------
+
+    private static byte[] OneStripTiff(byte[] zlib, int rows)
+    {
+        using var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        w.Write((byte)'I');
+        w.Write((byte)'I');
+        w.Write((ushort)42);
+        w.Write(8u);
+        w.Write(zlib);
+        if ((ms.Length & 1) != 0)
+        {
+            w.Write((byte)0);
+        }
+
+        uint ifd = (uint)ms.Length;
+        (ushort Tag, ushort Type, uint Value)[] entries =
+        [
+            (256, 3, 1), (257, 3, (uint)rows), (258, 3, 8), (259, 3, 8), (262, 3, 1), (273, 4, 8), (277, 3, 1), (278, 4, (uint)rows), (279, 4, (uint)zlib.Length),
+        ];
+        _ = ifd;
+        w.Write((ushort)entries.Length);
+        foreach ((ushort tag, ushort type, uint value) in entries)
+        {
+            w.Write(tag);
+            w.Write(type);
+            w.Write(1u);
+            w.Write(value);
+        }
+
+        w.Write(0u);
+        w.Flush();
+        byte[] file = ms.ToArray();
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), ifd);
+        return file;
+    }
+
+    [Fact]
+    public void TiffDeflateStripTrailerRules()
+    {
+        byte[] data = CompressionTestUtil.ImageLike(100, 30, 9)[..3000];
+        byte[] z = CompressionTestUtil.SystemCompress(data, CompressionLevel.Optimal, true);
+        Assert.Equal(data, Image.Load(OneStripTiff(z, data.Length)).ToArray<Gray8>().Select(p => p.V).ToArray());
+
+        for (int present = 0; present <= 3; present++)
+        {
+            byte[] cut = z[..^(4 - present)];
+            Assert.Equal(data, Image.Load(OneStripTiff(cut, data.Length)).ToArray<Gray8>().Select(p => p.V).ToArray());
+        }
+
+        byte[] bad = (byte[])z.Clone();
+        bad[^1] ^= 0x01;
+        Assert.Throws<ImageFormatException>(() => Image.Load(OneStripTiff(bad, data.Length)).ToArray<Gray8>());
+    }
+
+    // --- iCCP / compressed text ------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ProfileChunkWithABadOrMissingTrailerIsDroppedAndTheImageStillLoads()
+    {
+        byte[] profile = CompressionTestUtil.Random(300, 21);
+        byte[] z = MiniPng.Zlib(profile);
+        byte[] raw = MiniPng.RawRgba(MiniPng.Rgba(2, 2, 1, 2, 3, 4), 2, 2);
+        byte[] pixels = MiniPng.Rgba(2, 2, 1, 2, 3, 4);
+
+        ReadOnlyMemory<byte> Profile(byte[] zlib)
+        {
+            byte[] file = MiniPng.Plain(2, 2, 8, 6, raw, MiniPng.Chunk("iCCP", [.. "p\0\0"u8, .. zlib]));
+            Assert.Equal(pixels, PngTestUtil.Decode(file).Data);
+            return PngFormat.Instance.Decoder!.ReadInfo(new MemoryStream(file), ImageLimits.Default).Metadata.IccProfile;
+        }
+
+        Assert.Equal(profile.Length, Profile(z).Length);
+        byte[] bad = (byte[])z.Clone();
+        bad[^1] ^= 0x01;
+        Assert.True(Profile(bad).IsEmpty, "wrong Adler-32: profile dropped");
+        foreach (int present in new[] { 0, 1, 2, 3 })
+        {
+            Assert.True(Profile(z[..^(4 - present)]).IsEmpty, $"{present} trailer bytes: profile dropped");
+        }
     }
 
     [Fact]

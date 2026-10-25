@@ -172,6 +172,13 @@ internal static class FontFile
                     break;
                 }
 
+                if (status == InflateStatus.NeedInput && outPos == originalLength)
+                {
+                    // Every byte of the table is there and the zlib trailer is missing or cut short: accepted. A complete trailer
+                    // that does not match has already thrown.
+                    break;
+                }
+
                 if (status == InflateStatus.NeedInput || (status == InflateStatus.NeedOutput && outPos >= originalLength))
                 {
                     throw new FontFormatException("A WOFF table is truncated or longer than declared.");

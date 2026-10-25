@@ -70,7 +70,7 @@ internal sealed class PngDataReader : IDisposable
     /// Reads that stop early (a band, a window) cannot call it: they hold only part of the stream, so only the chunks they read
     /// are covered, by the chunk CRCs alone.
     /// </summary>
-    /// <exception cref="ImageFormatException">The stream is damaged, its checksum differs, or it ends before its trailer.</exception>
+    /// <exception cref="ImageFormatException">The rest of the stream is damaged, or its four-byte Adler-32 trailer is complete and differs.</exception>
     public void Complete()
     {
         Inflater inflater = _inflater ?? throw new ObjectDisposedException(nameof(PngDataReader));
@@ -89,7 +89,10 @@ internal sealed class PngDataReader : IDisposable
                 _inPos += consumed;
                 if (status == InflateStatus.NeedInput && _inputDone)
                 {
-                    throw new ImageFormatException("The image data ends before the end of its zlib stream.");
+                    // Every row is decoded, but the file ends before the Adler-32 trailer is complete (none, or 1 to 3 of its bytes).
+                    // Browsers and most decoders show such images, and earlier releases did too, so this is not an error. A trailer
+                    // that is present in full and does not match is corruption and has already thrown above.
+                    break;
                 }
             }
         }

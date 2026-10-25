@@ -175,10 +175,8 @@ internal static class TiffBlockDecoder
                 {
                     try
                     {
-                        if (inf.Drain(input[used..], out _) != InflateStatus.Done)
-                        {
-                            throw new ImageFormatException("A Deflate TIFF strip or tile ends before its zlib trailer.");
-                        }
+                        // A trailer that is cut short or missing is accepted (the block is complete); one that is present and wrong throws.
+                        _ = inf.Drain(input[used..], out _);
                     }
                     catch (ImageLimitException)
                     {

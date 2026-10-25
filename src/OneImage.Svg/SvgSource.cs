@@ -73,8 +73,9 @@ internal static class SvgSource
     }
 
     /// <summary>
-    /// Decompresses a single-member gzip stream (RFC 1952). With <paramref name="strict"/> the whole member must be present and
-    /// its CRC-32 and size trailer must match; otherwise decoding stops quietly at <paramref name="maxBytes"/> or at the end of the input.
+    /// Decompresses a single-member gzip stream (RFC 1952). With <paramref name="strict"/> the deflate data must be complete and
+    /// the CRC-32 and size trailer must match as far as it is present (a missing or cut-short trailer is accepted); otherwise decoding
+    /// stops quietly at <paramref name="maxBytes"/> or at the end of the input.
     /// </summary>
     internal static byte[] Gunzip(ReadOnlySpan<byte> gz, int maxBytes, double maxRatio, bool strict, out bool truncated)
     {
@@ -134,10 +135,11 @@ internal static class SvgSource
 
         if (strict)
         {
+            // The deflate data ended properly, so the document is complete. A trailer that is missing or cut short is accepted
+            // (other readers show such files); the parts that are present must match.
             ReadOnlySpan<byte> trailer = gz[pos..];
-            if (trailer.Length < 8
-                || BinaryPrimitives.ReadUInt32LittleEndian(trailer) != Crc32.Update(0, buf.AsSpan(0, len))
-                || BinaryPrimitives.ReadUInt32LittleEndian(trailer[4..]) != (uint)len)
+            if ((trailer.Length >= 4 && BinaryPrimitives.ReadUInt32LittleEndian(trailer) != Crc32.Update(0, buf.AsSpan(0, len)))
+                || (trailer.Length >= 8 && BinaryPrimitives.ReadUInt32LittleEndian(trailer[4..]) != (uint)len))
             {
                 throw new ImageFormatException("The gzip checksum does not match.");
             }
