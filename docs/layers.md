@@ -50,7 +50,7 @@ Layers are created by the document (`CreatePixelLayer`, `CreateGroup`, `CreateFi
 For every output tile, the renderer folds the layers over the background from the bottom up. Each step is the same code as `Image.Composite(overlay, x, y, opacity, linear: false, blend, alpha)`:
 
 - **Stack equals chain.** A stack of pixel layers renders to exactly the bytes of the equivalent chain of `Composite` calls (checked for every blend mode, with and without alpha in the background). Layers use source-over coverage with their `BlendMode` colors (the W3C rule `Cs' = (1 − αb)·Cs + αb·B(Cb, Cs)`), computed on premultiplied float, rounded half up on output.
-- **Opacity.** The effective opacity is `Opacity × FillOpacity` (a float product). The model has no layer styles, so the two are interchangeable; Photoshop treats a few blend modes differently under fill opacity, and this model does not.
+- **Opacity.** The effective opacity is `Opacity × FillOpacity` (a float product). Without a layer style the two are interchangeable (a style's effects follow the opacity, while fill opacity scales only the pixels and overlays; see [Layer styles](#layer-styles)); Photoshop treats a few blend modes differently under fill opacity, and this model does not.
 - **Hidden and empty.** Invisible layers and layers with zero effective opacity are skipped; a layer whose pixels (or whose sparse canvas tiles) cannot touch a tile costs nothing for that tile.
 - **Linear light.** `DocumentOptions.BlendInLinearLight` makes every compositing step behave like `Composite(..., linear: true)`: both sides go to linear light, blend there, and come back. The default blends the stored values, as image editors do.
 
@@ -74,7 +74,7 @@ A layer with `ClipToBelow = true` is drawn only where the nearest layer below it
 The edge cases, and where they follow Photoshop and where they do not:
 
 - **Hidden base.** A hidden base, or one with zero opacity, hides everything clipped to it, whatever the clipped layers' own settings. Photoshop does the same: the base's visibility is the clipping group's visibility. A hidden *clipped* layer is skipped and the run goes on.
-- **Fill opacity of the base.** The model has no layer styles, so `FillOpacity` multiplies into the opacity of the whole clipping group. Photoshop applies a base's fill opacity to the base's own pixels only (the usual trick of fill 0% on the base to show just the clipped layers, which needs the "blend clipped layers as group" option off). That is a deliberate difference; an "off" mode is not modelled.
+- **Fill opacity of the base.** `FillOpacity` multiplies into the opacity of the whole clipping group. Photoshop applies a base's fill opacity to the base's own pixels only (the usual trick of fill 0% on the base to show just the clipped layers, which needs the "blend clipped layers as group" option off). That is a deliberate difference; an "off" mode is not modelled.
 - **No base.** A clipped layer at the bottom of its group, or after an adjustment layer (which cannot be a base), is drawn as an ordinary layer.
 - **Group as the base.** Layers clipped to a group clip to the group's composited shape; the group is drawn on its own surface (isolated), whatever its pass-through setting, and its blend mode, opacity and mask are the clipping group's. Photoshop allows a group as a base.
 - **Group clipped to a base.** Photoshop cannot clip a group (only layers); the flag exists in PSD files written by other tools, so it is handled here as an extension. An *isolated* group is composited on its own and drawn onto the surface source-atop with the group's blend mode, opacity and mask. A *pass-through* group has no surface of its own: its layers are drawn onto the clipping surface one after another, each as if it were clipped to the base (a child's blend mode sees what is already on the surface, an adjustment inside adjusts the surface), so at full opacity and no mask it is bit-identical to the same layers clipped one by one. Below full opacity, or with a mask, the result is mixed with the surface as it was before the group. A child's own `ClipToBelow` is ignored inside such a group, because every child is clipped to the base.
@@ -133,7 +133,7 @@ Console.WriteLine(doc.SpillStatistics);   // tiles written/read, resident and fi
 
 `Document.Describe()` and `Layer.Describe()` return a `LayerDescription`: a kind (`document`, `pixel`, `group`, `fill`, `adjustment`), parameters whose values are only `long`, `double`, `bool` or `string`, and the children of a group. Names are lower-case and hyphenated: `name`, `visible`, `opacity`, `fill-opacity`, `blend` (`multiply`, `color-dodge`, … or `pass-through`), `clip-to-below`, `lock-transparent-pixels`, `lock-pixels`, `lock-position`, `x`, `y`, `width`, `height`, `mask-x`, `mask-y`, `mask-width`, `mask-height`, `mask-outside`, `mask-density`, `mask-feather`, `mask-enabled`, `pass-through`, `brush.*`, `adjustment` and `adjustment.*`. Pixels are not part of a description.
 
-## What a PSD reader or writer would map onto
+## What the PSD reader and writer map onto
 
 | PSD concept | Here |
 |---|---|
@@ -145,7 +145,8 @@ Console.WriteLine(doc.SpillStatistics);   // tiles written/read, resident and fi
 | Solid color and gradient fill layers | `FillLayer` |
 | Adjustment layers (levels, curves, hue/saturation, …) | `AdjustmentLayer` with the matching `Adjustment` |
 | Document size, depth, color mode, profile | `Document` size, `DocumentOptions.Format` and `ColorProfile` |
-| Layer effects, smart objects, text layers | not modeled |
+| Layer effects | `LayerStyle` (see [layer styles](#layer-styles)); [OneImage.Psd](psd.md#layer-effects) reads and writes them |
+| Smart objects, text layers | not modeled |
 
 ## Limits and edge behavior
 

@@ -42,7 +42,7 @@ check theirs before you decide. Performance numbers are on the
 | Formats we use it for | PNG, JPEG, WebP, GIF, TIFF, BMP, ICO | JPEG, PNG, GIF, BMP, TIFF, WebP and a few more | JPEG, PNG, WebP, GIF, BMP decode, more through Skia | well over a hundred | what your libvips build includes |
 | ICC color management | ICC v2/v4 profiles, CMYK to sRGB, four intents | did not convert in our CMYK task | color spaces via Skia | LittleCMS | LittleCMS |
 | NativeAOT and trimming | supported, checked in CI | see its documentation | see its documentation | see its documentation | see its documentation |
-| Drawing, text, vectors | no | via the separate Drawing and Fonts packages | yes, a drawing engine | yes | limited |
+| Drawing, text, vectors | paths, brushes, strokes and layers in the core package; text in the separate OneImage.Text package | via the separate Drawing and Fonts packages | yes, a drawing engine | yes | limited |
 | Thumbnail a large JPEG | decodes at reduced scale, bounded memory | decodes with a target size | scaled decode | `jpeg:size` hint | `thumbnail` shrink-on-load |
 
 Notes on the table:
@@ -83,12 +83,15 @@ Notes on the table:
   dependency, use NetVips. Its dedicated resize is also ahead of ours
   when downscaling an already decoded image.
 - **Magick.NET covers far more formats and operations.** If you need
-  HEIC, AVIF, JPEG XL, JPEG 2000, PSD, camera RAW, PDF or SVG input,
+  HEIC, AVIF, JPEG XL, JPEG 2000 or camera RAW input,
   or ImageMagick's long tail of operations, OneImage does not have it.
-  OneImage reads and writes PNG, JPEG, WebP, GIF, TIFF, BMP and ICO only.
+  OneImage reads and writes PNG, JPEG, WebP, GIF, TIFF, BMP and ICO; PSD
+  and PSB ([OneImage.Psd](psd.md)), PDF ([OneImage.Pdf](pdf.md)) and SVG
+  ([OneImage.Svg](svg.md)) come as add-on packages.
 - **SkiaSharp is a drawing engine.** Paths, text, gradients, GPU
-  surfaces and UI integration are Skia's job. OneImage has no text and
-  no drawing yet, and no layers beyond a normal-mode `Composite`. SkiaSharp also decodes
+  surfaces and UI integration are Skia's job. OneImage has vector
+  [drawing](drawing.md) and [layers](layers.md) in the core package and
+  text in [OneImage.Text](text.md). SkiaSharp also decodes
   our 50-frame GIF test in less than half the time.
 - **ImageSharp has a larger ecosystem of processors and a longer
   record,** and its Drawing and Fonts packages cover shapes, gradients and text, including complex-script shaping and right-to-left layout. If
@@ -105,7 +108,6 @@ Notes on the table:
 
 Compared with ImageSharp 3.1.12 and its Drawing 2.1.7, Fonts 2.1.3 and Web 3.2.0 packages (the last releases that build without a license key), OneImage does not have yet:
 
-- **Drawing and text:** shapes and paths with boolean operations, fills and strokes (dashes, joins, caps), solid, gradient, pattern and image brushes, clipping to a path, and text (OpenType shaping, bidirectional layout, font fallback, COLR color fonts, text along a path). Coming soon.
 - **Effects:** the public integral image (`CalculateIntegralImage`). Coming soon.
 - **Formats:** TGA, PBM and QOI. Not planned.
 

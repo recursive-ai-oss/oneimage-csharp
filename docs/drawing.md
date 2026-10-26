@@ -269,7 +269,7 @@ Speed (local smoke result, 2000 x 2000 RGBA, .NET 10.0.11, X64 AVX-512 host, sha
 | `ctx.DrawLine`, `DrawPolygon`, `DrawBeziers`, `Draw(pen, new RectangularPolygon(...))` | `DrawLine`, `DrawPolygon`, `DrawPolyline`, `DrawBeziers`, `DrawRectangle`, `DrawEllipse` |
 | `path.GenerateOutline(width, pattern, isClosed, joint, endcap)` | `path.GenerateOutline(pen)` / `path.GenerateOutline(width, join, cap, miterLimit, dashPattern, dashOffset)` |
 
-Not yet: text.
+Text: see [text.md](text.md#imagesharp-names) (`RecursiveAI.OneImage.Text`).
 
 ## Extending
 
