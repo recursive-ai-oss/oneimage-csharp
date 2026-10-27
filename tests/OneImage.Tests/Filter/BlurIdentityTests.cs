@@ -71,13 +71,33 @@ public class BlurIdentityTests
 
     private static string Hash(Image image, string format)
     {
-        byte[] bytes = format switch
+        var bytes = new List<byte>();
+        switch (format)
         {
-            "Rgba32" => System.Runtime.InteropServices.MemoryMarshal.AsBytes(image.ToArray<Rgba32>().AsSpan()).ToArray(),
-            "Gray16" => System.Runtime.InteropServices.MemoryMarshal.AsBytes(image.ToArray<Gray16>().AsSpan()).ToArray(),
-            _ => System.Runtime.InteropServices.MemoryMarshal.AsBytes(image.ToArray<GrayFloat>().AsSpan()).ToArray(),
-        };
-        return Convert.ToHexString(SHA256.HashData(bytes))[..16];
+            case "Rgba32":
+                foreach (Rgba32 p in image.ToArray<Rgba32>())
+                {
+                    bytes.AddRange([p.R, p.G, p.B, p.A]);
+                }
+
+                break;
+            case "Gray16":
+                foreach (Gray16 p in image.ToArray<Gray16>())
+                {
+                    bytes.AddRange(BitConverter.GetBytes(p.V));
+                }
+
+                break;
+            default:
+                foreach (GrayFloat p in image.ToArray<GrayFloat>())
+                {
+                    bytes.AddRange(BitConverter.GetBytes(p.V));
+                }
+
+                break;
+        }
+
+        return Convert.ToHexString(SHA256.HashData(bytes.ToArray()))[..16];
     }
 
     private static IEnumerable<(string Key, Func<Image, Image> Apply)> Operations(int w, int h)

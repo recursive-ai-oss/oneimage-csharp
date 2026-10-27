@@ -36,7 +36,15 @@ public sealed partial class Image
     /// down by f = ceil(σ / 4) (in its own pixel format, in the working space), blurred exactly in float with σ / f, and
     /// enlarged back with Catmull-Rom. On a streaming source the reduced copy (1/f² of the pixels, so 4% of the frame at σ = 20 and
     /// 0.07% at σ = 150) is read once, top to bottom, and kept for the life of the image; everything else still streams. The result stays within a
-    /// few 8-bit levels of the exact blur on photographic content (on a test pattern with hard edges and noise: mean difference 0.2 level at 03c3 = 20 and 0.8 at 03c3 = 45, worst pixel 12). Results are identical for any thread count or tile order. Animated images blur every frame.
+    /// few 8-bit levels of the exact blur on photographic content (on a test pattern with hard edges and noise: mean difference 0.2 level at σ = 20 and 0.8 at σ = 45, worst pixel 12). Results are identical for any thread count or tile order. Animated images blur every frame.
+    /// </para>
+    /// <para>
+    /// <b>Sigma much larger than the image.</b> The reduction cannot go below one pixel per axis, so it is not used on an axis shorter
+    /// than σ / 16 (any finite sigma is accepted, however small the image). That axis is blurred directly, in float, and rounded once
+    /// at the end. Up to 127 pixels long (and σ up to about 1.4 million) it is exact: the kernel's taps beyond the edge are folded onto the
+    /// image the way the edge mode reads them. A longer axis, or a larger sigma, uses the kernel's closed form, which treats its weights as
+    /// equal across the image; that differs from the exact blur by under 0.1 level at 8 bits (under 0.01 measured). The other axis of such an
+    /// image keeps the approximation above, except that it is computed exactly when the kernel times the pixel count stays under 2²⁸.
     /// </para>
     /// </summary>
     /// <param name="sigma">Standard deviation in pixels, finite and not negative.</param>
@@ -59,7 +67,10 @@ public sealed partial class Image
     /// Box blur (lazy): every output pixel is the mean of the (2r+1) × (2r+1) window around it, computed as two 1-D passes.
     /// Working space, edge handling, rounding, locality and animation behave as for <see cref="GaussianBlur"/>.
     /// For radius above 48 the blur is approximated by box-averaging down, blurring with radius ≈ r / f and enlarging with Catmull-Rom
-    /// (f = ceil(r / 16)); the window width then differs from 2r+1 by at most about 2%.
+    /// (f = ceil(r / 16)); the window width then differs from 2r+1 by at most about 2%. When the radius is so large that the reduction
+    /// would collapse the image to a single pixel and still be too wide (the window then covers the image dozens of times), both axes
+    /// are blurred directly instead, exactly for axes up to 127 pixels and by the kernel's closed form for longer ones (see
+    /// <see cref="GaussianBlur"/>).
     /// </summary>
     /// <param name="radius">Window radius in pixels, at least 1 and at most 4096.</param>
     /// <param name="linear">Filter in linear light. Defaults to <see langword="true"/>.</param>
@@ -77,8 +88,8 @@ public sealed partial class Image
 
     /// <summary>
     /// Unsharp mask (lazy): <c>out = in + amount × (in − blur(in))</c> per color channel, where the blur is a Gaussian of standard
-    /// deviation <paramref name="radius"/> (see <see cref="GaussianBlur"/> for its kernel, edges and the approximation used above
-    /// σ = 16). Differences whose size is below <paramref name="threshold"/> are left unchanged, which keeps flat noisy areas from being amplified.
+    /// deviation <paramref name="radius"/> (see <see cref="GaussianBlur"/> for its kernel, edges, the approximation used above
+    /// σ = 16 and the handling of a sigma far wider than the image). Differences whose size is below <paramref name="threshold"/> are left unchanged, which keeps flat noisy areas from being amplified.
     /// <para>
     /// The combination runs in the working space of <paramref name="linear"/> (default linear light, premultiplied by alpha), and the
     /// threshold is in that space as a fraction of full scale. Alpha is not sharpened; with alpha the premultiplied color is limited to
@@ -397,6 +408,11 @@ public sealed partial class Image
 
         if (Math.Max(GaussianRadius(sx), GaussianRadius(sy)) > ExactRadiusLimit)
         {
+            if (!GaussianReductionFinishes(n.Width, n.Height, sx, sy))
+            {
+                return BuildTinyGaussian(n, sx, sy, linear, edge, keepFloat: false);
+            }
+
             return BuildWide(n, Math.Max(sx, sy) / 4, linear, keepFloat: false, (small, fx, fy) => BuildGaussian(small, sx / fx, sy / fy, linear, edge));
         }
 
@@ -420,6 +436,11 @@ public sealed partial class Image
     {
         if (radius > ExactRadiusLimit)
         {
+            if (!BoxReductionFinishes(n.Width, n.Height, radius))
+            {
+                return BuildTinyBox(n, radius, linear, edge);
+            }
+
             return BuildWide(n, radius / 16.0, linear, keepFloat: false, (small, fx, fy) => BuildBox(small, Math.Max(1, (int)Math.Round(radius / Math.Max(fx, fy))), linear, edge));
         }
 
@@ -450,6 +471,11 @@ public sealed partial class Image
             new OpParameter("edge", edge.ToString().ToLowerInvariant()));
         if (GaussianRadius(sigma) > ExactRadiusLimit)
         {
+            if (!GaussianReductionFinishes(n.Width, n.Height, sigma, sigma))
+            {
+                return new UnsharpCombineNode(n, BuildTinyGaussian(n, sigma, sigma, linear, edge, keepFloat: true), amount, threshold, linear, desc);
+            }
+
             Node blurred = BuildWide(n, sigma / 4, linear, keepFloat: true, (small, fx, fy) => BuildGaussian(small, sigma / fx, sigma / fy, linear, edge));
             return new UnsharpCombineNode(n, blurred, amount, threshold, linear, desc);
         }
@@ -459,6 +485,221 @@ public sealed partial class Image
         var spec = new ConvolveSpec { RadiusX = r, RadiusY = r, Horizontal = w, Vertical = w, Unsharp = true, Amount = (float)amount, Threshold = (float)threshold };
         return new ConvolveNode(n, spec, linear, edge, desc);
     }
+
+    // The reduced-resolution approximation shrinks each axis to max(1, round(size / f)) and blurs the result with the sigma divided
+    // by the factor that was actually applied. An axis that is down to one pixel cannot shrink further and keeps its sigma, so when
+    // sigma is more than about 16 times the length of an axis the reduction never reaches a kernel the exact path accepts. These two
+    // functions replay the arithmetic of BuildWide on sizes alone and say whether the reduction gets there; the callers send the
+    // other cases (sigma far wider than the image) to BuildTinyGaussian / BuildTinyBox instead of reducing again.
+    private static bool GaussianReductionFinishes(int width, int height, double sx, double sy)
+    {
+        while (Math.Max(GaussianRadius(sx), GaussianRadius(sy)) > ExactRadiusLimit)
+        {
+            double f = Math.Max(2, Math.Ceiling(Math.Max(sx, sy) / 4));
+            int w2 = Math.Max(1, (int)Math.Round(width / f));
+            int h2 = Math.Max(1, (int)Math.Round(height / f));
+            if (w2 == width && h2 == height)
+            {
+                return false;
+            }
+
+            sx /= (double)width / w2;
+            sy /= (double)height / h2;
+            width = w2;
+            height = h2;
+        }
+
+        return true;
+    }
+
+    private static bool BoxReductionFinishes(int width, int height, int radius)
+    {
+        while (radius > ExactRadiusLimit)
+        {
+            double f = Math.Max(2, Math.Ceiling(radius / 16.0));
+            int w2 = Math.Max(1, (int)Math.Round(width / f));
+            int h2 = Math.Max(1, (int)Math.Round(height / f));
+            if (w2 == width && h2 == height)
+            {
+                return false;
+            }
+
+            radius = Math.Max(1, (int)Math.Round(radius / Math.Max((double)width / w2, (double)height / h2)));
+            width = w2;
+            height = h2;
+        }
+
+        return true;
+    }
+
+    // Folded kernels of axes up to this long are applied by the ordinary convolution; longer ones use WideAxisBlurNode.
+    private const int FoldedAxisLimit = MaxRadius;
+
+    // Largest kernel radius whose weights are summed one by one when folding (about 4 million taps, tens of milliseconds).
+    private const long FoldedRadiusLimit = 1L << 22;
+
+    // Longest kernel (taps times pixels) that is worth computing exactly instead of by the reduced-resolution approximation when
+    // a blur has to leave that approximation (about 2.7e8 multiply-adds, a few hundred milliseconds on one core).
+    private const double ExactWorkLimit = 268435456;
+
+    // A Gaussian whose sigma is far wider than the image (the reduction above cannot finish). Each axis is blurred on its own, in
+    // float, by the cheapest method that is exact or nearly so: a short axis folds the whole kernel onto the image (exact); a
+    // long axis whose sigma still dwarfs it uses the closed-form WideAxisBlurNode; a long axis with a sigma the reduction can
+    // handle is computed exactly when that is cheap (the image is small, being thin) and otherwise reduced as before.
+    private static Node BuildTinyGaussian(Node n, double sx, double sy, bool linear, EdgeMode edge, bool keepFloat)
+    {
+        bool stuckX = sx > 0 && !GaussianReductionFinishes(n.Width, n.Height, sx, 0);
+        bool stuckY = sy > 0 && !GaussianReductionFinishes(n.Width, n.Height, 0, sy);
+        if (!stuckX && !stuckY)
+        {
+            // The joint and the single-axis replays disagree only in the last bit of a division; treat both axes as too wide.
+            stuckX = sx > 0;
+            stuckY = sy > 0;
+        }
+
+        long pixels = (long)n.Width * n.Height;
+        float[]? hk = sx > 0 ? AxisKernel(sx, n.Width, pixels, stuckX, edge) : null;
+        float[]? vk = sy > 0 ? AxisKernel(sy, n.Height, pixels, stuckY, edge) : null;
+        bool flatX = sx > 0 && hk == null && stuckX;
+        bool flatY = sy > 0 && vk == null && stuckY;
+        Node work = ToFloat(n);
+        double reduceX = sx > 0 && hk == null && !flatX ? sx : 0;
+        double reduceY = sy > 0 && vk == null && !flatY ? sy : 0;
+        if (reduceX > 0 || reduceY > 0)
+        {
+            work = BuildGaussian(work, reduceX, reduceY, linear, edge);
+        }
+
+        if (hk != null || vk != null)
+        {
+            work = BuildFolded(work, hk, vk, linear, edge, new OpDescriptor("gaussian_blur", new OpParameter("sigma_x", sx), new OpParameter("sigma_y", sy), new OpParameter("linear", linear), new OpParameter("edge", edge.ToString().ToLowerInvariant())));
+        }
+
+        if (flatX)
+        {
+            work = WideAxisBlurNode.Gaussian(work, horizontal: true, sx, linear, edge);
+        }
+
+        if (flatY)
+        {
+            work = WideAxisBlurNode.Gaussian(work, horizontal: false, sy, linear, edge);
+        }
+
+        return keepFloat || n.Format.Sample == SampleType.F32 ? work : new ConvertNode(work, n.Format);
+    }
+
+    // The 1-D kernel to convolve one axis with, or null when the axis is blurred another way: the closed form when `stuck` (sigma
+    // too wide for the reduction), the reduction otherwise.
+    private static float[]? AxisKernel(double sigma, int length, long pixels, bool stuck, EdgeMode edge)
+    {
+        if (length <= FoldedAxisLimit)
+        {
+            float[]? folded = FoldKernel(sigma, false, length, edge);
+            if (folded != null)
+            {
+                return folded;
+            }
+        }
+
+        if (!stuck && (2.0 * GaussianRadius(sigma) + 1) * pixels <= ExactWorkLimit)
+        {
+            return GaussianWeights(sigma);
+        }
+
+        return null;
+    }
+
+    // A box blur whose radius is far wider than the image. Both axes are covered by the window several times over.
+    private static Node BuildTinyBox(Node n, int radius, bool linear, EdgeMode edge)
+    {
+        Node work = ToFloat(n);
+        float[]? hk = n.Width <= FoldedAxisLimit ? FoldKernel(radius, true, n.Width, edge) : null;
+        float[]? vk = n.Height <= FoldedAxisLimit ? FoldKernel(radius, true, n.Height, edge) : null;
+        if (hk != null || vk != null)
+        {
+            work = BuildFolded(work, hk, vk, linear, edge, new OpDescriptor("box_blur", new OpParameter("radius", (long)radius), new OpParameter("linear", linear), new OpParameter("edge", edge.ToString().ToLowerInvariant())));
+        }
+
+        if (hk == null)
+        {
+            work = WideAxisBlurNode.Box(work, horizontal: true, radius, linear, edge);
+        }
+
+        if (vk == null)
+        {
+            work = WideAxisBlurNode.Box(work, horizontal: false, radius, linear, edge);
+        }
+
+        return n.Format.Sample == SampleType.F32 ? work : new ConvertNode(work, n.Format);
+    }
+
+    private static Node ToFloat(Node n) =>
+        n.Format.Sample == SampleType.F32 ? n : new ConvertNode(n, new PixelFormat(n.Format.Model, SampleType.F32, n.Format.Alpha));
+
+    private static ConvolveNode BuildFolded(Node n, float[]? horizontal, float[]? vertical, bool linear, EdgeMode edge, OpDescriptor descriptor)
+    {
+        var spec = new ConvolveSpec
+        {
+            RadiusX = horizontal == null ? 0 : horizontal.Length / 2,
+            RadiusY = vertical == null ? 0 : vertical.Length / 2,
+            Horizontal = horizontal ?? [1f],
+            Vertical = vertical ?? [1f],
+        };
+        return new ConvolveNode(n, spec, linear, edge, descriptor);
+    }
+
+    // The exact blur of an axis of `length` pixels as a short kernel (taps -length..length). The full kernel (Gaussian of the given
+    // sigma with radius ceil(3 sigma), or a box of the given radius) is folded onto it the way the edge mode reads pixels beyond
+    // the image: clamp adds every tap beyond an end to the last tap that still reads the end pixel, constant drops it, mirror
+    // adds it to the tap with the same index modulo twice the length. Normalization uses the full kernel. Returns null for a
+    // Gaussian too wide to sum tap by tap.
+    private static float[]? FoldKernel(double sigmaOrRadius, bool box, int length, EdgeMode edge)
+    {
+        long r = box ? (long)sigmaOrRadius : (long)GaussianRadiusLong(sigmaOrRadius);
+        if (!box && (r > FoldedRadiusLimit || r < 0))
+        {
+            return null;
+        }
+
+        double sigma = sigmaOrRadius;
+        var folded = new double[(2 * length) + 1];
+        double total = 0;
+        for (long k = -r; k <= r; k++)
+        {
+            double w = box ? 1.0 : Math.Exp(-(double)k * k / (2 * sigma * sigma));
+            total += w;
+            long d;
+            if (edge == EdgeMode.Clamp)
+            {
+                d = Math.Clamp(k, -(length - 1), length - 1);
+            }
+            else if (edge == EdgeMode.Constant)
+            {
+                if (k < -(length - 1) || k > length - 1)
+                {
+                    continue;
+                }
+
+                d = k;
+            }
+            else
+            {
+                d = ((((k + length) % (2L * length)) + (2L * length)) % (2L * length)) - length;
+            }
+
+            folded[d + length] += w;
+        }
+
+        var kernel = new float[folded.Length];
+        for (int i = 0; i < kernel.Length; i++)
+        {
+            kernel[i] = (float)(folded[i] / total);
+        }
+
+        return kernel;
+    }
+
+    private static double GaussianRadiusLong(double sigma) => sigma <= 0 ? 0 : Math.Max(1, Math.Ceiling(3 * sigma));
 
     // Approximates a wide blur at reduced resolution: box-average down by about `reduceBy` in the image's own format, blur there
     // in float with the callback (given the actual per-axis reduction factors), enlarge with Catmull-Rom. A streaming source is

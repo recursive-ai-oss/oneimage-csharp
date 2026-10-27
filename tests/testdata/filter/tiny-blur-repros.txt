@@ -1,0 +1,10 @@
+# Blurs that used to recurse until the stack overflowed: the image is only a few pixels across (or one axis is) compared with sigma.
+# image size | call | edge
+1x1        | GaussianBlur(50)            | any
+1x400      | GaussianBlur(40)            | any
+3x10000    | GaussianBlur(200)           | any
+10000x3    | GaussianBlur(1e6)           | any
+2x2        | BoxBlur(4096)               | any
+3x3        | BoxBlur(200)                | any
+5x5        | Sharpen(radius: 1000)       | any
+1x1        | Sharpen(radius: 1e300)      | any
