@@ -169,12 +169,13 @@ public class BlurIdentityTests
                 Image source = Source(format, w, h);
                 foreach ((string key, Func<Image, Image> apply) in Operations(w, h))
                 {
-                    // Float and 16-bit pixels in linear light use the platform's math library; compare them on Linux only.
+                    // Linear-light results depend on the platform's math library (8-bit ones too on macOS), and the reference was
+                    // captured on Linux, so linear cases are compared on Linux only.
                     string full = $"{format}|{w}x{h}|{key}";
                     string hash = Hash(apply(source), format);
                     lines.Add($"{full}\t{hash}");
                     count++;
-                    bool comparable = OperatingSystem.IsLinux() || format == "Rgba32" || key.EndsWith("enc", StringComparison.Ordinal);
+                    bool comparable = OperatingSystem.IsLinux() || key.EndsWith("enc", StringComparison.Ordinal);
                     if (capture == null && comparable && (!reference.TryGetValue(full, out string? want) || want != hash))
                     {
                         failures.Add(full);
