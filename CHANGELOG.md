@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-10-26
+
+### Fixed
+
+- `GaussianBlur`, `BoxBlur` and `Sharpen` could recurse without end and end the process with a stack overflow when the image was small compared with the blur: a Gaussian sigma above about 16 times an image side, or a box radius above about 48 times the longer side (for example a 1-pixel-wide image with sigma 20). The wide-blur approximation could not make such an axis any smaller, so it asked for the same blur again. Those axes are now blurred directly with the documented kernel and edge mode (exact up to 127 pixels, within 0.1 level at 8 bits beyond), and any finite sigma is accepted. Results for every blur that finished before are byte for byte the same. Layer mask feathering, which uses the Gaussian blur, is fixed by the same change.
+
 ## [1.10.1] - 2026-10-25
 
 ### Fixed
@@ -204,7 +210,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.2...HEAD
+[1.10.2]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.8.1...v1.9.0
