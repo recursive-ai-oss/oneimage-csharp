@@ -1,6 +1,6 @@
 # OneImage.Svg
 
-SVG for [OneImage](https://github.com/recursive-ai-oss/oneimage-csharp): registers SVG (and gzip-compressed `.svgz`) as an image format that is drawn directly at the size you ask for. Pure C# with no dependency beyond OneImage, OneImage.Text and .NET.
+SVG for [OneImage](https://github.com/recursive-ai-oss/oneimage-csharp): registers SVG (and gzip-compressed `.svgz`) as an image format that is drawn directly at the size you ask for. Pure C# with no dependency beyond OneImage, OneImage.Text (and OneFont, which Text uses) and .NET.
 
 ```sh
 dotnet add package RecursiveAI.OneImage.Svg
