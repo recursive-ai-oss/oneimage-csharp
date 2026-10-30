@@ -172,7 +172,8 @@ public class SrgbTransferTests
             float v = BitConverter.Int32BitsToSingle(bits);
             Assert.InRange(Ulps(SrgbTransfer.DecodeOne(v), Dec(v)), 0, 1);
             Assert.InRange(Ulps(SrgbTransfer.EncodeOne(v), Enc(v)), 0, 4);
-            Assert.InRange(Ulps(DeterministicMath.CbrtF(v), MathF.Cbrt(v)), 0, 1);
+            // Platform cube roots are not all correctly rounded (the Windows one is off by up to 2 ulps), so allow 2.
+            Assert.InRange(Ulps(DeterministicMath.CbrtF(v), MathF.Cbrt(v)), 0, 2);
             Assert.InRange(Ulps(DeterministicMath.PowF(v, 0.45f), MathF.Pow(v, 0.45f)), 0, 1);
             double d = Math.Pow(v, 2.2);
             Assert.True(Math.Abs(DeterministicMath.Pow(v, 2.2) - d) <= Math.Abs(d) * 4.5e-16);
