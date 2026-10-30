@@ -6,11 +6,17 @@ namespace OneImage;
 /// table with linear interpolation, accurate to under 0.01 of an 8-bit step; use <see cref="EncodeExact"/> where that is not enough.
 /// The table paths clamp to 0..1; the exact paths extend the curve symmetrically for negative values.
 /// </summary>
-internal static class SrgbTransfer
+internal static partial class SrgbTransfer
 {
     private const int EncodeSize = 16384;
-    private static readonly float[] s_decode8 = BuildDecode8();
-    private static readonly float[] s_encode = BuildEncode();
+    private static readonly float[] s_decode8 = FromBase64(Decode8Data, 256);
+    private static readonly float[] s_encode = FromBase64(EncodeData, EncodeSize + 1);
+
+    /// <summary>The 8-bit decode table (read-only by convention; exposed for tests).</summary>
+    internal static float[] Decode8Table => s_decode8;
+
+    /// <summary>The float encode table (read-only by convention; exposed for tests).</summary>
+    internal static float[] EncodeTable => s_encode;
 
     /// <summary>Converts 8-bit encoded values to linear floats (0..1).</summary>
     public static void Decode8(ReadOnlySpan<byte> src, Span<float> dst)
@@ -78,7 +84,25 @@ internal static class SrgbTransfer
         return v < 0f ? -r : r;
     }
 
-    private static float[] BuildDecode8()
+    private static float[] FromBase64(string data, int count)
+    {
+        byte[] bytes = Convert.FromBase64String(data);
+        if (bytes.Length != count * sizeof(float))
+        {
+            throw new InvalidOperationException("sRGB table data has the wrong size.");
+        }
+
+        var t = new float[count];
+        for (int i = 0; i < count; i++)
+        {
+            t[i] = System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(i * sizeof(float)));
+        }
+
+        return t;
+    }
+
+    /// <summary>Computes the decode table with the formula and the platform math library (for the regeneration test).</summary>
+    internal static float[] BuildDecode8()
     {
         var t = new float[256];
         for (int i = 0; i < 256; i++)
@@ -89,7 +113,8 @@ internal static class SrgbTransfer
         return t;
     }
 
-    private static float[] BuildEncode()
+    /// <summary>Computes the encode table with the formula and the platform math library (for the regeneration test).</summary>
+    internal static float[] BuildEncode()
     {
         var t = new float[EncodeSize + 1];
         for (int i = 0; i <= EncodeSize; i++)

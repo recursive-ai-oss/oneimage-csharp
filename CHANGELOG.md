@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- The sRGB linear-light tables are now identical on every platform. They were computed at startup with the platform math library, which rounds `Pow` differently on some systems (two of the 256 decode entries were one unit in the last place off on macOS arm64). They are now stored as data with the bits that Linux x64 produced, so resizes, blurs and other linear-light operations on 8-bit input give the same bytes on macOS and arm64 as on x64. Results on x64 are unchanged.
+
 ## [1.10.2] - 2026-10-26
 
 ### Fixed
