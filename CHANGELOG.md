@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- Colour transfer curves no longer depend on the platform math library, so 16-bit and floating-point input, linear-light resizes and tone operations give the same bytes on Linux, Windows, macOS, arm64 and WebAssembly as on x64. 1.10.3 fixed the 8-bit decode table and the float encode table, but the 16-bit decode table, the linear-to-8-bit table and the single-value sRGB functions (used for 16-bit and float pixels) were still computed with `Pow`, whose last bit differs between math libraries (about 1 in 40,000 results, and `MathF.Cbrt` on some Linux versions). They now use a power and cube-root implementation made only of IEEE arithmetic that returns the correctly rounded result; the tables keep the exact values of 1.10.3 on Linux x64, and the single-value functions differ from the old Linux results in 0.002% of inputs (one unit in the last place; the old library was the one rounding wrongly). The same functions are used for gamma and levels, ICC parametric and gamma curves, the Lab cube root, layer-mask and gradient colour conversion, PDF CalRGB/CalGray, and the SVG filter colour-space and gamma transfer functions. Float images in linear light are a few times slower per sample in these functions (about 30 ns instead of 4 ns).
+
 ## [1.10.3] - 2026-10-30
 
 ### Fixed

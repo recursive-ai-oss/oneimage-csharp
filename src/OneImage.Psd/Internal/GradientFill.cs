@@ -271,7 +271,7 @@ internal sealed class PsdGradientBrush : Brush
 
     private static float MidpointOf(PsdColorStop[] s, int from, int to) => s[to].Midpoint;
 
-    private static float Decode(float v) => v <= 0.04045f ? v / 12.92f : MathF.Pow((v + 0.055f) / 1.055f, 2.4f);
+    private static float Decode(float v) => v <= 0.04045f ? v / 12.92f : DeterministicMath.PowF((v + 0.055f) / 1.055f, 2.4f);
 
-    private static float Encode(float v) => v <= 0.0031308f ? v * 12.92f : (1.055f * MathF.Pow(v, 1f / 2.4f)) - 0.055f;
+    private static float Encode(float v) => v <= 0.0031308f ? v * 12.92f : (1.055f * DeterministicMath.PowF(v, 1f / 2.4f)) - 0.055f;
 }

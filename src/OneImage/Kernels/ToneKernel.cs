@@ -408,11 +408,28 @@ internal static class ToneKernel
         for (int i = 0; i < 256; i++)
         {
             double lin = i / 255.0;
-            lin = lin <= 0.04045 ? lin / 12.92 : Math.Pow((lin + 0.055) / 1.055, 2.4);
+            lin = lin <= 0.04045 ? lin / 12.92 : DeterministicMath.Pow((lin + 0.055) / 1.055, 2.4);
             t[i] = (uint)Math.Floor((weight * lin * 65535.0 * 16.0) + 0.5);
         }
 
         return t;
+    }
+
+    // sRGB encode of a linear value in double. The approximate form is accurate to about 2^-45 and about 4 times faster; callers
+    // that quantize use it only away from a rounding edge.
+    private static double EncodeSrgb(double lin, bool approximate)
+    {
+        if (lin <= 0.0031308)
+        {
+            return lin * 12.92;
+        }
+
+        if (!approximate || !DeterministicMath.TryPowApprox(lin, 1.0 / 2.4, out double p))
+        {
+            p = DeterministicMath.Pow(lin, 1.0 / 2.4);
+        }
+
+        return (1.055 * p) - 0.055;
     }
 
     private static byte[] BuildEncode16()
@@ -421,8 +438,15 @@ internal static class ToneKernel
         for (int i = 0; i < t.Length; i++)
         {
             double lin = i / 65535.0;
-            double enc = lin <= 0.0031308 ? lin * 12.92 : (1.055 * Math.Pow(lin, 1.0 / 2.4)) - 0.055;
-            t[i] = (byte)Math.Floor((enc * 255.0) + 0.5);
+            double q = (EncodeSrgb(lin, approximate: true) * 255.0) + 0.5;
+            double frac = q - Math.Floor(q);
+            if (frac < 1e-9 || frac > 1 - 1e-9)
+            {
+                // Too close to a rounding edge for the fast estimate to decide: use the full-precision power.
+                q = (EncodeSrgb(lin, approximate: false) * 255.0) + 0.5;
+            }
+
+            t[i] = (byte)Math.Floor(q);
         }
 
         return t;

@@ -317,14 +317,14 @@ internal sealed class BokehNode : Node
         {
             for (int i = 0; i < values.Length; i++)
             {
-                values[i] = MathF.Cbrt(values[i]);
+                values[i] = DeterministicMath.CbrtF(values[i]);
             }
         }
         else
         {
             for (int i = 0; i < values.Length; i++)
             {
-                values[i] = MathF.Pow(values[i], exponent);
+                values[i] = DeterministicMath.PowF(values[i], exponent);
             }
         }
     }

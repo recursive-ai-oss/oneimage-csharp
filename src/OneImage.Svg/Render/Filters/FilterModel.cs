@@ -286,7 +286,7 @@ internal sealed class FeTransfer
                 v = (Slope * c) + Intercept;
                 break;
             case Kind.Gamma:
-                v = (Amplitude * Math.Pow(Math.Max(c, 0), Exponent)) + Offset;
+                v = (Amplitude * DeterministicMath.Pow(Math.Max(c, 0), Exponent)) + Offset;
                 break;
             default:
                 return c;

@@ -61,7 +61,7 @@ internal static class PdfColors
                 return Cmyk(At(comps, 0), At(comps, 1), At(comps, 2), At(comps, 3));
             case PdfColorSpaceKind.CalGray:
                 {
-                    double y = Math.Pow(Math.Clamp(At(comps, 0), 0, 1), space.Gamma is { Count: > 0 } gm ? gm[0] : 1);
+                    double y = DeterministicMath.Pow(Math.Clamp(At(comps, 0), 0, 1), space.Gamma is { Count: > 0 } gm ? gm[0] : 1);
                     IReadOnlyList<double> wp = space.WhitePoint ?? [0.9505, 1, 1.089];
                     return FromXyz(wp[0] * y, wp[1] * y, wp[2] * y, wp);
                 }
@@ -251,9 +251,9 @@ internal static class PdfColors
         IReadOnlyList<double> gamma = space.Gamma is { Count: >= 3 } g ? g : [1, 1, 1];
         IReadOnlyList<double> m = space.Matrix is { Count: >= 9 } mm ? mm : [1, 0, 0, 0, 1, 0, 0, 0, 1];
         IReadOnlyList<double> wp = space.WhitePoint ?? [0.9505, 1, 1.089];
-        double ag = Math.Pow(Math.Clamp(a, 0, 1), gamma[0]);
-        double bg = Math.Pow(Math.Clamp(b, 0, 1), gamma[1]);
-        double cg = Math.Pow(Math.Clamp(c, 0, 1), gamma[2]);
+        double ag = DeterministicMath.Pow(Math.Clamp(a, 0, 1), gamma[0]);
+        double bg = DeterministicMath.Pow(Math.Clamp(b, 0, 1), gamma[1]);
+        double cg = DeterministicMath.Pow(Math.Clamp(c, 0, 1), gamma[2]);
         double x = (m[0] * ag) + (m[3] * bg) + (m[6] * cg);
         double y = (m[1] * ag) + (m[4] * bg) + (m[7] * cg);
         double z = (m[2] * ag) + (m[5] * bg) + (m[8] * cg);
@@ -298,7 +298,7 @@ internal static class PdfColors
     private static byte Encode(double v)
     {
         v = Math.Clamp(v, 0, 1);
-        double e = v <= 0.0031308 ? 12.92 * v : (1.055 * Math.Pow(v, 1 / 2.4)) - 0.055;
+        double e = v <= 0.0031308 ? 12.92 * v : (1.055 * DeterministicMath.Pow(v, 1 / 2.4)) - 0.055;
         return Byte(e);
     }
 

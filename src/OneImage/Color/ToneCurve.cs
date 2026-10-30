@@ -110,7 +110,7 @@ internal sealed class ToneCurve
         if (xd >= _d)
         {
             double basev = (_a * xd) + _b;
-            y = (basev > 0 ? Math.Pow(basev, _g) : 0) + _e;
+            y = (basev > 0 ? DeterministicMath.Pow(basev, _g) : 0) + _e;
         }
         else
         {
@@ -155,7 +155,7 @@ internal sealed class ToneCurve
         if (yy >= yd && _g != 0 && _a != 0)
         {
             double v = yy - _e;
-            x = ((v > 0 ? Math.Pow(v, 1.0 / _g) : 0) - _b) / _a;
+            x = ((v > 0 ? DeterministicMath.Pow(v, 1.0 / _g) : 0) - _b) / _a;
             double lo = double.IsNegativeInfinity(_d) ? 0 : _d;
             if (x < lo)
             {

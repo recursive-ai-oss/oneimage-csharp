@@ -73,14 +73,14 @@ internal static partial class SrgbTransfer
     public static float DecodeOne(float v)
     {
         float a = MathF.Abs(v);
-        float r = a <= 0.04045f ? a / 12.92f : MathF.Pow((a + 0.055f) / 1.055f, 2.4f);
+        float r = a <= 0.04045f ? a / 12.92f : DeterministicMath.PowF((a + 0.055f) / 1.055f, 2.4f);
         return v < 0f ? -r : r;
     }
 
     public static float EncodeOne(float v)
     {
         float a = MathF.Abs(v);
-        float r = a <= 0.0031308f ? a * 12.92f : (1.055f * MathF.Pow(a, 1f / 2.4f)) - 0.055f;
+        float r = a <= 0.0031308f ? a * 12.92f : (1.055f * DeterministicMath.PowF(a, 1f / 2.4f)) - 0.055f;
         return v < 0f ? -r : r;
     }
 
@@ -96,30 +96,6 @@ internal static partial class SrgbTransfer
         for (int i = 0; i < count; i++)
         {
             t[i] = System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(i * sizeof(float)));
-        }
-
-        return t;
-    }
-
-    /// <summary>Computes the decode table with the formula and the platform math library (for the regeneration test).</summary>
-    internal static float[] BuildDecode8()
-    {
-        var t = new float[256];
-        for (int i = 0; i < 256; i++)
-        {
-            t[i] = DecodeOne(i / 255f);
-        }
-
-        return t;
-    }
-
-    /// <summary>Computes the encode table with the formula and the platform math library (for the regeneration test).</summary>
-    internal static float[] BuildEncode()
-    {
-        var t = new float[EncodeSize + 1];
-        for (int i = 0; i <= EncodeSize; i++)
-        {
-            t[i] = EncodeOne((float)i / EncodeSize);
         }
 
         return t;

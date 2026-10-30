@@ -256,7 +256,7 @@ internal sealed class DitherNode : Node
             // The perturbation amplitude shrinks as the palette grows: one step between neighbouring levels of an evenly spread
             // palette, which has cbrt(count) levels per channel.
             int count = paletteRgba.Length / 4;
-            float levels = MathF.Cbrt(count) - 1f;
+            float levels = DeterministicMath.CbrtF(count) - 1f;
             _spread = levels <= 1f ? 255f : MathF.Floor(255f / levels);
             _offsets = new float[_matrix!.Length];
             for (int i = 0; i < _offsets.Length; i++)

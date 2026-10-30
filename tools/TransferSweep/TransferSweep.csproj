@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Compiles the library's colour-transfer sources directly so the same code can also be built for browser-wasm. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AnalysisLevel>latest</AnalysisLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../src/OneImage/Color/DeterministicMath.cs" />
+    <Compile Include="../../src/OneImage/Color/SrgbTransfer.cs" />
+    <Compile Include="../../src/OneImage/Color/SrgbTransferData.cs" />
+    <Compile Include="../../src/OneImage/Kernels/SrgbTables.cs" />
+  </ItemGroup>
+
+</Project>

@@ -188,7 +188,7 @@ internal sealed class XyzToLabStage : Stage
     }
 
     private static float LabF(float t) =>
-        t > 216f / 24389f ? MathF.Cbrt(t) : ((24389f / 27f * t) + 16f) / 116f;
+        t > 216f / 24389f ? DeterministicMath.CbrtF(t) : ((24389f / 27f * t) + 16f) / 116f;
 }
 
 internal sealed class LabToXyzStage : Stage

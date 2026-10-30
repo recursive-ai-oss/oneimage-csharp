@@ -44,8 +44,8 @@ internal static class FilterColor
         {
             double v = i / (double)Steps;
             t[i] = (float)(toLinear
-                ? (v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4))
-                : (v <= 0.0031308 ? v * 12.92 : (1.055 * Math.Pow(v, 1 / 2.4)) - 0.055));
+                ? (v <= 0.04045 ? v / 12.92 : DeterministicMath.Pow((v + 0.055) / 1.055, 2.4))
+                : (v <= 0.0031308 ? v * 12.92 : (1.055 * DeterministicMath.Pow(v, 1 / 2.4)) - 0.055));
         }
 
         t[Steps + 1] = t[Steps];

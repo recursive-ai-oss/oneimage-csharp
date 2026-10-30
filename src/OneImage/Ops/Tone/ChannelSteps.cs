@@ -77,7 +77,7 @@ internal sealed class PhotoshopBrightnessContrastStep : ChannelStep
             // The legacy slope, softened: the current mode changes contrast far less than the linear formula does.
             double c = Math.Min(contrast, 0.99);
             double k0 = c >= 0 ? 1.0 / (1.0 - c) : 1.0 + c;
-            _k = (float)Math.Pow(k0, 0.2);
+            _k = (float)DeterministicMath.Pow(k0, 0.2);
         }
         else
         {
@@ -127,7 +127,7 @@ internal sealed class PhotoshopBrightnessContrastStep : ChannelStep
 /// <summary>v * 2^stops.</summary>
 internal sealed class ExposureStep(double stops, bool linear) : ChannelStep(linear)
 {
-    private readonly float _scale = (float)Math.Pow(2.0, stops);
+    private readonly float _scale = (float)DeterministicMath.Pow(2.0, stops);
 
     public override string Name => "exposure";
 
@@ -162,7 +162,7 @@ internal sealed class GammaStep(double gamma, bool linear) : ChannelStep(linear)
         for (int i = 0; i < values.Length; i++)
         {
             float v = values[i];
-            values[i] = v > 0f ? MathF.Pow(v, inv) : 0f;
+            values[i] = v > 0f ? DeterministicMath.PowF(v, inv) : 0f;
         }
     }
 }
@@ -236,7 +236,7 @@ internal sealed class LevelsStep : ChannelStep
             t = t < 0f ? 0f : t > 1f ? 1f : t;
             if (curve)
             {
-                t = MathF.Pow(t, ig);
+                t = DeterministicMath.PowF(t, ig);
             }
 
             values[i] = ob + (t * span);

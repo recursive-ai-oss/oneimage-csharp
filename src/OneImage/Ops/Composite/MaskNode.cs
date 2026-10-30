@@ -57,7 +57,7 @@ internal sealed class MaskNode : Node
             }
 
             double c = i / 255.0;
-            double l = c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+            double l = c <= 0.04045 ? c / 12.92 : DeterministicMath.Pow((c + 0.055) / 1.055, 2.4);
             t[i] = (int)Math.Round(l * 65535.0);
         }
 
