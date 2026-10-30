@@ -145,7 +145,13 @@ public class ColorImageTests
         SrgbTransfer.Decode8(all, dec);
         float[] dec2 = all.Select(b => b / 255f).ToArray();
         SrgbTransfer.Decode(dec2);
-        Assert.Equal(dec2, dec);
+
+        // The table holds fixed bits (identical on every platform); the formula goes through the platform math library,
+        // which can round Pow one unit in the last place differently, so allow that much.
+        for (int i = 0; i < 256; i++)
+        {
+            Assert.True(Math.Abs(BitConverter.SingleToInt32Bits(dec[i]) - BitConverter.SingleToInt32Bits(dec2[i])) <= 1, $"{i}: {dec[i]} vs {dec2[i]}");
+        }
     }
 
     [Fact]
