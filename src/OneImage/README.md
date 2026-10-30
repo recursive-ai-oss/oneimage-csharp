@@ -13,9 +13,9 @@ How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (log scale, higher is better; slower tasks and ties are
 marked):
 
-![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.10.2/docs/img/oneimage-hero-light.svg)
+![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.10.3/docs/img/oneimage-hero-light.svg)
 
-[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/performance.md)
+[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/performance.md)
 
 ## Install
 
@@ -49,7 +49,11 @@ Image.Load("in.png").Save("out.jpg", new SaveOptions { EncoderOptions = new Jpeg
 The format of `Save` follows the file extension. For streams and buffer
 writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
-## What is new in 1.10.2
+## What is new in 1.10.3
+
+- **Fixed: linear-light results on 8-bit images could differ by one bit between platforms.** The sRGB tables used by resizes, blurs and other linear-light operations were computed at startup with the platform math library, which rounds slightly differently on macOS arm64. They are now stored as data, so these operations give the same bytes on every platform. Results on x64 are unchanged.
+
+## What was new in 1.10.2
 
 - **Fixed: a blur much wider than the image could crash the process.** `GaussianBlur`, `BoxBlur` and `Sharpen` on an image only a few pixels across compared with sigma or radius recursed until the stack overflowed. They now blur such images directly with the documented kernel, and any finite sigma is accepted. Every blur that finished before gives the same bytes.
 
@@ -82,22 +86,22 @@ writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
 ## Learn more
 
-- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/guide.md): the lazy model, errors, operations,
+- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/guide.md): the lazy model, errors, operations,
   `Canvas`, metadata, color, animation, limits, AOT and trimming.
-- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/layers.md): layered documents that render on demand, with
+- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/layers.md): layered documents that render on demand, with
   incremental re-rendering and an optional disk-spill store. Photoshop files
   load into them through the separate `RecursiveAI.OneImage.Psd` package
-  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/psd.md)).
-- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/migrating.md)
-- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/comparison.md), including where the
+  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/psd.md)).
+- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/migrating.md)
+- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/comparison.md), including where the
   others are the better fit
-- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/performance.md)
-- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/CHANGELOG.md) and
-  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/SECURITY.md)
+- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/performance.md)
+- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/CHANGELOG.md) and
+  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/SECURITY.md)
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/LICENSE-MIT) or
-[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/LICENSE-MIT) or
+[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.

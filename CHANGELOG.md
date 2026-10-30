@@ -4,9 +4,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.10.3] - 2026-10-30
+
 ### Fixed
 
-- The sRGB linear-light tables are now identical on every platform. They were computed at startup with the platform math library, which rounds `Pow` differently on some systems (two of the 256 decode entries were one unit in the last place off on macOS arm64). They are now stored as data with the bits that Linux x64 produced, so resizes, blurs and other linear-light operations on 8-bit input give the same bytes on macOS and arm64 as on x64. Results on x64 are unchanged.
+- The sRGB linear-light tables are now identical on every platform. They were computed at startup with the platform math library, which rounds `Pow` differently on some systems (on macOS arm64, two of the 256 8-bit decode entries and entries of the encode table were one unit in the last place off). They are now stored as data with the bits that Linux x64 produced, so resizes, blurs and other linear-light operations on 8-bit input give the same bytes on macOS and arm64 as on x64. Results on x64 are unchanged.
 
 ## [1.10.2] - 2026-10-26
 
@@ -214,7 +216,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.2...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.3...HEAD
+[1.10.3]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.2...v1.10.3
 [1.10.2]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.9.0...v1.10.0

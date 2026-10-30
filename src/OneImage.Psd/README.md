@@ -43,10 +43,10 @@ file.Save("edited.psd");
 - **Kept only as stored pixels plus untouched blocks:** text, smart objects, vector strokes, the layer effects that are not drawn, and gradient or pattern fills outside the drawn subset. They render from the pixels Photoshop stored, are not redrawn, and their blocks are written back unchanged.
 - **Known gaps against Photoshop:** posterize, curves and legacy brightness/contrast follow Photoshop (buckets, a natural cubic spline, the legacy formula), while brightness/contrast in Photoshop's current mode is a fitted approximation; hard mix and vivid light differ slightly; vector-mask path operations use the non-zero rule only; levels, curves, hue/saturation, brightness/contrast and exposure layers in CMYK and Lab documents are kept but not applied; dissolve and darker/lighter color render as Normal, Darken and Lighten.
 
-The [PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/psd.md) has the full mapping, the fidelity figures, the limits and the speed. Layered documents are described in the [layers page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/docs/layers.md).
+The [PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/psd.md) has the full mapping, the fidelity figures, the limits and the speed. Layered documents are described in the [layers page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/docs/layers.md).
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/LICENSE-MIT) or [Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.2/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/LICENSE-MIT) or [Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.3/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.
