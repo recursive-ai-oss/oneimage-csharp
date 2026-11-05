@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>$(LibName).Metafile</AssemblyName>
+    <RootNamespace>$(LibName).Metafile</RootNamespace>
+    <PackageId>$(PackagePrefix)$(LibName).Metafile</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- Not published yet, so there is no earlier package to compare with; remove this line after the first release. -->
+    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
+    <Description>Windows metafile support for OneImage: reads EMF as an image format, rendered at the requested size, and exposes the pictures as a documented, device-independent stream of drawing commands.</Description>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>image;imaging;emf;wmf;metafile;vector;rasterize;nativeaot;trimmable</PackageTags>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneImage/OneImage.csproj" />
+    <ProjectReference Include="../OneImage.Text/OneImage.Text.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="$(LibName).Metafile.Tests" />
+    <InternalsVisibleTo Include="$(LibName).Fuzz" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!-- The package uses internals of the projects it references (InternalsVisibleTo), so it only works with the exact version it was built
+       against: the packed dependencies are [version], not the default "version or later". -->
+  <Target Name="RequireExactProjectReferenceVersions" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)">
+        <ProjectVersion>[%(ProjectVersion)]</ProjectVersion>
+      </_ProjectReferencesWithVersions>
+    </ItemGroup>
+  </Target>
+
+</Project>

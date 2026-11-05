@@ -4,6 +4,7 @@
     <Project Path="src/OneImage.Web/OneImage.Web.csproj" />
     <Project Path="src/OneImage.Text/OneImage.Text.csproj" />
     <Project Path="src/OneImage.Svg/OneImage.Svg.csproj" />
+    <Project Path="src/OneImage.Metafile/OneImage.Metafile.csproj" />
     <Project Path="src/OneImage.Psd/OneImage.Psd.csproj" />
     <Project Path="src/OneImage.Pdf/OneImage.Pdf.csproj" />
   </Folder>
@@ -11,6 +12,7 @@
     <Project Path="tests/OneImage.Tests/OneImage.Tests.csproj" />
     <Project Path="tests/OneImage.Text.Tests/OneImage.Text.Tests.csproj" />
     <Project Path="tests/OneImage.Svg.Tests/OneImage.Svg.Tests.csproj" />
+    <Project Path="tests/OneImage.Metafile.Tests/OneImage.Metafile.Tests.csproj" />
     <Project Path="tests/OneImage.Psd.Tests/OneImage.Psd.Tests.csproj" />
     <Project Path="tests/OneImage.Pdf.Tests/OneImage.Pdf.Tests.csproj" />
     <Project Path="tests/OneImage.AotSmoke/OneImage.AotSmoke.csproj" />

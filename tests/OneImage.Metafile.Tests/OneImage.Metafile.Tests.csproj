@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>$(LibName).Metafile.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);xUnit1051;xUnit1031</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneImage.Metafile/OneImage.Metafile.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../testdata/fonts/NotoSans-Subset-Regular.ttf" Link="testdata/fonts/NotoSans-Subset-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../testdata/fonts/NotoSans-Subset-Bold-kern.ttf" Link="testdata/fonts/NotoSans-Subset-Bold-kern.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../testdata/fonts/NotoSans-Shaping-Subset.ttf" Link="testdata/fonts/NotoSans-Shaping-Subset.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../testdata/fonts/NotoSansCJK-Subset.otf" Link="testdata/fonts/NotoSansCJK-Subset.otf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets the conformance tests find the committed test files without relying on source paths. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RepoRoot</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../../</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

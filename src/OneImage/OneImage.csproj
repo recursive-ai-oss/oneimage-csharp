@@ -39,6 +39,7 @@
     <InternalsVisibleTo Include="$(LibName).Benchmarks" />
     <InternalsVisibleTo Include="$(LibName).AotSmoke" />
     <InternalsVisibleTo Include="$(LibName).Svg" />
+    <InternalsVisibleTo Include="$(LibName).Metafile" />
     <InternalsVisibleTo Include="$(LibName).Tools" />
     <InternalsVisibleTo Include="$(LibName).JpegHash" />
     <InternalsVisibleTo Include="$(LibName).Fuzz" />
