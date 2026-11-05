@@ -888,6 +888,23 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Metafile: EMF registration, natural size, drawing at a requested size, and text through the font resolver.
+{
+    var emfFonts = new OneImage.Text.FontCollection();
+    OneImage.Text.FontFamily emfNoto = emfFonts.Add(Path.Combine(AppContext.BaseDirectory, "fonts", "NotoSans-Subset-Regular.woff"));
+    var emfConfig = new ImageConfiguration().Add(new OneImage.Metafile.MetafileFormat(fonts: new OneImage.Metafile.MetafileFontOptions { Fonts = emfFonts, UseSystemFonts = false, DefaultFamily = emfNoto.Name }));
+    byte[] shapes = Convert.FromBase64String("AQAAAGwAAAAAAAAAAAAAAGMAAABjAAAAAAAAAAAAAADECQAAxAkAACBFTUYAAAEAHAEAAAkAAAAQAAAAAAAAAAAAAAAAAAAA6AMAAOgDAAD6AAAA+gAAAAAAAAAAAAAAAAAAAJDQAwCQ0AMAJgAAABwAAAABAAAAAAAAAAMAAAAAAAAAAAD/ACcAAAAYAAAAAgAAAAAAAAD/AAAAAAAAACUAAAAMAAAAAQAAACUAAAAMAAAAAgAAACsAAAAYAAAACgAAAAoAAAA8AAAAMgAAACoAAAAYAAAAKAAAACgAAABaAAAAWgAAACwAAAAgAAAABQAAADwAAAAtAAAAXwAAAAoAAAAKAAAADgAAABQAAAAAAAAAEAAAABQAAAA=");
+    ImageInfo emfInfo = Image.Identify(shapes, new LoadOptions { Configuration = emfConfig });
+    Rgba32[] emfPixels = Image.Load(shapes, new LoadOptions { Configuration = emfConfig }).Resize(width: 50).ToArray<Rgba32>();
+    byte[] emfText = Convert.FromBase64String("AQAAAGwAAAAAAAAAAAAAAGMAAABjAAAAAAAAAAAAAADECQAAxAkAACBFTUYAAAEAkAEAAAoAAAAQAAAAAAAAAAAAAAAAAAAA6AMAAOgDAAD6AAAA+gAAAAAAAAAAAAAAAAAAAJDQAwCQ0AMAEQAAAAwAAAAIAAAACQAAABAAAAAKAAAACgAAAAsAAAAQAAAAZAAAAGQAAABSAAAAaAAAAAEAAAD+////AAAAAAAAAAAAAAAAvAIAAAAAAAABAAAAQQByAGkAYQBsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACUAAAAMAAAAAQAAABgAAAAMAAAAAIAAABIAAAAMAAAAAQAAAFQAAABYAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAIA/AACAPwEAAAACAAAABQAAAEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABIAGUAbABsAG8AAAAOAAAAFAAAAAAAAAAQAAAAFAAAAA==");
+    Rgba32[] textPixels = Image.Load(emfText, new LoadOptions { Configuration = emfConfig }).ToArray<Rgba32>();
+    if (emfInfo.Width != 100 || emfInfo.Format.Name != "emf" || emfPixels[(15 * 50) + 15] != new Rgba32(255, 0, 0, 255) || !textPixels.Any(p => p.A > 100 && p.G > p.R))
+    {
+        Console.Error.WriteLine("metafile smoke failed");
+        return 1;
+    }
+}
+
 // JPEG 2000: the internal decoder reads a one-pixel codestream (this keeps its code in the analysed set).
 {
     byte[] j2k = Convert.FromBase64String("/0//UQApAAAAAAABAAAAAQAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAABBwEB/1IADAAAAAEAAAQEAAH/XAAEQED/ZAAlAAFDcmVhdGVkIGJ5IE9wZW5KUEVHIHZlcnNpb24gMi41LjT/kAAKAAAAAAASAAH/k8B0EAn/2Q==");

@@ -6,3 +6,4 @@ tests/testdata/jbig2/** binary
 testdata/pdf/** binary
 tests/testdata/png/pages/** binary
 tests/testdata/compression/valid-long-codes-* binary
+tests/testdata/metafile/** binary
