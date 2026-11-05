@@ -39,3 +39,28 @@ jobs:
       - name: Run web AOT smoke app
         shell: bash
         run: '"$RUNNER_TEMP/websmoke/OneImage.Web.AotSmoke"'
+
+  # Runs the libraries on the Mono WebAssembly runtime in a real browser, trimmed (Release) and untrimmed on the interpreter (Debug).
+  # No wasm-tools workload is needed: neither build relinks the native runtime.
+  wasm:
+    name: WebAssembly browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Artifacts directory
+        run: echo "ONEIMAGE_ARTIFACTS=$RUNNER_TEMP/artifacts" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish the browser-wasm smoke app (trim warnings are errors)
+        run: dotnet publish tests/OneImage.WasmSmoke -c Release -o "${{ runner.temp }}/wasm" -warnaserror
+      - name: Run the Release build in headless Chrome
+        run: node tests/OneImage.WasmSmoke/run-browser.mjs "${{ runner.temp }}/wasm/wwwroot"
+      - name: Publish the Debug build
+        run: dotnet publish tests/OneImage.WasmSmoke -c Debug -o "${{ runner.temp }}/wasm-debug"
+      - name: Run the Debug build in headless Chrome
+        run: node tests/OneImage.WasmSmoke/run-browser.mjs "${{ runner.temp }}/wasm-debug/wwwroot"

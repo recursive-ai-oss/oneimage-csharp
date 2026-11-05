@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>$(LibName).WasmSmoke</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <!-- The check is that the libraries trim and run on the Mono WebAssembly runtime. Relinking the native runtime adds nothing
+         to that, and with the wasm-tools workload installed it would make every solution build run the native toolchain.
+         Invariant globalization needs that relink on WebAssembly, so this app alone keeps the default. -->
+    <WasmBuildNative>false</WasmBuildNative>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneImage/OneImage.csproj" />
+    <ProjectReference Include="../../src/OneImage.Svg/OneImage.Svg.csproj" />
+    <ProjectReference Include="../../src/OneImage.Pdf/OneImage.Pdf.csproj" />
+  </ItemGroup>
+
+</Project>
