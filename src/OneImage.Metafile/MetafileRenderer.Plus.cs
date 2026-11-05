@@ -374,7 +374,7 @@ internal sealed partial class MetafileRenderer
     public override void VisitDrawGlyphs(DrawGlyphsCommand c)
     {
         _ct.ThrowIfCancellationRequested();
-        TextFont? font = PlusFontFor(c.Font, out double em);
+        TextFont? font = PlusFontFor(c.Font, out _);
         Brush? brush = ToBrush(c.Brush);
         if (font is null || brush is null || c.Text.Length == 0)
         {
@@ -383,8 +383,6 @@ internal sealed partial class MetafileRenderer
 
         var b = new PathBuilder();
         Vector2 pen = c.Origin;
-        double k = em / font.Metrics.UnitsPerEm;
-        _ = k;
         for (int i = 0; i < c.Text.Length; i++)
         {
             int cp = c.Text[i];

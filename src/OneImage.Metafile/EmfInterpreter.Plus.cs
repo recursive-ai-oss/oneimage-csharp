@@ -99,7 +99,7 @@ internal sealed partial class EmfInterpreter
             }
 
             AddWork(1);
-            if (type >= 0x4001 && type != 0x4008 && type != 0x4004 && _inGetDc)
+            if (type != 0x4004 && _inGetDc)
             {
                 // The next EMF+ record after a GetDC section ends the GDI part.
                 EndGetDc();

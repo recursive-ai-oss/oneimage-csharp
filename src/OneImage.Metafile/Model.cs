@@ -203,7 +203,7 @@ public readonly record struct RectD(double Left, double Top, double Right, doubl
 /// </param>
 /// <param name="Description">The description string of the header (usually the creating application and the picture name), or empty.</param>
 /// <param name="RecordCount">The number of records in the file.</param>
-/// <param name="HasEmfPlus">Whether the file contains EMF+ records. They are not interpreted yet; see <see cref="DiagnosticCommand"/>.</param>
+/// <param name="HasEmfPlus">Whether the file contains EMF+ (GDI+) records. They are interpreted, and the GDI records of a dual file are then skipped.</param>
 /// <param name="IsEmfPlusOnly">Whether the file has EMF+ records and no GDI fallback for them (it then draws nothing without them).</param>
 public sealed record MetafileInfo(
     MetafileKind Kind,

@@ -18,8 +18,7 @@ namespace OneImage.Metafile;
 /// <para>
 /// Enhanced metafiles (EMF) and Windows metafiles (WMF, with or without the placeable header) are read. A WMF is translated record by record to
 /// the equivalent EMF records first (as Windows does), so both share one interpreter; a WMF that embeds an EMF in its comment records is
-/// interpreted from the embedded file (<see cref="MetafileReadOptions.PreferEmbeddedEmf"/>). EMF+ records are detected (<see cref="MetafileInfo.HasEmfPlus"/>) but not interpreted, so a file that carries its
-/// drawing as GDI records as well (EMF+ "dual") renders from those.
+/// EMF+ (GDI+) records are interpreted (<see cref="MetafileInfo.HasEmfPlus"/>); in a dual file they win and the GDI records that GDI+ itself skips are not played.
 /// </para>
 /// </remarks>
 public sealed class MetafileDocument

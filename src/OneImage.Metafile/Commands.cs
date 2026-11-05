@@ -335,7 +335,7 @@ public sealed record DrawTextCommand(
     };
 }
 
-/// <summary>A comment record (GDI <c>GdiComment</c>) passed through unchanged. EMF+ comments are reported with <see cref="Kind"/> <see cref="CommentKind.EmfPlus"/>.</summary>
+/// <summary>A comment record (GDI <c>GdiComment</c>) passed through unchanged. EMF+ comments are interpreted into other commands and are not passed through.</summary>
 /// <param name="Kind">What kind of comment this is.</param>
 /// <param name="Data">The comment data without the record header (for public comments also without the identifier).</param>
 public sealed record CommentCommand(CommentKind Kind, ReadOnlyMemory<byte> Data) : DrawingCommand

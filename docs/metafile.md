@@ -32,7 +32,8 @@ Commands are records in `OneImage.Metafile`; each has a language-neutral `Name` 
 | `blit` | A decoded bitmap (RGBA) with source and destination rectangles, the ternary raster operation, mask or color key, and constant alpha. |
 | `gradient-fill` | GDI `GradientFill`: vertices, indices, rectangle (horizontal/vertical) or triangle mode. |
 | `draw-text` | Text as UTF-16 with the resolved `FontSpec` (face, height, weight, flags, escapement), color, alignment, per-character advances when the record has them, and the opaque or clipped rectangle. Fonts are not resolved here: the renderer chooses the face. |
-| `comment` | A metafile comment (EMF+ is detected and reported, not interpreted). |
+| `comment` | A metafile comment (EMF+ records are interpreted, see below, and do not appear here). |
+| `clear`, `rendering-hints`, `draw-string`, `draw-glyphs`, `draw-image` | GDI+ only: clear the surface, the smoothing / compositing / pixel-offset / interpolation / text hints, a string in a layout rectangle, glyphs at positions, a bitmap in a parallelogram. |
 | `diagnostic` | Something the interpreter skipped or could not honour, with the record index, a severity and a message. |
 
 A walk is cheap: `MetafileDocument.Parse` interprets once; `Play` can be called any number of times. Geometry, pen widths and text stay in logical units under the current transform, as on a canvas, so a consumer that draws vectors (a PDF writer, say) keeps the picture resolution-independent. `MetafileReadOptions.MeasureText` lets the caller supply text widths for records that carry none (needed for text alignment and the update-current-position mode).
@@ -66,7 +67,7 @@ All record types 1–122 of [MS-EMF] 2.1.1 are dispatched.
 
 | Area | Records |
 |---|---|
-| Header, EOF, comments | `HEADER`, `EOF`, `COMMENT` (EMF+ detected, not interpreted) |
+| Header, EOF, comments | `HEADER`, `EOF`, `COMMENT` (EMF+ records inside it are interpreted, see EMF+) |
 | State | `SETMAPMODE`, window/viewport extents and origins, `SCALE*EXTEX`, `SETWORLDTRANSFORM`, `MODIFYWORLDTRANSFORM`, `SAVEDC`/`RESTOREDC`, `SETBKMODE`, `SETBKCOLOR`, `SETTEXTCOLOR`, `SETTEXTALIGN`, `SETTEXTJUSTIFICATION`, `SETPOLYFILLMODE`, `SETROP2`, `SETSTRETCHBLTMODE`, `SETARCDIRECTION`, `SETMITERLIMIT`, `SETBRUSHORGEX`, `SETLAYOUT` (left-to-right only) |
 | Objects | `CREATEPEN`, `EXTCREATEPEN`, `CREATEBRUSHINDIRECT` (solid, hollow, hatch), `CREATEMONOBRUSH`, `CREATEDIBPATTERNBRUSHPT`, `EXTCREATEFONTINDIRECTW`, `SELECTOBJECT` (including stock objects), `DELETEOBJECT`; palette and color-space objects are accepted and ignored |
 | Lines and shapes | `MOVETOEX`, `LINETO`, `POLYLINE`/`POLYLINETO`/`POLYGON`/`POLYBEZIER`/`POLYBEZIERTO` (16 and 32-bit forms), `POLYPOLYLINE`/`POLYPOLYGON`, `POLYDRAW`, `RECTANGLE`, `ELLIPSE`, `ROUNDRECT`, `ARC`, `ARCTO`, `CHORD`, `PIE`, `ANGLEARC`, `SETPIXELV` |
@@ -125,6 +126,19 @@ The remaining differences are the same as for EMF; text_styled is lowest because
 
 `WIDENPATH`, `SETMETARGN`, `EXTFLOODFILL`, text inside a path bracket, glyph-index text (treated as code points), vertical advances in `ExtTextOut` (`PDY`), the `XformSrc` of blits, `DIB_PAL_COLORS` bitmaps, JPEG or PNG compressed DIBs, right-to-left layout, and EMF+ records. Skipped records never stop the interpretation.
 
+## EMF+ (GDI+)
+
+Files recorded by GDI+ keep their drawing in EMF+ records inside `EMR_COMMENT` records. The interpreter walks them with a graphics state of its own (world, page and container transforms, saved states) and produces the same command stream as for GDI records.
+
+- **Dual and EMF+-only files.** Once the EMF+ header is seen the GDI records are skipped, as GDI+ itself does, so a dual file is drawn once: the EMF+ drawing wins. Records between an `EmfPlusGetDC` record and the next EMF+ record are GDI records and are played, in the EMF+ world transform that was in force. (Windows renders both kinds of file the same, and so does the test below.)
+- **Units.** EMF+ coordinates are in reference-device pixels: the world transform, then the page transform (`SetPageTransform`; inches, points, millimeters, documents and display units use the header's dpi), then the container base. They are folded into one `set-transform`. The pixel grid needs no half-pixel shift (shapes at integer coordinates cover the same pixels as in GDI+).
+- **Containers.** `BeginContainer` maps its source rectangle onto its destination rectangle in the parent's coordinates and starts a fresh world transform; its page unit is taken as pixels. `Save`/`Restore`/`EndContainer` share one stack and map to `save`/`restore`.
+- **Objects.** Brushes (solid, hatch, texture, linear and path gradient), pens (dash styles and custom dashes, dash offset and cap, joins, inset alignment on rectangles and ellipses), paths, regions (a tree of rectangles and paths, combined with the exact path booleans), images (bitmaps in all pixel formats, compressed images through the core decoders, embedded EMF files played as commands inside their destination), fonts, string formats and image attributes, including objects that are split across records. Limits: `MaxPlusObjectBytes` for an object (and the sum of its parts), `MaxNestedMetafileDepth` for metafiles inside images; points, regions, bitmaps, saves and text use the existing limits.
+- **Drawing.** Clear, fill and draw of rectangles, polygons, ellipses, pies, arcs, lines, Beziers, cardinal splines (open, closed, with offset and segment count), paths and regions; images (`DrawImage`, `DrawImagePoints`), strings and driver strings; clip records with all combine modes (Complement is replaced by Replace, with a warning), reset and offset.
+- **Hints.** Smoothing (anti-aliasing), source-copy compositing and the interpolation mode change the raster output; the others are carried in `rendering-hints`.
+- **Fidelity choices measured against GDI+.** Arc and pie angles are ray angles from the ellipse center, converted to the ellipse's parametric angle. A path's winding fill mode is bit `0x2000` of its flags (the table in [MS-EMFPLUS] does not list it). Strings without a string format have a margin of 1/6 em on both sides, as GDI+ draws them; the first baseline is the ascent below the top of the layout rectangle.
+- **Gaps (each reports a diagnostic).** Triangle, anchor and custom pen line caps (drawn flat), compound pens (drawn solid), image effects and color matrices, path gradient blend ramps, `EmfPlusStrokeFillPath` (no defined layout), WMF images inside EMF+, multi-format records, glyph-index driver strings (taken as characters), and the 54 hatch styles that are dithers or weaves are approximations of the GDI+ patterns.
+
 ## Limits and safety
 
 `MetafileLimits` bounds the file size, record and command counts, object table, path points, bitmap pixels (per bitmap and in total), save depth, region rectangles, text length, dash entries, and a total work budget; every size read from a record is checked against the record's own length and these limits before an allocation, and a bad record is skipped with a diagnostic rather than failing the file. A file that breaks a limit throws `ImageLimitException`; a file with a bad header throws `ImageFormatException`. Interpretation is iterative (no recursion on input) and checks for cancellation.
@@ -150,3 +164,18 @@ The remaining differences are the same as for EMF; text_styled is lowest because
 | pixels_misc | 99.58 | 99.65 | | | |
 
 The pictures are 384 px wide at their natural size, so both comparison sizes are fractional scales, and GDI rounds shape corners to its own grid: most of the remaining differences are one-pixel edge placement. The rest: text in fonts other than Arial (the system raster fonts and Arial itself are not available to the renderer), the smoothing GDI applies to stretched bitmaps, `WidenPath` and text in paths (not interpreted).
+
+`tests/testdata/metafile/oracle-gdiplus` holds 12 drawings recorded by GDI+ as EMF+ only and as EMF+ dual, with what GDI+ rendered for each (`WindowsGdiPlusReferenceTests`; the page-unit case could not be recorded by GDI+). Agreement on pixels (tolerance 48 per channel, anti-aliased, test fonts instead of Arial) for both variants, which render identically:
+
+| Case | 256x256 | 160x120 | Case | 256x256 | 160x120 |
+|---|---|---|---|---|---|
+| antialias | 99.12 | 98.23 | gradients | 98.09 | 97.30 |
+| brushes | 92.49 | 91.08 | images | 99.55 | 99.93 |
+| clip | 99.42 | 98.48 | paths_curves | 98.59 | 97.76 |
+| compositing | 100.00 | 100.00 | pens | 96.98 | 94.74 |
+| fill_alpha | 99.73 | 98.89 | text | 93.44 | 92.45 |
+| transform_container | 99.02 | 98.30 | | | |
+
+The brushes case loses most on the hatch patterns that are approximations and on texture phase at a scale of two thirds; the text case on the fonts (the machine had Arial, the tests use Noto Sans); the pens case on triangle caps and compound lines.
+
+The pictures are 384 px wide at their natural size, so both comparison sizes are fractional scales, and GDI rounds shape corners to its own grid: most of the remaining differences are one-pixel edge placement. The rest: text in fonts other than Arial (the system raster fonts and Arial itself are not available to the renderer), the smoothing GDI applies to stretched bitmaps, `WidenPath` and text in paths (not interpreted), and ROP2 modes other than copy where GDI does not apply a fill under a wide pen's overlap twice (`rop2`).
