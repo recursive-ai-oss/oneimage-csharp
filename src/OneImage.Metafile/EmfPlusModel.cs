@@ -120,7 +120,9 @@ public sealed record RenderingHintsCommand(
 /// <param name="NoClip">Whether text may show outside the rectangle.</param>
 /// <param name="Trimming">The GDI+ trimming number (0 none, 1 character, 2 word, 3-5 ellipsis).</param>
 /// <param name="HasFormat">Whether the file has a string format object for the string; without one GDI+ defaults apply (near alignment, wrapping, a margin of one sixth of an em on each side).</param>
-public sealed record StringFormatSpec(int Alignment, int LineAlignment, bool NoWrap, bool Vertical, bool RightToLeft, bool NoClip, int Trimming, bool HasFormat);
+/// <param name="LeadingMargin">The space before each line, as a fraction of the em size (GDI+ default 1/6).</param>
+/// <param name="TrailingMargin">The space after each line, as a fraction of the em size (GDI+ default 1/6).</param>
+public sealed record StringFormatSpec(int Alignment, int LineAlignment, bool NoWrap, bool Vertical, bool RightToLeft, bool NoClip, int Trimming, bool HasFormat, double LeadingMargin = 1.0 / 6, double TrailingMargin = 1.0 / 6);
 
 /// <summary>Draws a string in a layout rectangle (GDI+ <c>DrawString</c>). The renderer breaks the lines.</summary>
 /// <param name="Text">The characters.</param>

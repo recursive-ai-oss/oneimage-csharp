@@ -53,7 +53,7 @@ internal sealed partial class EmfInterpreter
     /// <summary>Plays a GDI record, unless EMF+ is in charge: EMF+ players skip the GDI records except inside a GetDC section.</summary>
     private void DispatchGdi(uint type, ReadOnlyMemory<byte> rec)
     {
-        if (_plusMode && !_inGetDc)
+        if (_plusMode && !_inGetDc && type != 70)
         {
             return;
         }
@@ -217,6 +217,7 @@ internal sealed partial class EmfInterpreter
 
         _ = flags; // bit 0 says "dual"; the GDI records of a dual file are skipped whether or not it is set
         _gs = new PlusGs { Smooth = false };
+        EmitHints();
     }
 
     // ---- GetDC sections ----------------------------------------------------------------------------------------------

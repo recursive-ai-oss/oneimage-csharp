@@ -10,13 +10,14 @@ namespace OneImage.Metafile;
 /// Draws a command stream on a <see cref="Canvas"/> with the drawing engine. One instance renders one rectangle of the output; the output is the
 /// picture rectangle of the file scaled to the target size.
 /// </summary>
-internal sealed class MetafileRenderer : DrawingCommandVisitor
+internal sealed partial class MetafileRenderer : DrawingCommandVisitor
 {
     private readonly Canvas _canvas;
     private readonly int _w;
     private readonly int _h;
     private readonly Matrix3x2 _out;
-    private readonly bool _aa;
+    private readonly bool _aaOption;
+    private bool _aa;
     private readonly FontResolver _fonts;
     private readonly CancellationToken _ct;
     private readonly Stack<(Matrix3x2 Ctm, CorePath? Clip, IntersectionRule Rule)> _stack = new();
@@ -33,6 +34,7 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
         _h = canvas.Height;
         _out = output;
         _aa = antialias;
+        _aaOption = antialias;
         _fonts = fonts;
         _ct = ct;
     }
@@ -43,13 +45,18 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
 
     // ---- state ---------------------------------------------------------------------------------------------------------
 
-    public override void VisitSaveState(SaveStateCommand command) => _stack.Push((_ctm, _clip, _clipRule));
+    public override void VisitSaveState(SaveStateCommand command)
+    {
+        _stack.Push((_ctm, _clip, _clipRule));
+        PushHints();
+    }
 
     public override void VisitRestoreState(RestoreStateCommand command)
     {
         if (_stack.Count > 0)
         {
             (_ctm, _clip, _clipRule) = _stack.Pop();
+            PopHints();
         }
     }
 
@@ -202,7 +209,7 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
                 }
 
             default:
-                return null;
+                return PlusBrush(spec);
         }
     }
 
@@ -257,7 +264,7 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
             Brush? brush = ToBrush(spec);
             if (brush is not null)
             {
-                _canvas.Fill(brush, path, _aa, rule, 1f, BlendMode.Normal, AlphaComposition.SrcOver, false, Xf, _clip, _clipRule);
+                _canvas.Fill(brush, path, _aa, rule, 1f, BlendMode.Normal, Composition, false, Xf, _clip, _clipRule);
             }
 
             return;
@@ -280,12 +287,12 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
             // One device pixel wide whatever the scale: stroke the already transformed outline.
             path = path.Transform(xf);
             transform = null;
-            return new Pen(brush, 1f, join, cap, miter, dashes ?? default);
+            return new Pen(brush, 1f, join, cap, miter, dashes ?? default, DashOffset(pen));
         }
 
         double width = Math.Max(pen.Width, 1 / scale);
         transform = xf;
-        return new Pen(brush, (float)width, join, cap, miter, dashes ?? default);
+        return new Pen(brush, (float)width, join, cap, miter, dashes ?? default, DashOffset(pen));
     }
 
     public override void VisitStrokePath(StrokePathCommand command)
@@ -334,7 +341,7 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
         CorePath path = mpath.ToDrawingPath();
         Brush brush = pen.Brush is not null && ToBrush(pen.Brush) is { } pb ? pb : Brush.Solid(color);
         Pen p = MakePen(pen, brush, out Matrix3x2? transform, ref path);
-        target.Draw(p, path, aa, 1f, BlendMode.Normal, AlphaComposition.SrcOver, false, transform, _clip, _clipRule);
+        target.Draw(p, path, aa, 1f, BlendMode.Normal, ReferenceEquals(target, _canvas) ? Composition : AlphaComposition.SrcOver, false, transform, _clip, _clipRule);
     }
 
     // ---- binary raster operations --------------------------------------------------------------------------------------

@@ -1021,7 +1021,7 @@ internal sealed partial class EmfInterpreter
         r.F32();
         int trimming = (int)r.U32();
         return new PlusFormatObj(
-            new StringFormatSpec(align, lineAlign, (flags & 0x1000) != 0, (flags & 2) != 0, (flags & 1) != 0, (flags & 0x4000) != 0, trimming, true),
+            new StringFormatSpec(align, lineAlign, (flags & 0x1000) != 0, (flags & 2) != 0, (flags & 1) != 0, (flags & 0x4000) != 0, trimming, true, lead, trail),
             lead,
             trail);
     }
