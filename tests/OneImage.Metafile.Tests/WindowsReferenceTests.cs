@@ -18,6 +18,8 @@ public class WindowsReferenceTests
 
     public static IEnumerable<string> Cases() => Directory.GetFiles(Dir(), "*.emf").Select(Path.GetFileNameWithoutExtension).Order()!;
 
+    public static TheoryData<string> CaseData() => [.. Cases()];
+
     /// <summary>Renders one case at <paramref name="size"/> square and returns (pixels that differ, total, size).</summary>
     internal static (int Diff, int Total, double Fraction) Compare(string name, int size, int tolerance = 48)
     {
@@ -80,23 +82,16 @@ public class WindowsReferenceTests
         Assert.NotEmpty(lines);
     }
 
-    [Fact]
-    public void Probe()
+    /// <summary>
+    /// A floor, not a target: every case agrees with Windows on at least 95% of its pixels at both sizes. The differences that remain are
+    /// one-pixel edge placement at fractional scales (GDI rounds shape corners to its own pixel grid), fonts that are not Arial, bitmap
+    /// smoothing in stretched images, and the gaps listed in docs/metafile.md (WidenPath, text in paths).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CaseData))]
+    public void EveryCaseAgreesWithWindowsOnMostPixels(string name)
     {
-        string? o = Environment.GetEnvironmentVariable("ONEIMAGE_ORACLE_REPORT");
-        if (o is null) { return; }
-        var emf = new EmfBuilder(400).CreatePen(1, 0, 1, 0).Select(1).SelectStock(5).Rectangle(10, 10, 45, 80).Build();
-        var (px, w, h) = MetafileRenderTests.Render(emf);
-        var cfg = new ImageConfiguration().Add(new MetafileFormat(antialias: false));
-        Image nat = Image.Load(File.ReadAllBytes(Path.Combine(Dir(), "hatch.emf")), new LoadOptions { Configuration = cfg });
-        Rgba32[] np = nat.ToArray<Rgba32>();
-        var lines = new List<string> { $"{w}x{h}" };
-        lines.Add("row 30: " + string.Join(",", Enumerable.Range(0, w).Where(x => px[(30 * w) + x].A > 0)));
-        lines.Add("col 20: " + string.Join(",", Enumerable.Range(0, h).Where(y => px[(y * w) + 20].A > 0)));
-        lines.Add($"natural {nat.Width}x{nat.Height}");
-        lines.Add("nat row 30: " + string.Join(",", Enumerable.Range(0, nat.Width).Where(x => np[(30 * nat.Width) + x].A > 0 && np[(30 * nat.Width) + x].R < 100)));
-        MetafileDocument d = MetafileDocument.Load(Path.Combine(Dir(), "hatch.emf"));
-        lines.AddRange(d.Commands.Take(14).Select(c => c.Name + " " + string.Join(";", c.Describe().Select(kv => kv.Key + "=" + kv.Value))));
-        File.WriteAllLines(o + ".probe", lines);
+        Assert.True(Compare(name, 256).Fraction < 0.05, name + " at 256");
+        Assert.True(Compare(name, 512).Fraction < 0.05, name + " at 512");
     }
 }

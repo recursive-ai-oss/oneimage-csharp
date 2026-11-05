@@ -177,7 +177,8 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
                 return Brush.Solid(s.Color);
             case HatchBrushSpec h:
                 {
-                    Vector2 o = Vector2.Transform(h.Origin, _out);
+                    // Windows applies the brush origin to the destination unscaled, whatever the stretch of the picture (measured from GDI output).
+                    Vector2 o = h.Origin;
                     return Brush.Pattern(h.Foreground, h.Background ?? default, Cells(h.Kind), Matrix3x2.CreateTranslation((float)Math.Round(o.X), (float)Math.Round(o.Y)));
                 }
 
@@ -196,7 +197,7 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
                         }
                     }
 
-                    Vector2 o = Vector2.Transform(p.Origin, _out);
+                    Vector2 o = p.Origin;
                     return Brush.FromImage(ImageOf(rgba, p.Bitmap.Width, p.Bitmap.Height), null, 0, 0, Matrix3x2.CreateTranslation((float)Math.Round(o.X), (float)Math.Round(o.Y)), true);
                 }
 

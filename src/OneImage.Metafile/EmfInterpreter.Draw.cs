@@ -32,6 +32,28 @@ internal sealed partial class EmfInterpreter
         [9, 3, 3, 3, 3, 3],
     ];
 
+    /// <summary>
+    /// Dash patterns of a wide (geometric) pen, measured from Windows output: the unit is the pen width and the patterns are dash 3 on 1 off,
+    /// dot 1 on 1 off, dash-dot 3 1 1 1 and dash-dot-dot 3 1 1 1 1 1. With round or square caps the cap is part of the dash, so each dash
+    /// is shortened by the width and the gap grows by what was taken (a round-capped dot is a disc of the pen width every two widths).
+    /// </summary>
+    private static double[] GeometricDashes(uint style, double width, LineCap cap)
+    {
+        double[] units = style switch { 1 => [3, 1], 2 => [1, 1], 3 => [3, 1, 1, 1], _ => [3, 1, 1, 1, 1, 1] };
+        double[] d = [.. units.Select(u => u * width)];
+        if (cap != LineCap.Flat)
+        {
+            for (int i = 0; i + 1 < d.Length; i += 2)
+            {
+                double taken = Math.Min(d[i], width);
+                d[i] -= taken;
+                d[i + 1] += taken;
+            }
+        }
+
+        return d;
+    }
+
     private PenSpec? CurrentPen()
     {
         PenObj p = _dc.Pen ?? DefaultPen;
@@ -54,8 +76,14 @@ internal sealed partial class EmfInterpreter
         double[]? dashes = null;
         if (style is >= 1 and <= 4 && (!p.Legacy || !geometric))
         {
-            double scale = geometric && width > 1 ? width / 6 : 1;
-            dashes = [.. DashBase[style].Select(v => v * scale)];
+            if (geometric && width > 1)
+            {
+                dashes = GeometricDashes(style, width, cap);
+            }
+            else
+            {
+                dashes = [.. DashBase[style]];
+            }
         }
         else if (style == 7 && p.UserDashes is { Length: > 0 } user)
         {

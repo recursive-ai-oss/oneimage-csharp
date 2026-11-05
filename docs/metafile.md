@@ -44,18 +44,20 @@ A walk is cheap: `MetafileDocument.Parse` interprets once; `Play` can be called 
 - **Size.** The natural size is the header's reference device size of the frame, in pixels (`Identify` reads the header only). The decoder advertises `RenderAtSize`, so `Resize`/`Thumbnail` draw at the final size. Cosmetic pens stay one output pixel wide whatever the scale; geometric pens scale with the picture.
 - **Anti-aliasing** is on by default and uses the drawing engine's exact-area coverage. `antialias: false` gives GDI-like hard edges, which is how the Windows comparison runs. Windows GDI itself does not anti-alias, so a default render differs from GDI along edges.
 - **Background** is transparent unless `background` is given. Raster operations that read the destination (XOR, `PATINVERT`, `SRCAND`...) treat a transparent destination as white.
-- **Fonts** come from `MetafileFontOptions`: your `FontCollection`, optionally installed system fonts, a substitution table (`Substitutions`), and a `DefaultFamily`. Common Windows faces (Arial, Times New Roman, Courier New, ...) map to generic families when not present. Text is drawn from outlines with the Text package; glyph positions come from the record's advances when present.
-- **Sampling.** Bitmaps are drawn with nearest-neighbour sampling when `STRETCH_DELETESCANS`/`STRETCH_ANDSCANS`/`ORSCANS` is set and bilinear otherwise.
+- **Fonts** come from `MetafileFontOptions`: your `FontCollection`, optionally installed system fonts, a substitution table (`Substitutions`), and a `DefaultFamily`. Common Windows faces (Arial, Segoe UI, Tahoma, Times New Roman, ...) map to similar installed families when not present. Text is drawn from outlines with the Text package; glyph positions come from the record's advances when present.
+- **Sampling.** Bitmaps are sampled bilinearly in `STRETCH_HALFTONE` mode and nearest-neighbour in the others.
 
-## Geometry conventions (defaults to confirm against Windows output)
+## Geometry conventions (measured from Windows output)
 
-These are choices where GDI's behaviour is not written in [MS-EMF]; each is kept in one place and noted as such in the code.
+Where [MS-EMF] does not say how GDI behaves, the renderer follows what Windows GDI drew for the same files (see the last section).
 
-- **Strokes** are placed so that a one-pixel pen on integer coordinates fills one row or column of pixels (the geometry is shifted half a reference-device pixel). Rectangle, ellipse and round-rectangle outlines are drawn half a pixel inside the right and bottom edges, as GDI excludes them. `PS_INSIDEFRAME` insets by half the pen width.
-- **Pens.** A legacy pen of width 0 or 1 is cosmetic (one device pixel, ignores the transform); wider legacy pens are geometric with round caps and joins. Extended pens follow `PS_COSMETIC`/`PS_GEOMETRIC`. Cosmetic dash patterns are 18/6 (dash), 3/3 (dot), 9/6/3/6 (dash-dot) and 9/3/3/3/3/3 (dash-dot-dot) pixels; a geometric pen scales those by width/6.
-- **Hatch brushes** are 8×8 patterns anchored at the brush origin; horizontal and vertical lines are on row/column 4, diagonals pass through the corners.
+- **Shape boxes are inclusive.** GDI records `Rectangle(10, 10, 45, 80)` as 10, 10, 44, 79 and plays the box back covering that last pixel, so rectangles, ellipses and rounded rectangles extend one device pixel past the recorded right and bottom edge. Arc bounding boxes are used as recorded.
+- **Strokes** are placed so that a one-pixel pen on integer coordinates fills one row or column of pixels: the geometry is shifted half a reference-device pixel, and box outlines are drawn half a pixel inside the box edge. `PS_INSIDEFRAME` insets by half the pen width.
+- **Pens.** A legacy pen of width 0 or 1 is cosmetic (one device pixel, ignores the transform); wider legacy pens are geometric with round caps and joins. Extended pens follow `PS_COSMETIC`/`PS_GEOMETRIC`. Cosmetic dash patterns are 18/6 (dash), 3/3 (dot), 9/6/3/6 (dash-dot) and 9/3/3/3/3/3 (dash-dot-dot) pixels. A geometric pen counts in pen widths: dash 3 on 1 off, dot 1 on 1 off, dash-dot 3 1 1 1, dash-dot-dot 3 1 1 1 1 1; with round or square caps the cap belongs to the dash, so a round-capped dot is a disc the width of the pen every two widths. User-style dash lengths are in logical units.
+- **Hatch brushes** are 8x8 cells in output pixels (they do not scale with the picture), anchored at the brush origin, which is also not scaled: the horizontal line is on row 3 and the vertical line on column 4 of the cell, the forward diagonal is x = y and the backward diagonal x + y = 7.
 - **Region data** (clip regions) is in logical units, per the specification.
 - **Gradient fills** ignore the vertex alpha.
+- **`SelectClipPath` with an empty path** leaves the clip unchanged (GDI fails the call; this happens for a bracket that held only text drawn with a bitmap font).
 
 ## Record coverage
 
@@ -86,4 +88,22 @@ Binary raster operations (`SETROP2`, 16 modes) and ternary operations (the 256 `
 
 ## Checked against Windows
 
-See the comparison section below once the Windows reference renderings are in the repository.
+`tests/testdata/metafile/oracle` holds 25 EMF files recorded with real GDI calls (rectangles, pens, arcs, polygons, Beziers, paths, clips, hatch and DIB brushes, bitmaps, ROPs, text, world transforms, mapping modes, gradients, alpha blending, regions, DC save/restore, stock objects) together with what `PlayEnhMetaFile` drew for each into a white 32-bit bitmap of 256x256 and 512x512 (a 150% display, ClearType on; the header's reference device is 2496x1664 px, 317x211 mm). Both the files and the images are generated by us; the notice beside them says so. `WindowsReferenceTests` renders each file without anti-aliasing over white, stretched to the same size, and counts pixels whose channels differ by more than 48; `EveryCaseAgreesWithWindowsOnMostPixels` keeps each case above 95%.
+
+| Case | 256 px | 512 px | Case | 256 px | 512 px |
+|---|---|---|---|---|---|
+| alphablend | 100.00 | 100.00 | polys | 99.20 | 99.68 |
+| arcs | 99.22 | 99.69 | rect_basic | 99.60 | 99.72 |
+| beziers | 99.77 | 99.86 | regions | 98.16 | 98.41 |
+| bitblt_dc | 99.84 | 99.87 | rop2 | 96.04 | 95.92 |
+| clip_path | 99.82 | 99.70 | state_stack | 99.10 | 99.33 |
+| clip_rect | 99.95 | 99.98 | stock_objects | 95.80 | 98.61 |
+| dib_pattern | 98.86 | 99.38 | stretchdibits | 97.48 | 98.02 |
+| geom_pens | 99.66 | 99.79 | text_basic | 98.12 | 98.73 |
+| gradient | 99.77 | 99.97 | text_styled | 97.41 | 97.35 |
+| hatch | 97.35 | 99.05 | world_xform | 99.05 | 99.28 |
+| lines_pens | 99.14 | 99.66 | mapmodes | 98.18 | 99.24 |
+| mmtext_raw | 98.50 | 99.38 | paths | 97.29 | 97.28 |
+| pixels_misc | 99.58 | 99.65 | | | |
+
+The pictures are 384 px wide at their natural size, so both comparison sizes are fractional scales, and GDI rounds shape corners to its own grid: most of the remaining differences are one-pixel edge placement. The rest: text in fonts other than Arial (the system raster fonts and Arial itself are not available to the renderer), the smoothing GDI applies to stretched bitmaps, `WidenPath` and text in paths (not interpreted), and ROP2 modes other than copy where GDI does not apply a fill under a wide pen's overlap twice (`rop2`).
