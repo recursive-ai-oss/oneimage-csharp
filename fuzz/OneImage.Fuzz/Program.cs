@@ -27,6 +27,8 @@ internal static class Program
         ["gif"] = CodecTargets.Gif,
         ["webp"] = CodecTargets.WebP,
         ["psd"] = PsdTarget.Run,
+        ["emf"] = MetafileTarget.Emf,
+        ["wmf"] = MetafileTarget.Wmf,
         ["jbig2"] = Jbig2Target.Run,
         ["jpx"] = JpxTarget.Run,
         ["pdf"] = PdfTarget.Run,

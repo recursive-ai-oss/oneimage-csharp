@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [extra libFuzzer flags]
 #   fuzz/run.sh replay <target> <file>...        # run saved inputs once, without libFuzzer (reproduce a crash)
 #
-# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd jbig2 jpx pdf svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
+# Targets: jpeg inflate lzw icc exif tiff png bmp ico gif webp psd emf wmf jbig2 jpx pdf svg font breaking bidi complex brotli richtext sysfont svg-xml svg-render   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   DOTNET             the dotnet executable (default: dotnet from PATH)
@@ -46,6 +46,8 @@ case "$target" in
   gif)     seeds=gif;         prefix='\x00'; patterns='*.gif'; maxlen=65536 ;;
   webp)    seeds='';          prefix='\x00'; patterns='';      maxlen=65536 ;;
   psd)     seeds=psd;         prefix='';     patterns='*.psd *.psb'; maxlen=262144 ;;
+  emf)     seeds='';          prefix='';     patterns='';      maxlen=262144 ;;
+  wmf)     seeds='';          prefix='';     patterns='';      maxlen=262144 ;;
   jbig2)   seeds=jbig2;       prefix="\x01"; patterns="*.jb2"; maxlen=65536 ;;
   jpx)     seeds='';          prefix='';     patterns='';      maxlen=65536 ;;
   pdf)     seeds='';          prefix='';     patterns='';      maxlen=262144 ;;
@@ -104,6 +106,7 @@ fi
 [[ "$target" != svg-xml && "$target" != svg-render ]] || "$instrument" "$bin/OneImage.Svg.dll" >/dev/null
 [[ "$target" != psd ]] || "$instrument" "$bin/OneImage.Psd.dll" >/dev/null
 [[ "$target" != pdf ]] || "$instrument" "$bin/OneImage.Pdf.dll" >/dev/null
+[[ "$target" != emf && "$target" != wmf ]] || "$instrument" "$bin/OneImage.Metafile.dll" >/dev/null
 
 corpus="$work/corpus/$target"
 findings="$work/findings/$target"
@@ -165,6 +168,10 @@ if [[ "$target" == jpx ]]; then
       [[ -e "$out" ]] || { printf '\x00' >"$out"; cat "$f" >>"$out"; }
     done
   fi
+fi
+if [[ "$target" == emf || "$target" == wmf ]]; then
+  # Every committed metafile of the kind (EMF files include the EMF+ ones) that fits the input limit.
+  while IFS= read -r f; do cp -n "$f" "$corpus/seed-$(basename "$f")"; done < <(find "$root/tests/testdata/metafile" -name "*.$target" -size -256k | sort)
 fi
 if [[ "$target" == pdf ]]; then
   # The committed form files, plus any small PDFs in the folders named by ONEIMAGE_PDF_SEEDS (colon separated).

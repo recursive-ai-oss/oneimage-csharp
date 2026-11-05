@@ -70,6 +70,32 @@ public class TestDataTests
             {
                 Assert.Contains("damaged", path);
             }
+            catch (ImageLimitException)
+            {
+                Assert.Contains("fuzz-", path); // hostile coordinates beyond the drawing engine's range
+            }
+        }
+    }
+
+    [Fact]
+    public void FuzzFindingsParseAndDrawWithoutAnUntypedException()
+    {
+        // Each fuzz-* file made the renderer throw an argument exception once (an infinite pen width, a blit or brush whose
+        // transform could not be inverted, a path with a NaN point); they must now draw or fail with a typed error.
+        string[] files = [.. Directory.GetFiles(Dir(), "fuzz-*.emf"), .. Directory.GetFiles(Dir(), "fuzz-*.wmf")];
+        Assert.True(files.Length >= 4);
+        var config = new ImageConfiguration().Add(new MetafileFormat(fonts: MetafileRenderTests.TestFonts())).Add(new WmfFormat(fonts: MetafileRenderTests.TestFonts()));
+        foreach (string path in files)
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            try
+            {
+                Image image = Image.Load(bytes, new LoadOptions { Configuration = config }).Resize(width: 48);
+                Assert.NotEmpty(image.ToArray<Rgba32>());
+            }
+            catch (ImageException)
+            {
+            }
         }
     }
 }

@@ -116,6 +116,15 @@ public sealed class MetafilePath
     internal OneImage.Drawing.Path ToDrawingPath()
     {
         var b = new OneImage.Drawing.PathBuilder();
+        foreach (Vector2 pt in _points)
+        {
+            if (!float.IsFinite(pt.X) || !float.IsFinite(pt.Y))
+            {
+                // EMF+ carries floats; a path with a NaN or infinite point has no drawable shape.
+                return b.Build();
+            }
+        }
+
         int p = 0;
         bool open = false;
         foreach (PathVerb v in _verbs)

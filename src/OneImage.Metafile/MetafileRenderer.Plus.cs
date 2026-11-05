@@ -25,7 +25,7 @@ internal sealed partial class MetafileRenderer
         }
     }
 
-    private static float DashOffset(PenSpec pen) => pen.Plus is { } p ? (float)p.DashOffset : 0f;
+    private static float DashOffset(PenSpec pen) => pen.Plus is { } p && double.IsFinite(p.DashOffset) ? (float)Math.Clamp(p.DashOffset, -1e7, 1e7) : 0f;
 
     public override void VisitRenderingHints(RenderingHintsCommand command)
     {
@@ -48,6 +48,13 @@ internal sealed partial class MetafileRenderer
         {
             case LinearGradientBrushSpec l:
                 {
+                    // File values: a brush the drawing layer would refuse draws nothing.
+                    if (l.Stops.Count is 0 or > 1 << 16 || !IsInvertible(l.Transform * Xf) || !IsFinite(l.Start) || !IsFinite(l.End) || (l.End - l.Start).LengthSquared() < 1e-9f
+                        || l.Stops.Any(x => !float.IsFinite(x.Position)))
+                    {
+                        return null;
+                    }
+
                     var stops = new ColorStop[l.Stops.Count];
                     for (int i = 0; i < stops.Length; i++)
                     {
@@ -66,6 +73,11 @@ internal sealed partial class MetafileRenderer
             case PathGradientBrushSpec g:
                 {
                     Matrix3x2 m = g.Transform * Xf;
+                    if (g.Boundary.Count is < 3 or > 1 << 16 || g.BoundaryColors.Count != g.Boundary.Count || !IsFinite(Vector2.Transform(g.Center, m)) || g.Boundary.Any(b => !IsFinite(Vector2.Transform(b, m))))
+                    {
+                        return null;
+                    }
+
                     var pts = new Vector2[g.Boundary.Count];
                     for (int i = 0; i < pts.Length; i++)
                     {
@@ -84,8 +96,15 @@ internal sealed partial class MetafileRenderer
         }
     }
 
-    private Brush TextureBrush(TextureBrushSpec t)
+    private static bool IsFinite(Vector2 v) => float.IsFinite(v.X) && float.IsFinite(v.Y);
+
+    private Brush? TextureBrush(TextureBrushSpec t)
     {
+        if (!IsInvertible(t.Transform * Xf))
+        {
+            return null;
+        }
+
         RasterImage img = t.Image;
         int w = img.Width, h = img.Height;
         byte[] px = img.Rgba;
@@ -119,6 +138,12 @@ internal sealed partial class MetafileRenderer
     public override void VisitDrawImage(DrawImageCommand c)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         RasterImage img = c.Image;
         RectD s = c.Source.Normalized;
         if (s.Width <= 0 || s.Height <= 0)
@@ -145,6 +170,11 @@ internal sealed partial class MetafileRenderer
         Vector2 u = (c.DestTopRight - c.DestTopLeft) / (float)s.Width, v = (c.DestBottomLeft - c.DestTopLeft) / (float)s.Height;
         Vector2 origin = c.DestTopLeft + ((float)(x0 - s.Left) * u) + ((float)(y0 - s.Top) * v);
         var toLogical = new Matrix3x2(u.X, u.Y, v.X, v.Y, origin.X, origin.Y);
+        if (!IsInvertible(toLogical * Xf))
+        {
+            return;
+        }
+
         ImageSampling sampling = c.Interpolation == ImageInterpolation.Nearest ? ImageSampling.Nearest : ImageSampling.Bilinear;
         Brush brush = Brush.FromImage(ImageOf(crop, cw, ch), sampling, null, 0, 0, toLogical * Xf, false);
         Vector2 br = c.DestTopRight + c.DestBottomLeft - c.DestTopLeft;
@@ -196,6 +226,12 @@ internal sealed partial class MetafileRenderer
     public override void VisitDrawString(DrawStringCommand c)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         TextFont? font = PlusFontFor(c.Font, out double em);
         Brush? brush = ToBrush(c.Brush);
         if (font is null || brush is null || c.Text.Length == 0)
@@ -374,6 +410,12 @@ internal sealed partial class MetafileRenderer
     public override void VisitDrawGlyphs(DrawGlyphsCommand c)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         TextFont? font = PlusFontFor(c.Font, out _);
         Brush? brush = ToBrush(c.Brush);
         if (font is null || brush is null || c.Text.Length == 0)

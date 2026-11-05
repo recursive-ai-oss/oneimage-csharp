@@ -166,12 +166,6 @@ internal sealed partial class EmfInterpreter
 
     private void PlayNestedMetafile(PlusImageObj img, RectD src, Vector2 tl, Vector2 tr, Vector2 bl)
     {
-        if (img.MetafileType is 1 or 2)
-        {
-            Diag(DiagnosticSeverity.Warning, "A Windows metafile (WMF) embedded in an EMF+ image is not supported; it is skipped.");
-            return;
-        }
-
         if (NestingDepth + 1 > _lim.MaxNestedMetafileDepth)
         {
             Diag(DiagnosticSeverity.Warning, $"Metafiles embedded in EMF+ images nest deeper than {_lim.MaxNestedMetafileDepth}; the inner one is skipped.");
@@ -182,7 +176,18 @@ internal sealed partial class EmfInterpreter
         MetafileInfo ni;
         try
         {
-            var nested = new EmfInterpreter(img.Metafile, _options, _cancel) { NestingDepth = NestingDepth + 1 };
+            // MetafileDataType 1 and 2 are Windows metafiles (plain and placeable): convert the records to EMF and play those.
+            EmfInterpreter nested;
+            if (img.MetafileType is 1 or 2)
+            {
+                WmfConverter.Result wmf = new WmfConverter(img.Metafile, _options, _cancel).Convert(false);
+                nested = new EmfInterpreter(wmf.Emf, _options, wmf.Info, wmf.Map, _cancel) { NestingDepth = NestingDepth + 1 };
+            }
+            else
+            {
+                nested = new EmfInterpreter(img.Metafile, _options, _cancel) { NestingDepth = NestingDepth + 1 };
+            }
+
             ni = nested.Info;
             cmds = nested.Run();
         }

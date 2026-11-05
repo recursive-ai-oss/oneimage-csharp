@@ -448,6 +448,41 @@ public class EmfPlusTests
         Assert.True(doc.Commands.Count < 200);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WindowsMetafilesInImagesPlayThroughTheWmfPath(bool placeable)
+    {
+        WmfBuilder wmf = new WmfBuilder();
+        if (placeable)
+        {
+            wmf.Placeable(0, 0, 100, 100);
+        }
+        else
+        {
+            wmf.SetWindowOrg(0, 0).SetWindowExt(100, 100);
+        }
+
+        byte[] file = wmf.CreateBrush(0, WmfBuilder.Rgb(255, 0, 0)).Select(0).Rectangle(0, 0, 100, 100).Build();
+        var img = new Data().U32(0xDBC01002).U32(2).U32(placeable ? 2u : 1u).U32((uint)file.Length).Bytes(file);
+        byte[] emf = new EmfPlusBuilder().Object(5, 1, img).Record(0x401A, 0x4001, DrawImageData(100, 100, 20, 20, 40, 40)).Build();
+        MetafileDocument doc = Parse(emf);
+        Assert.DoesNotContain(doc.Diagnostics, d => d.Message.Contains("not supported", StringComparison.Ordinal));
+        Assert.NotEmpty(doc.Commands.OfType<FillPathCommand>());
+        var r = Render(emf);
+        Is(At(r, 40, 40), 255, 0, 0);
+        Clear(At(r, 10, 10));
+        Clear(At(r, 70, 70));
+    }
+
+    [Fact]
+    public void ADamagedWindowsMetafileInAnImageIsSkippedWithAWarning()
+    {
+        var img = new Data().U32(0xDBC01002).U32(2).U32(1).U32(12).Bytes(new byte[12]);
+        MetafileDocument doc = Parse(new EmfPlusBuilder().Object(5, 1, img).Record(0x401A, 0x4001, DrawImageData(100, 100, 20, 20, 40, 40)).Build());
+        Assert.Contains(doc.Diagnostics, d => d.Message.Contains("embedded metafile cannot be read", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void WrongPointCountsAndMissingObjectsAreReportedAndSkipped()
     {

@@ -234,6 +234,12 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
     public override void VisitFillPath(FillPathCommand command)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         if (command.Path.IsEmpty || command.Mix == MixMode.Nop || Outside(command.Path, 2))
         {
             return;
@@ -277,10 +283,11 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
     private Pen MakePen(PenSpec pen, Brush brush, out Matrix3x2? transform, ref CorePath path)
     {
         Matrix3x2 xf = Xf;
-        float[]? dashes = pen.Dashes is { Count: > 0 } d ? [.. d.Select(v => (float)Math.Max(v, 1e-3))] : null;
+        // File values reach the drawing pen unchecked, so keep them where the pen accepts them (NaN and infinities included).
+        float[]? dashes = pen.Dashes is { Count: > 0 } d ? [.. d.Take(Pen.MaxDashEntries).Select(v => (float)Math.Clamp(double.IsNaN(v) ? 1 : v, 1e-3, Pen.MaxWidth))] : null;
         StrokeCap cap = pen.Cap switch { LineCap.Square => StrokeCap.Square, LineCap.Flat => StrokeCap.Butt, _ => StrokeCap.Round };
         StrokeJoin join = pen.Join switch { LineJoin.Bevel => StrokeJoin.Bevel, LineJoin.Miter => StrokeJoin.Miter, _ => StrokeJoin.Round };
-        float miter = (float)Math.Max(1, pen.MiterLimit);
+        float miter = double.IsNaN(pen.MiterLimit) ? 10f : (float)Math.Clamp(pen.MiterLimit, 1, 1e6);
         double scale = Math.Sqrt(Math.Abs((xf.M11 * xf.M22) - (xf.M12 * xf.M21)));
         if (pen.IsCosmetic || scale <= 0)
         {
@@ -290,7 +297,7 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
             return new Pen(brush, 1f, join, cap, miter, dashes ?? default, DashOffset(pen));
         }
 
-        double width = Math.Max(pen.Width, 1 / scale);
+        double width = Math.Min(Math.Max(double.IsNaN(pen.Width) ? 0 : pen.Width, 1 / scale), Pen.MaxWidth);
         transform = xf;
         return new Pen(brush, (float)width, join, cap, miter, dashes ?? default, DashOffset(pen));
     }
@@ -298,6 +305,12 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
     public override void VisitStrokePath(StrokePathCommand command)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         if (command.Path.IsEmpty || command.Mix == MixMode.Nop || Outside(command.Path, command.Pen.IsCosmetic ? 2 : Math.Max(2, command.Pen.Width * 2)))
         {
             return;
@@ -424,6 +437,12 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
     public override void VisitBlit(BlitCommand c)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         Vector2 br = c.DestTopRight + c.DestBottomLeft - c.DestTopLeft;
         var quad = new MetafilePathBuilder(8);
         quad.MoveTo(c.DestTopLeft);
@@ -511,6 +530,10 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
         return px;
     }
 
+    internal static bool IsInvertible(Matrix3x2 m) =>
+        float.IsFinite(m.M11) && float.IsFinite(m.M12) && float.IsFinite(m.M21) && float.IsFinite(m.M22) && float.IsFinite(m.M31) && float.IsFinite(m.M32)
+        && Matrix3x2.Invert(m, out Matrix3x2 inv) && float.IsFinite(inv.M11) && float.IsFinite(inv.M12) && float.IsFinite(inv.M21) && float.IsFinite(inv.M22) && float.IsFinite(inv.M31) && float.IsFinite(inv.M32);
+
     private Brush? SourceBrush(BlitCommand c)
     {
         DeviceIndependentBitmap dib = c.Bitmap!;
@@ -562,6 +585,12 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
         var s2l = new Matrix3x2(u.X, u.Y, v.X, v.Y, c.DestTopLeft.X, c.DestTopLeft.Y);
         // GDI's halftone mode averages when it shrinks a bitmap and repeats pixels when it enlarges one (measured from Windows output).
         Matrix3x2 total = s2l * Xf;
+        if (!IsInvertible(total))
+        {
+            // A destination with no area (collinear or overflowing corners) draws nothing; the brush could not be built.
+            return null;
+        }
+
         bool shrinks = Math.Sqrt((total.M11 * total.M11) + (total.M12 * total.M12)) < 1 - 1e-6 || Math.Sqrt((total.M21 * total.M21) + (total.M22 * total.M22)) < 1 - 1e-6;
         ImageSampling sampling = c.Stretch == StretchMode.Halftone && shrinks ? ImageSampling.Bilinear : ImageSampling.Nearest;
         return Brush.FromImage(ImageOf(crop, sw, sh), sampling, null, 0, 0, total, false);
@@ -572,6 +601,12 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
     public override void VisitGradientFill(GradientFillCommand c)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         if (c.Mode == GradientMode.Triangle)
         {
             for (int i = 0; i + 2 < c.Indices.Count; i += 3)
@@ -616,6 +651,12 @@ internal sealed partial class MetafileRenderer : DrawingCommandVisitor
     public override void VisitDrawText(DrawTextCommand c)
     {
         _ct.ThrowIfCancellationRequested();
+        if (!IsInvertible(Xf))
+        {
+            // GDI and GDI+ draw nothing through a transform that collapses the plane (or overflows).
+            return;
+        }
+
         if (c.OpaqueRectangle is { } or)
         {
             Rect(or, c.OpaqueColor);
