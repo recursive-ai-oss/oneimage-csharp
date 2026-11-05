@@ -151,12 +151,13 @@ internal sealed partial class EmfInterpreter
             uint size = BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 4)..]);
             if (size >= 16 && off + size <= d.Length && BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 12)..]) == 0x2B464D45)
             {
-                // The EMF+ header record: Type(2) Flags(2) Size(4) DataSize(4) Version(4) EmfPlusFlags(4); bit 0 of the flags is "dual".
+                // The EMF+ header record starts after the comment's identifier: Type(2) Flags(2) Size(4) DataSize(4) Version(4) EmfPlusFlags(4).
+                // Bit 0 of the record's own Flags (offset 18 of the comment record) is "dual" ([MS-EMFPLUS] 2.3.3.3); the EmfPlusFlags field
+                // after the version only says whether the file was recorded for a video display.
                 bool dual = false;
-                if (size >= 16 + 12 + 8 + 4)
+                if (size >= 20 && off + 20 <= d.Length)
                 {
-                    uint flags = BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 16 + 4 + 12)..]);
-                    dual = (flags & 1) != 0;
+                    dual = (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 1) != 0;
                 }
 
                 return (true, !dual);

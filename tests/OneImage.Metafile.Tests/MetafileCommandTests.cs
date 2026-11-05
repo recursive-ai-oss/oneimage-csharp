@@ -141,6 +141,34 @@ public sealed class MetafileCommandTests
         Assert.Contains(doc.Diagnostics, d => d.Message.Contains("EMF+"));
     }
 
+    private static byte[] EmfPlusHeader(ushort recordFlags, uint emfPlusFlags)
+    {
+        // [MS-EMFPLUS] 2.3.3.3 EmfPlusHeader: Type, Flags (bit 0 = dual), Size, DataSize, Version, EmfPlusFlags (bit 0 = video display), DPI x and y.
+        var plus = new byte[28];
+        BinaryPrimitives.WriteUInt16LittleEndian(plus, 0x4001);
+        BinaryPrimitives.WriteUInt16LittleEndian(plus.AsSpan(2), recordFlags);
+        BinaryPrimitives.WriteUInt32LittleEndian(plus.AsSpan(4), 28);
+        BinaryPrimitives.WriteUInt32LittleEndian(plus.AsSpan(8), 16);
+        BinaryPrimitives.WriteUInt32LittleEndian(plus.AsSpan(12), 0xDBC01002);
+        BinaryPrimitives.WriteUInt32LittleEndian(plus.AsSpan(16), emfPlusFlags);
+        BinaryPrimitives.WriteUInt32LittleEndian(plus.AsSpan(20), 96);
+        BinaryPrimitives.WriteUInt32LittleEndian(plus.AsSpan(24), 96);
+        return plus;
+    }
+
+    [Theory]
+    [InlineData(1, 0, true)]   // dual, recorded for a printer
+    [InlineData(1, 1, true)]   // dual, recorded for a video display
+    [InlineData(0, 1, false)]  // EMF+ only, recorded for a video display: the display bit must not make it dual
+    [InlineData(0, 0, false)]
+    public void DualIsTheHeaderRecordFlagNotTheVideoDisplayFlag(int recordFlags, int emfPlusFlags, bool dual)
+    {
+        byte[] emf = new EmfBuilder().Comment("EMF+", EmfPlusHeader((ushort)recordFlags, (uint)emfPlusFlags)).Rectangle(1, 1, 5, 5).Build();
+        MetafileInfo info = MetafileDocument.Identify(emf);
+        Assert.True(info.HasEmfPlus);
+        Assert.Equal(!dual, info.IsEmfPlusOnly);
+    }
+
     [Fact]
     public void NotAnEmfIsAFormatError()
     {
