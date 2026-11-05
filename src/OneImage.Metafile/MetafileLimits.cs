@@ -18,6 +18,12 @@ public sealed class MetafileLimits
     /// <summary>Gets the most commands produced (default 8,000,000).</summary>
     public int MaxCommands { get; init; } = 8_000_000;
 
+    /// <summary>
+    /// Gets the most bytes of an enhanced metafile embedded in a Windows metafile (default 64 MiB). The declared size is checked before the
+    /// buffer is allocated.
+    /// </summary>
+    public int MaxEmbeddedEmfBytes { get; init; } = 64 << 20;
+
     /// <summary>Gets the most graphics objects alive at once, and so the largest object index (default 65,536).</summary>
     public int MaxObjects { get; init; } = 1 << 16;
 
@@ -64,4 +70,11 @@ public sealed class MetafileReadOptions
     /// per character is used. The raster renderer supplies a measurer based on the fonts it draws with.
     /// </summary>
     public Func<FontSpec, string, double>? MeasureText { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether a Windows metafile that carries an enhanced metafile in its comment records is interpreted from that
+    /// enhanced metafile (the default), which is how the applications that write such files intend them to be read. When <see langword="false"/>,
+    /// or when the embedded file is damaged, the WMF records themselves are drawn.
+    /// </summary>
+    public bool PreferEmbeddedEmf { get; init; } = true;
 }

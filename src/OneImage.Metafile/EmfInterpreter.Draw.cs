@@ -275,6 +275,12 @@ internal sealed partial class EmfInterpreter
     /// </summary>
     private void ExpandBox(ref double l, ref double t, ref double rr, ref double b)
     {
+        if (_wmf is not null)
+        {
+            // A Windows metafile records the box as it was passed, right and bottom exclusive.
+            return;
+        }
+
         Mat m = Ctm();
         if (!m.IsInvertible || !m.IsAxisAligned)
         {
@@ -330,18 +336,41 @@ internal sealed partial class EmfInterpreter
             st = sb = (t + b) / 2;
         }
 
+        // With a raster operation that depends on what is underneath, GDI keeps the brush out from under a wide pen, so no pixel is
+        // combined twice (measured from Windows output); with plain copying the pen covers the overlap anyway.
+        double fl = l, ft = t, fr = rr, fb = b;
+        bool fillEmpty = false;
+        if (!_inPath && pen is { IsCosmetic: false, Width: > 1 } && _dc.Rop2 != MixMode.CopyPen)
+        {
+            double hw = pen.Width / 2;
+            (fl, ft, fr, fb) = (sl + hw, st + hw, sr - hw, sb - hw);
+            fillEmpty = fl >= fr || ft >= fb;
+        }
+
         switch (kind)
         {
             case 0:
-                ArcGeometry.AddEllipse(fill, l, t, rr, b);
+                if (!fillEmpty)
+                {
+                    ArcGeometry.AddEllipse(fill, fl, ft, fr, fb);
+                }
+
                 ArcGeometry.AddEllipse(stroke, sl, st, sr, sb);
                 break;
             case 1:
-                fill.AddRectangle((float)l, (float)t, (float)rr, (float)b);
+                if (!fillEmpty)
+                {
+                    fill.AddRectangle((float)fl, (float)ft, (float)fr, (float)fb);
+                }
+
                 stroke.AddRectangle((float)sl, (float)st, (float)sr, (float)sb);
                 break;
             default:
-                ArcGeometry.AddRoundRect(fill, l, t, rr, b, cw, ch);
+                if (!fillEmpty)
+                {
+                    ArcGeometry.AddRoundRect(fill, fl, ft, fr, fb, cw, ch);
+                }
+
                 ArcGeometry.AddRoundRect(stroke, sl, st, sr, sb, cw, ch);
                 break;
         }
@@ -948,18 +977,19 @@ internal sealed partial class EmfInterpreter
                 return;
             }
 
-            // FrameRegion: the region grown by the frame size in four directions, without the region itself.
+            // FrameRegion: GDI paints the frame inside the region, as the part of it that is not still covered when the region is moved by the
+            // frame size in each of the four directions (measured from Windows output).
             double w = Int(r, 32), h = Int(r, 36);
-            var grown = new MetafilePathBuilder(_lim.MaxPathPoints);
+            Matrix3x2 toDevice = Ctm().ToMatrix3x2();
             foreach ((double dx, double dy) in new[] { (-w, 0.0), (w, 0.0), (0.0, -h), (0.0, h) })
             {
-                grown.AddPath(region.Transform(Matrix3x2.CreateTranslation((float)dx, (float)dy)));
+                Emit(new SaveStateCommand());
+                Emit(new ClipCommand(ClipMode.Intersect, region.Transform(toDevice)));
+                Emit(new ClipCommand(ClipMode.Exclude, region.Transform(Matrix3x2.CreateTranslation((float)dx, (float)dy) * toDevice)));
+                Emit(new FillPathCommand(region, FillRule.NonZero, brush, _dc.Rop2));
+                Emit(new RestoreStateCommand());
             }
 
-            Emit(new SaveStateCommand());
-            Emit(new ClipCommand(ClipMode.Exclude, region.Transform(Ctm().ToMatrix3x2())));
-            Emit(new FillPathCommand(grown.Build(), FillRule.NonZero, brush, _dc.Rop2));
-            Emit(new RestoreStateCommand());
             return;
         }
 
@@ -1260,7 +1290,7 @@ internal sealed partial class EmfInterpreter
 
     // ---- text ----------------------------------------------------------------------------------------------------------
 
-    private static string Decode8(ReadOnlySpan<byte> s)
+    internal static string Decode8(ReadOnlySpan<byte> s)
     {
         var chars = new char[s.Length];
         for (int i = 0; i < s.Length; i++)

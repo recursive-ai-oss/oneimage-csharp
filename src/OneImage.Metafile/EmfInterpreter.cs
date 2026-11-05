@@ -66,6 +66,7 @@ internal sealed partial class EmfInterpreter
     private bool _inPath;
     private MetafilePath? _closedPath;
     private double _pxPerMmX = 1, _pxPerMmY = 1;
+    private readonly WmfRecordMap? _wmf;
 
     public EmfInterpreter(ReadOnlyMemory<byte> data, MetafileReadOptions options, CancellationToken cancel)
     {
@@ -75,6 +76,17 @@ internal sealed partial class EmfInterpreter
         _cancel = cancel;
         _bracket = new MetafilePathBuilder(_lim.MaxPathPoints);
         Info = ReadInfo(data, _lim);
+    }
+
+    /// <summary>
+    /// Interprets an enhanced metafile that was synthesized from a Windows metafile. <paramref name="info"/> describes the original picture and
+    /// <paramref name="map"/> gives the record numbers and function codes diagnostics should name.
+    /// </summary>
+    public EmfInterpreter(ReadOnlyMemory<byte> data, MetafileReadOptions options, MetafileInfo info, WmfRecordMap map, CancellationToken cancel)
+        : this(data, options, cancel)
+    {
+        Info = info;
+        _wmf = map;
     }
 
     public MetafileInfo Info { get; private set; }
@@ -177,12 +189,14 @@ internal sealed partial class EmfInterpreter
         ReadOnlyMemory<byte> all = _data;
         int off = 0;
         int length = all.Length;
+        int seq = 0;
         while (off + 8 <= length)
         {
             _cancel.ThrowIfCancellationRequested();
             ReadOnlySpan<byte> head = all.Span.Slice(off, 8);
             uint type = BinaryPrimitives.ReadUInt32LittleEndian(head);
             uint size = BinaryPrimitives.ReadUInt32LittleEndian(head[4..]);
+            _record = _wmf?.Index(seq) ?? seq;
             if (size < 8 || (size & 3) != 0)
             {
                 Diag(DiagnosticSeverity.Error, $"Record {_record} (type {type}) has an invalid size {size}; the rest of the file is ignored.", (int)type);
@@ -195,20 +209,20 @@ internal sealed partial class EmfInterpreter
                 break;
             }
 
-            if (_record >= _lim.MaxRecords)
+            if (seq >= _lim.MaxRecords)
             {
                 throw new ImageLimitException($"The metafile has more than {_lim.MaxRecords} records.");
             }
 
             AddWork(1);
-            _recordType = (int)type;
+            _recordType = _wmf?.Function(seq) ?? (int)type;
             ReadOnlyMemory<byte> rec = all.Slice(off, (int)size);
             if (type == 14)
             {
                 break;
             }
 
-            if (_record == 0)
+            if (seq == 0)
             {
                 if (type != 1)
                 {
@@ -222,7 +236,7 @@ internal sealed partial class EmfInterpreter
                 Dispatch(type, rec);
             }
 
-            _record++;
+            seq++;
             off += (int)size;
         }
 
@@ -243,7 +257,7 @@ internal sealed partial class EmfInterpreter
 
     private void InitFromHeader()
     {
-        if (Info.HasEmfPlus)
+        if (_wmf is null && Info.HasEmfPlus)
         {
             Diag(
                 Info.IsEmfPlusOnly ? DiagnosticSeverity.Warning : DiagnosticSeverity.Info,
@@ -402,6 +416,10 @@ internal sealed partial class EmfInterpreter
             case 10: if (Need(r, 16, "SETWINDOWORGEX")) { (_dc.WOrgX, _dc.WOrgY) = (Int(r, 8), Int(r, 12)); } break;
             case 11: if (Need(r, 16, "SETVIEWPORTEXTEX")) { SetExt(false, Int(r, 8), Int(r, 12)); } break;
             case 12: if (Need(r, 16, "SETVIEWPORTORGEX")) { (_dc.VOrgX, _dc.VOrgY) = (Int(r, 8), Int(r, 12)); } break;
+            // Not EMF records: the offset records of a Windows metafile, which has no absolute form for them.
+            case 0x10001: if (Need(r, 16, "OFFSETWINDOWORG")) { _dc.WOrgX += Int(r, 8); _dc.WOrgY += Int(r, 12); } break;
+            case 0x10003: if (Need(r, 12, "SETTEXTCHAREXTRA")) { _dc.CharExtra = Int(r, 8); } break;
+            case 0x10002: if (Need(r, 16, "OFFSETVIEWPORTORG")) { _dc.VOrgX += Int(r, 8); _dc.VOrgY += Int(r, 12); } break;
             case 13: if (Need(r, 16, "SETBRUSHORGEX")) { (_dc.BrushOrgX, _dc.BrushOrgY) = (Int(r, 8), Int(r, 12)); } break;
             case 15: if (Need(r, 20, "SETPIXELV")) { SetPixel(Int(r, 8), Int(r, 12), Color(UInt(r, 16))); } break;
             case 16: Quiet("The font mapper flags"); break;

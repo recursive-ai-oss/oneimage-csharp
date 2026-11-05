@@ -36,7 +36,7 @@ public sealed class MetafileFormat : IImageFormat
         Fonts = fonts ?? new MetafileFontOptions();
         Antialias = antialias;
         Background = background;
-        Decoder = new MetafileDecoder(this);
+        Decoder = new MetafileDecoder(this, Limits, Fonts, Antialias, Background);
     }
 
     /// <summary>Gets a shared instance with the default settings.</summary>
@@ -76,11 +76,81 @@ public sealed class MetafileFormat : IImageFormat
     public bool Matches(ReadOnlySpan<byte> header) => MetafileDocument.IsEmf(header);
 }
 
+/// <summary>
+/// The Windows metafile (WMF) format registration, for 16-bit metafiles with or without the Aldus placeable header. It is the same interpreter,
+/// renderer and settings as <see cref="MetafileFormat"/> (which reads EMF); register both to read both. A WMF has no reference device, so
+/// its natural size is the placeable header's bounding box at its units per inch, in pixels of a 96 dpi display, or, without a placeable
+/// header, the window the file sets, in pixels.
+/// </summary>
+public sealed class WmfFormat : IImageFormat
+{
+    /// <summary>Initializes the format.</summary>
+    /// <param name="limits">The metafile limits, or <see langword="null"/> for <see cref="MetafileLimits.Default"/>.</param>
+    /// <param name="fonts">Where text fonts come from, or <see langword="null"/> for the installed fonts only.</param>
+    /// <param name="antialias">Whether edges are anti-aliased (the default).</param>
+    /// <param name="background">The color of pixels nothing draws on, or <see langword="null"/> for transparent.</param>
+    public WmfFormat(MetafileLimits? limits = null, MetafileFontOptions? fonts = null, bool antialias = true, Rgba32? background = null)
+    {
+        Limits = limits ?? MetafileLimits.Default;
+        Fonts = fonts ?? new MetafileFontOptions();
+        Antialias = antialias;
+        Background = background;
+        Decoder = new MetafileDecoder(this, Limits, Fonts, Antialias, Background);
+    }
+
+    /// <summary>Gets a shared instance with the default settings.</summary>
+    public static WmfFormat Instance { get; } = new();
+
+    /// <summary>Gets the limits of this registration.</summary>
+    public MetafileLimits Limits { get; }
+
+    /// <summary>Gets the font options.</summary>
+    public MetafileFontOptions Fonts { get; }
+
+    /// <summary>Gets a value indicating whether edges are anti-aliased.</summary>
+    public bool Antialias { get; }
+
+    /// <summary>Gets the background color, or <see langword="null"/> for transparent.</summary>
+    public Rgba32? Background { get; }
+
+    /// <inheritdoc />
+    public string Name => "wmf";
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Extensions { get; } = [".wmf"];
+
+    /// <inheritdoc />
+    public string MimeType => "image/wmf";
+
+    /// <inheritdoc />
+    public int HeaderLength => 22 + 6;
+
+    /// <inheritdoc />
+    public IImageDecoder? Decoder { get; }
+
+    /// <inheritdoc />
+    public IImageEncoder? Encoder => null;
+
+    /// <inheritdoc />
+    public bool Matches(ReadOnlySpan<byte> header) => !MetafileDocument.IsEmf(header) && MetafileDocument.IsWmf(header);
+}
+
 internal sealed class MetafileDecoder : IImageDecoder
 {
-    private readonly MetafileFormat _format;
+    private readonly IImageFormat _format;
+    private readonly MetafileLimits _limits;
+    private readonly MetafileFontOptions _fonts;
+    private readonly bool _antialias;
+    private readonly Rgba32? _background;
 
-    public MetafileDecoder(MetafileFormat format) => _format = format;
+    public MetafileDecoder(IImageFormat format, MetafileLimits limits, MetafileFontOptions fonts, bool antialias, Rgba32? background)
+    {
+        _format = format;
+        _limits = limits;
+        _fonts = fonts;
+        _antialias = antialias;
+        _background = background;
+    }
 
     public DecoderCapabilities Capabilities => DecoderCapabilities.RandomAccess | DecoderCapabilities.RenderAtSize;
 
@@ -122,7 +192,14 @@ internal sealed class MetafileDecoder : IImageDecoder
     public ImageInfo ReadInfo(Stream source, ImageLimits limits)
     {
         byte[] bytes = ReadHead(source);
-        MetafileInfo info = MetafileDocument.Identify(bytes, new MetafileReadOptions { Limits = _format.Limits });
+        if (!MetafileDocument.IsEmf(bytes) && MetafileDocument.IsWmf(bytes) && !WmfReader.IsPlaceable(bytes))
+        {
+            // Without the placeable header the size comes from the window the records set, which can be anywhere in the file.
+            source.Position = 0;
+            bytes = MetafileDocument.ReadAll(source, _limits.MaxFileBytes);
+        }
+
+        MetafileInfo info = MetafileDocument.Identify(bytes, new MetafileReadOptions { Limits = _limits });
         double w = Math.Ceiling(info.Width - 1e-9), h = Math.Ceiling(info.Height - 1e-9);
         if (!(w <= ImageLimits.EngineMaxDimension) || !(h <= ImageLimits.EngineMaxDimension))
         {
@@ -168,7 +245,7 @@ internal sealed class MetafileDecoder : IImageDecoder
         var state = (State)info.DecoderState!;
         MetafileDocument doc = state.Document(() => BuildDocument(source, cancellationToken));
         using var canvas = new Canvas(region.Width, region.Height, PixelFormat.Rgba8);
-        if (_format.Background is { } bg)
+        if (_background is { } bg)
         {
             canvas.Clear(bg);
         }
@@ -178,7 +255,7 @@ internal sealed class MetafileDecoder : IImageDecoder
         var output = System.Numerics.Matrix3x2.CreateTranslation((float)-pic.Left, (float)-pic.Top)
             * System.Numerics.Matrix3x2.CreateScale(sx, sy)
             * System.Numerics.Matrix3x2.CreateTranslation(-region.X, -region.Y);
-        var renderer = new MetafileRenderer(canvas, output, _format.Antialias, new FontResolver(_format.Fonts), cancellationToken);
+        var renderer = new MetafileRenderer(canvas, output, _antialias, new FontResolver(_fonts), cancellationToken);
         doc.Play(renderer);
         int length = region.Width * region.Height * 4;
         byte[] bytes = Pools<byte>.Pool.Rent(length);
@@ -196,8 +273,8 @@ internal sealed class MetafileDecoder : IImageDecoder
     private MetafileDocument BuildDocument(Stream source, CancellationToken cancellationToken)
     {
         source.Position = 0;
-        byte[] bytes = MetafileDocument.ReadAll(source, _format.Limits.MaxFileBytes);
-        var resolver = new FontResolver(_format.Fonts);
-        return MetafileDocument.Parse(bytes, new MetafileReadOptions { Limits = _format.Limits, MeasureText = resolver.Measure }, cancellationToken);
+        byte[] bytes = MetafileDocument.ReadAll(source, _limits.MaxFileBytes);
+        var resolver = new FontResolver(_fonts);
+        return MetafileDocument.Parse(bytes, new MetafileReadOptions { Limits = _limits, MeasureText = resolver.Measure }, cancellationToken);
     }
 }

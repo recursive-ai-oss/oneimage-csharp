@@ -16,7 +16,9 @@ namespace OneImage.Metafile;
 /// diagnostic. Limits (<see cref="MetafileLimits"/>) throw <see cref="ImageLimitException"/>.
 /// </para>
 /// <para>
-/// Only EMF is read in this version; EMF+ records are detected (<see cref="MetafileInfo.HasEmfPlus"/>) but not interpreted, so a file that carries its
+/// Enhanced metafiles (EMF) and Windows metafiles (WMF, with or without the placeable header) are read. A WMF is translated record by record to
+/// the equivalent EMF records first (as Windows does), so both share one interpreter; a WMF that embeds an EMF in its comment records is
+/// interpreted from the embedded file (<see cref="MetafileReadOptions.PreferEmbeddedEmf"/>). EMF+ records are detected (<see cref="MetafileInfo.HasEmfPlus"/>) but not interpreted, so a file that carries its
 /// drawing as GDI records as well (EMF+ "dual") renders from those.
 /// </para>
 /// </remarks>
@@ -44,20 +46,28 @@ public sealed class MetafileDocument
     public static bool IsEmf(ReadOnlySpan<byte> header) =>
         header.Length >= 44 && BinaryPrimitives.ReadUInt32LittleEndian(header) == 1 && BinaryPrimitives.ReadUInt32LittleEndian(header[40..]) == 0x464D4520;
 
-    /// <summary>Reads only the header of an enhanced metafile.</summary>
-    /// <param name="data">The file bytes (the first records are looked at to detect EMF+).</param>
+    /// <summary>Tells whether the bytes start like a Windows metafile: the placeable header key, or a standard META_HEADER.</summary>
+    /// <param name="header">At least the first 6 bytes of the file.</param>
+    /// <returns><see langword="true"/> for a placeable or standard WMF header.</returns>
+    public static bool IsWmf(ReadOnlySpan<byte> header) => WmfReader.IsWmf(header);
+
+    /// <summary>Reads only the header of a metafile (EMF or WMF). For a WMF without the placeable header the records are scanned for the window it sets.</summary>
+    /// <param name="data">The file bytes (for an EMF the first records are looked at to detect EMF+).</param>
     /// <param name="options">Options, or <see langword="null"/> for the defaults.</param>
     /// <returns>The picture information.</returns>
-    /// <exception cref="ImageFormatException">The data is not an enhanced metafile.</exception>
-    public static MetafileInfo Identify(ReadOnlyMemory<byte> data, MetafileReadOptions? options = null) =>
-        EmfInterpreter.ReadInfo(data, (options ?? MetafileReadOptions.Default).Limits);
+    /// <exception cref="ImageFormatException">The data is not a metafile.</exception>
+    public static MetafileInfo Identify(ReadOnlyMemory<byte> data, MetafileReadOptions? options = null)
+    {
+        MetafileLimits limits = (options ?? MetafileReadOptions.Default).Limits;
+        return !IsEmf(data.Span) && IsWmf(data.Span) ? WmfReader.Identify(data.Span, limits) : EmfInterpreter.ReadInfo(data, limits);
+    }
 
     /// <summary>Interprets a metafile held in memory.</summary>
     /// <param name="data">The file bytes. The commands refer to this memory for bitmaps and comments, so keep it unchanged while they are in use.</param>
     /// <param name="options">Options, or <see langword="null"/> for the defaults.</param>
     /// <param name="cancellationToken">Cancels interpretation of a large file.</param>
     /// <returns>The document.</returns>
-    /// <exception cref="ImageFormatException">The data is not an enhanced metafile.</exception>
+    /// <exception cref="ImageFormatException">The data is not a metafile.</exception>
     /// <exception cref="ImageLimitException">A limit of <paramref name="options"/> was exceeded.</exception>
     public static MetafileDocument Parse(ReadOnlyMemory<byte> data, MetafileReadOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -67,16 +77,57 @@ public sealed class MetafileDocument
             throw new ImageLimitException($"The metafile is larger than {options.Limits.MaxFileBytes} bytes.");
         }
 
+        if (!IsEmf(data.Span) && IsWmf(data.Span))
+        {
+            return ParseWmf(data, options, cancellationToken);
+        }
+
         var interpreter = new EmfInterpreter(data, options, cancellationToken);
         List<DrawingCommand> commands = interpreter.Run();
         return new MetafileDocument(interpreter.Info, commands);
+    }
+
+    private static MetafileDocument ParseWmf(ReadOnlyMemory<byte> data, MetafileReadOptions options, CancellationToken cancellationToken)
+    {
+        WmfConverter.Result converted = new WmfConverter(data, options, cancellationToken).Convert(options.PreferEmbeddedEmf);
+        List<DrawingCommand> commands;
+        MetafileInfo info;
+        var notes = new List<DiagnosticCommand>(converted.Notes);
+        EmfInterpreter? embedded = null;
+        if (converted.EmbeddedEmf is { } emf)
+        {
+            try
+            {
+                embedded = new EmfInterpreter(emf, options, cancellationToken);
+            }
+            catch (ImageFormatException ex)
+            {
+                notes.Add(new DiagnosticCommand(DiagnosticSeverity.Warning, "The embedded enhanced metafile has a damaged header (" + ex.Message + "); the Windows metafile records are drawn instead.", 0x0626));
+            }
+        }
+
+        if (embedded is not null)
+        {
+            commands = embedded.Run();
+            info = embedded.Info with { Kind = MetafileKind.Wmf };
+            commands[0] = new BeginPictureCommand(info) { RecordIndex = -1 };
+        }
+        else
+        {
+            var interpreter = new EmfInterpreter(converted.Emf, options, converted.Info, converted.Map, cancellationToken);
+            commands = interpreter.Run();
+            info = interpreter.Info;
+        }
+
+        commands.AddRange(notes);
+        return new MetafileDocument(info, commands);
     }
 
     /// <summary>Reads a stream to its end and interprets it.</summary>
     /// <param name="stream">The stream, positioned at the start of the file.</param>
     /// <param name="options">Options, or <see langword="null"/> for the defaults.</param>
     /// <returns>The document.</returns>
-    /// <exception cref="ImageFormatException">The data is not an enhanced metafile.</exception>
+    /// <exception cref="ImageFormatException">The data is not a metafile.</exception>
     /// <exception cref="ImageLimitException">A limit of <paramref name="options"/> was exceeded.</exception>
     public static MetafileDocument Load(Stream stream, MetafileReadOptions? options = null)
     {
@@ -89,7 +140,7 @@ public sealed class MetafileDocument
     /// <param name="path">The file path.</param>
     /// <param name="options">Options, or <see langword="null"/> for the defaults.</param>
     /// <returns>The document.</returns>
-    /// <exception cref="ImageFormatException">The data is not an enhanced metafile.</exception>
+    /// <exception cref="ImageFormatException">The data is not a metafile.</exception>
     /// <exception cref="ImageLimitException">A limit of <paramref name="options"/> was exceeded.</exception>
     public static MetafileDocument Load(string path, MetafileReadOptions? options = null)
     {

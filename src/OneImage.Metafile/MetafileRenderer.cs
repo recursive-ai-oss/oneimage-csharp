@@ -553,8 +553,11 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
 
         Vector2 u = (c.DestTopRight - c.DestTopLeft) / sw, v = (c.DestBottomLeft - c.DestTopLeft) / sh;
         var s2l = new Matrix3x2(u.X, u.Y, v.X, v.Y, c.DestTopLeft.X, c.DestTopLeft.Y);
-        ImageSampling sampling = c.Stretch == StretchMode.Halftone ? ImageSampling.Bilinear : ImageSampling.Nearest;
-        return Brush.FromImage(ImageOf(crop, sw, sh), sampling, null, 0, 0, s2l * Xf, false);
+        // GDI's halftone mode averages when it shrinks a bitmap and repeats pixels when it enlarges one (measured from Windows output).
+        Matrix3x2 total = s2l * Xf;
+        bool shrinks = Math.Sqrt((total.M11 * total.M11) + (total.M12 * total.M12)) < 1 - 1e-6 || Math.Sqrt((total.M21 * total.M21) + (total.M22 * total.M22)) < 1 - 1e-6;
+        ImageSampling sampling = c.Stretch == StretchMode.Halftone && shrinks ? ImageSampling.Bilinear : ImageSampling.Nearest;
+        return Brush.FromImage(ImageOf(crop, sw, sh), sampling, null, 0, 0, total, false);
     }
 
     // ---- gradients -----------------------------------------------------------------------------------------------------
