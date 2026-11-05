@@ -395,7 +395,7 @@ public sealed record DiagnosticCommand(DiagnosticSeverity Severity, string Messa
 /// Receives the commands of a picture. Every method does nothing by default; override those you handle. New command types may be added in
 /// future versions, which then call methods that do nothing in your subclass, so a visitor keeps working.
 /// </summary>
-public abstract class DrawingCommandVisitor
+public abstract partial class DrawingCommandVisitor
 {
     /// <summary>Handles <see cref="BeginPictureCommand"/>.</summary>
     /// <param name="command">The command.</param>

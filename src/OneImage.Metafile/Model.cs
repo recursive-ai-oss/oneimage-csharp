@@ -331,7 +331,11 @@ public sealed record PenSpec(
     IReadOnlyList<double>? Dashes = null,
     Rgba32? GapColor = null,
     BrushSpec? Brush = null,
-    bool IsInsideFrame = false);
+    bool IsInsideFrame = false)
+{
+    /// <summary>Gets what a GDI+ pen adds to the GDI pen: dash cap and offset, alignment, anchors and the like; <see langword="null"/> for pens from GDI records.</summary>
+    public PlusPenData? Plus { get; init; }
+}
 
 /// <summary>A font request, resolved from a logical font. The face name is the name Windows would match; the renderer finds the closest font it has.</summary>
 /// <param name="FaceName">The family name, such as <c>Arial</c>; empty for the default font.</param>

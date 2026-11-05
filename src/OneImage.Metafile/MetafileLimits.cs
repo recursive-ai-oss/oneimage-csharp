@@ -48,6 +48,12 @@ public sealed class MetafileLimits
     /// <summary>Gets the most dash entries of one pen (default 1,024).</summary>
     public int MaxDashEntries { get; init; } = 1024;
 
+    /// <summary>Gets the most bytes of one EMF+ object, counting all the records a continued object spans (default 128 MiB).</summary>
+    public int MaxPlusObjectBytes { get; init; } = 128 << 20;
+
+    /// <summary>Gets the deepest nesting of metafiles embedded in EMF+ images (default 4).</summary>
+    public int MaxNestedMetafileDepth { get; init; } = 4;
+
     /// <summary>
     /// Gets the budget of work units over the whole file: one per record, one per path point, one per region rectangle, one per 64 bitmap
     /// pixels, one per text character (default 2^31). It stops files that stay inside every other limit and still ask for too much.
