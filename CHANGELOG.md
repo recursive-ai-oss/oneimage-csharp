@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.10.5] - 2026-11-05
+
 ### Fixed
 
 - Decoding a PNG of one megapixel or more failed in the browser (WebAssembly) runtime with `PlatformNotSupportedException: Cannot wait on monitors on this runtime`. The decoder inflated the next batch of rows on a pool task while unfiltering the current one, and the browser runtime has a single thread, so the task never ran and waiting for it is not allowed. The browser now decodes the batches in order; the pixels are the same, and other hosts are unchanged.
@@ -231,7 +233,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.4...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.5...HEAD
+[1.10.5]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.4...v1.10.5
 [1.10.4]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.3...v1.10.4
 [1.10.3]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.2...v1.10.3
 [1.10.2]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.1...v1.10.2

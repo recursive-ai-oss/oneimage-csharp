@@ -13,9 +13,9 @@ How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (log scale, higher is better; slower tasks and ties are
 marked):
 
-![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.10.4/docs/img/oneimage-hero-light.svg)
+![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.10.5/docs/img/oneimage-hero-light.svg)
 
-[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/performance.md)
+[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/performance.md)
 
 ## Install
 
@@ -49,7 +49,11 @@ Image.Load("in.png").Save("out.jpg", new SaveOptions { EncoderOptions = new Jpeg
 The format of `Save` follows the file extension. For streams and buffer
 writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
-## What is new in 1.10.4
+## What is new in 1.10.5
+
+- **Fixed: large PNGs failed in the browser (WebAssembly) runtime.** Decoding a PNG of one megapixel or more, and region reads, crops or thumbnails of a decoded frame of 16 MiB or more (such as a 600 dpi scan), threw `PlatformNotSupportedException` there, because the decoder waited on background work and the browser runtime has a single thread. The browser now decodes these in order; the pixels are the same and other platforms are unchanged. A browser smoke test now runs in CI.
+
+## What was new in 1.10.4
 
 - **Fixed: 16-bit and floating-point images in linear light could still differ by one bit between platforms.** The remaining colour transfer tables and functions (16-bit decode, linear-to-8-bit, sRGB for 16-bit and float pixels, gamma, levels, ICC curves, the Lab cube root) no longer use the platform math library; they use our own correctly rounded power and cube root, so results are the same on every platform. Tables keep their 1.10.3 values; 16-bit and float results change on x64 by at most one unit in the last place in 0.002% of values, where the old math library rounded wrongly.
 
@@ -90,22 +94,22 @@ writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
 ## Learn more
 
-- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/guide.md): the lazy model, errors, operations,
+- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/guide.md): the lazy model, errors, operations,
   `Canvas`, metadata, color, animation, limits, AOT and trimming.
-- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/layers.md): layered documents that render on demand, with
+- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/layers.md): layered documents that render on demand, with
   incremental re-rendering and an optional disk-spill store. Photoshop files
   load into them through the separate `RecursiveAI.OneImage.Psd` package
-  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/psd.md)).
-- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/migrating.md)
-- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/comparison.md), including where the
+  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/psd.md)).
+- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/migrating.md)
+- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/comparison.md), including where the
   others are the better fit
-- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/docs/performance.md)
-- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/CHANGELOG.md) and
-  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/SECURITY.md)
+- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/docs/performance.md)
+- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/CHANGELOG.md) and
+  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/SECURITY.md)
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/LICENSE-MIT) or
-[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.4/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/LICENSE-MIT) or
+[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.10.5/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.
