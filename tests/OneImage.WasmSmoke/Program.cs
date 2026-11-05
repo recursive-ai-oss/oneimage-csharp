@@ -95,6 +95,82 @@ foreach (IImageFormat format in new IImageFormat[] { PngFormat.Instance, JpegFor
     });
 }
 
+// Frames of 16 MiB or more stream through a sliding window of tile rows with a decoder running beside the reader, and a color
+// conversion on the decode converts rows as they arrive; the browser runtime has one thread, so none of that may wait on another thread.
+foreach (IImageFormat format in new IImageFormat[] { PngFormat.Instance, JpegFormat.Instance })
+{
+    IImageFormat f = format;
+    byte[]? encoded = null;
+
+    byte[] Large()
+    {
+        if (encoded is not null)
+        {
+            return encoded;
+        }
+
+        const int w = 2500, h = 2000; // 20 MB as Rgba8
+        var px = new Rgba32[w * h];
+        for (int i = 0; i < px.Length; i++)
+        {
+            px[i] = new Rgba32((byte)((i % w) / 10), (byte)((i / w) / 8), (byte)(((i % w) + (i / w)) / 16), 255);
+        }
+
+        using var ms = new System.IO.MemoryStream();
+        Image.FromPixels<Rgba32>(px, w, h).Save(ms, f);
+        return encoded = ms.ToArray();
+    }
+
+    Step($"large {f.Name}: whole-frame read", () =>
+    {
+        Image img = Image.Load(Large());
+        Rgba32[] all = img.ToArray<Rgba32>();
+        return img.Width == 2500 && img.Height == 2000 && all.Length == 5_000_000 && all[(1000 * 2500) + 1250].G > 100;
+    });
+
+    Step($"large {f.Name}: region reads", () =>
+    {
+        Image img = Image.Load(Large());
+        var region = new Rgba32[200 * 200];
+        img.CopyPixelsTo<Rgba32>(region, new ImageRect(1000, 900, 200, 200));
+        var top = new Rgba32[100 * 100];
+        img.CopyPixelsTo<Rgba32>(top, new ImageRect(0, 0, 100, 100));
+        var again = new Rgba32[200 * 200];
+        img.CopyPixelsTo<Rgba32>(again, new ImageRect(1000, 900, 200, 200));
+        return region.AsSpan().SequenceEqual(again) && region[(100 * 200) + 100].G > 80;
+    });
+
+    Step($"large {f.Name}: crop, resize and save", () =>
+    {
+        Image img = Image.Load(Large());
+        using var ms = new System.IO.MemoryStream();
+        img.Crop(200, 200, 2000, 1500).Resize(width: 400).Save(ms, PngFormat.Instance);
+        using var thumb = new System.IO.MemoryStream();
+        Image.Load(Large()).Resize(width: 300).Save(thumb, PngFormat.Instance);
+        return Image.Identify(ms.ToArray()).Width == 400 && Image.Identify(thumb.ToArray()).Width == 300;
+    });
+
+    Step($"large {f.Name}: color conversion on the decode", () =>
+    {
+        Image img = Image.Load(Large());
+        Rgba32[] p3 = img.ConvertColor(ColorProfile.DisplayP3).ToArray<Rgba32>();
+        Gray8[] gray = Image.Load(Large()).ConvertTo(PixelFormat.Gray8).ToArray<Gray8>();
+        return p3.Length == 5_000_000 && gray.Length == 5_000_000;
+    });
+}
+
+Step("large frame: quantize", () =>
+{
+    var px = new Rgba32[2500 * 2000];
+    for (int i = 0; i < px.Length; i++)
+    {
+        px[i] = new Rgba32((byte)((i % 2500) / 10), (byte)((i / 2500) / 8), 40, 255);
+    }
+
+    Rgba32[] q = Image.FromPixels<Rgba32>(px, 2500, 2000).Quantize(16).ToArray<Rgba32>();
+    return q.Length == px.Length;
+});
+
 Step("pdf: calibrated gray fill", () =>
 {
     string content = "/CS0 cs 0.5 sc 0 0 20 20 re f";

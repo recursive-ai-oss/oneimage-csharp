@@ -7,6 +7,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Fixed
 
 - Decoding a PNG of one megapixel or more failed in the browser (WebAssembly) runtime with `PlatformNotSupportedException: Cannot wait on monitors on this runtime`. The decoder inflated the next batch of rows on a pool task while unfiltering the current one, and the browser runtime has a single thread, so the task never ran and waiting for it is not allowed. The browser now decodes the batches in order; the pixels are the same, and other hosts are unchanged.
+- Region reads, crops and thumbnails of a large PNG (a decoded frame of 16 MiB or more, such as a 600 dpi scan) failed in the browser runtime with `PlatformNotSupportedException`, because the streaming window starts a decoder thread. In the browser such frames are now decoded once into tiles, like smaller ones. The pixels are the same; memory use there is no longer bounded by the window. Other hosts are unchanged.
 
 ### Added
 

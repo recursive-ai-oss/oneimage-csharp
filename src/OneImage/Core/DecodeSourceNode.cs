@@ -117,7 +117,9 @@ internal sealed class DecodeSourceNode : Node
         _region = region;
         DecoderCapabilities caps = session.Decoder.Capabilities;
         _randomAccess = (caps & DecoderCapabilities.RandomAccess) == DecoderCapabilities.RandomAccess;
-        _streaming = !_randomAccess && (long)region.Width * region.Height * Format.BytesPerPixel >= StreamingMinBytes;
+        // The sliding window needs a decoder thread running beside the reader; the browser runtime has one thread, so large frames
+        // there are decoded once into tiles like small ones (the pixels are the same, the memory is not bounded by the window).
+        _streaming = !_randomAccess && !OperatingSystem.IsBrowser() && (long)region.Width * region.Height * Format.BytesPerPixel >= StreamingMinBytes;
     }
 
     // A decoder whose tiles are a plain copy out of state it already holds (a GIF canvas) says so: caching them would only keep a
