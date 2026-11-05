@@ -9,12 +9,12 @@ Entry points (`OneImage.Codecs.Jbig2.Jbig2Codec`):
 
 - `Decode(data, globals, limits, jbig2Limits, cancellationToken)`: an *embedded* stream as a PDF holds it (segments
   only, no file header), preceded by the segments of the optional `/JBIG2Globals` stream. Returns a `Jbig2Page`.
-- `DecodeFile(file, pageNumber, ...)`: a standalone `.jb2`/`.jbig2` file, sequential or random-access organisation.
+- `DecodeFile(file, pageNumber, ...)`: a standalone `.jb2`/`.jbig2` file, sequential or random-access organization.
 - `TryReadPageSize(data, out width, out height)`: reads the page information segment only.
 
 `Jbig2Page` holds `Width`, `Height`, `Stride` and `Data`: one bit per pixel, most significant bit first, rows padded
 to whole bytes with zero bits, **1 = black** (the sense the standard uses). A PDF consumer inverts this for
-`DeviceGray`, and honours `/Decode` and `/ImageMask` itself.
+`DeviceGray`, and honors `/Decode` and `/ImageMask` itself.
 
 ## What is decoded
 
@@ -24,10 +24,10 @@ refinement/aggregate symbols, collective bitmaps and export flags), text regions
 all reference corners and transposition, the combination operators), pattern dictionaries and halftone regions
 (gray-scale image decoding of annex C), custom Huffman tables (B.2) and the 15 standard ones (annex B), page make-up with
 all combination operators and default pixel, striped pages and pages of unknown height, immediate/lossless/
-intermediate segment variants, and both file organisations. Profile, extension and unknown segments are skipped.
+intermediate segment variants, and both file organizations. Profile, extension and unknown segments are skipped.
 
 Not decoded: the extended generic template (flag bits 4-7 of the generic region flags) is refused with a format
-error. Colour JBIG2 extensions are not part of what PDF uses.
+error. Color JBIG2 extensions are not part of what PDF uses.
 
 MMR reuses the CCITT G4 code the TIFF reader has (`TiffCcitt.DecodeMmr`, which also reports how many bytes it used).
 The TIFF `Decode` path is untouched.
@@ -37,7 +37,7 @@ The TIFF `Decode` path is untouched.
 A stream is decoded as the standard describes. Where the data is damaged the decoder throws `ImageFormatException`
 rather than rendering a partial page: a text region with more instances than it declares, a truncated segment, a
 reference to a segment that does not exist. Some PDF viewers instead paint what they managed to decode; a caller that
-wants that behaviour has to catch the exception and fall back.
+wants that behavior has to catch the exception and fall back.
 
 ## Limits
 

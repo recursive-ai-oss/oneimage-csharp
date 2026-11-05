@@ -529,7 +529,7 @@ public class CmykJpegGateBenchmarks
     /// <summary>Gets the image height.</summary>
     public static int Height => H;
 
-    // The colour-accuracy check (gate-deltae) takes each library's sRGB bytes through these.
+    // The color-accuracy check (gate-deltae) takes each library's sRGB bytes through these.
     public byte[] OneImageRgb(bool blackPointCompensation = true) =>
         System.Runtime.InteropServices.MemoryMarshal.AsBytes<OI.Rgb24>(OI.Image.Load(_jpeg).ConvertColor(OI.ColorProfile.Srgb, blackPointCompensation: blackPointCompensation).ToArray<OI.Rgb24>()).ToArray();
 

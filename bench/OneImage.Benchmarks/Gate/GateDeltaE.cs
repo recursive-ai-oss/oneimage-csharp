@@ -11,7 +11,7 @@ using OI = global::OneImage;
 namespace OneImage.Benchmarks.Gate;
 
 /// <summary>
-/// Colour accuracy of the CMYK JPEG to sRGB task: <c>gate-deltae</c> runs every library's path on the gate input and compares its
+/// Color accuracy of the CMYK JPEG to sRGB task: <c>gate-deltae</c> runs every library's path on the gate input and compares its
 /// sRGB output with an ICC-correct reference, as CIEDE2000 over a deterministic sample of the pixels (every 11th column of every 7th row).
 /// The reference converts our decoder's CMYK samples through the embedded profile with this library's exact-math (floating point,
 /// no lookup grid) conversion, relative colorimetric with black point compensation. Prints one <c>DELTAE</c> line per library:

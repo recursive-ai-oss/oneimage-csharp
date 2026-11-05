@@ -1787,7 +1787,7 @@ internal sealed class TextLayout
                     continue;
                 }
 
-                // One continuous line over neighbouring glyphs that share the run, position and thickness.
+                // One continuous line over neighboring glyphs that share the run, position and thickness.
                 if (open && run == st.Run && offset == off && thick == th)
                 {
                     x1 = gx1;

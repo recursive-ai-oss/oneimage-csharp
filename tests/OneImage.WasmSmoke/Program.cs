@@ -171,6 +171,72 @@ Step("large frame: quantize", () =>
     return q.Length == px.Length;
 });
 
+// An application may raise the thread limits, which are meaningless on the one-thread browser runtime: encoders and the resizer
+// must still run in the calling thread there instead of queueing pool work and waiting for it.
+ImageEngine.MaxDegree = 8;
+ImageEngine.DefaultCallDegree = 4;
+
+Step("limits: lower pixel bounds in the browser", () =>
+{
+    bool refused = false;
+    try
+    {
+        ImageLimits.Default.CheckFrame(9000, 9000); // 81 MP, over the 2^26 browser default
+    }
+    catch (ImageLimitException)
+    {
+        refused = true;
+    }
+
+    ImageLimits.Default.CheckFrame(8192, 8192);
+    return refused && ImageLimits.Default.MaxPixelsPerFrame == 1L << 26 && ImageLimits.Default.MaxTotalPixels == 1L << 27 && ImageLimits.Unrestricted.MaxPixelsPerFrame == long.MaxValue;
+});
+
+Step("degree 4: animated GIF to GIF and animated WebP", () =>
+{
+    Image anim = Image.Load(TwoFrameGif()).Resize(700, 500, Fit.Stretch);
+    using var gif = new System.IO.MemoryStream();
+    anim.Save(gif, GifFormat.Instance);
+    using var webp = new System.IO.MemoryStream();
+    anim.Save(webp, WebPFormat.Instance);
+    return Image.Load(gif.ToArray()).FrameCount == 2 && Image.Load(webp.ToArray()).FrameCount == 2;
+});
+
+foreach (bool lossless in new[] { false, true })
+{
+    bool ll = lossless;
+    Step($"degree 4: WebP {(ll ? "lossless" : "lossy")} encode with alpha", () =>
+    {
+        const int w = 600, h = 500;
+        var px = new Rgba32[w * h];
+        for (int i = 0; i < px.Length; i++)
+        {
+            px[i] = new Rgba32((byte)((i % w) / 3), (byte)((i / w) / 2), (byte)(i % 97), (byte)((i % w) < 300 ? 255 : 100));
+        }
+
+        using var ms = new System.IO.MemoryStream();
+        Image.FromPixels<Rgba32>(px, w, h).Save(ms, WebPFormat.Instance, new SaveOptions { EncoderOptions = new WebPEncoderOptions { Lossless = ll } });
+        Rgba32[] back = Image.Load(ms.ToArray()).ToArray<Rgba32>();
+        return back.Length == px.Length && back[400].A < 255;
+    });
+}
+
+Step("degree 4: resize", () =>
+{
+    const int w = 1200, h = 1000;
+    var px = new Rgba32[w * h];
+    for (int i = 0; i < px.Length; i++)
+    {
+        px[i] = new Rgba32((byte)(i % 251), (byte)((i / w) % 241), 7, 255);
+    }
+
+    Rgba32[] viaImage = Image.FromPixels<Rgba32>(px, w, h).Resize(width: 300).ToArray<Rgba32>();
+    using var resizer = new PixelResizer();
+    var viaSpan = new Rgba32[300 * 250];
+    resizer.Resize<Rgba32>(px, w, h, viaSpan, 300, 250);
+    return viaImage.Length == 300 * 250 && viaSpan.AsSpan().SequenceEqual(viaImage);
+});
+
 Step("pdf: calibrated gray fill", () =>
 {
     string content = "/CS0 cs 0.5 sc 0 0 20 20 re f";
@@ -209,6 +275,46 @@ Step("svg: filter", () =>
 
 Console.WriteLine(failures == 0 ? "wasm smoke: all steps passed" : $"wasm smoke: {failures} step(s) failed");
 return failures == 0 ? 0 : 1;
+
+// A two-frame 2 x 2 GIF whose frames are red, green, blue and white pixels.
+static byte[] TwoFrameGif()
+{
+    // LZW with 2-bit symbols: clear (4), the four pixels, end (5), least significant bit first. Codes are 3 bits wide until the
+    // table holds 8 entries, which happens after the third pixel, so the last pixel and the end code take 4 bits.
+    int[] codes = [4, 0, 1, 2, 3, 5];
+    int[] widths = [3, 3, 3, 3, 4, 4];
+    var data = new System.Collections.Generic.List<byte>();
+    int acc = 0, bits = 0;
+    for (int k = 0; k < codes.Length; k++)
+    {
+        acc |= codes[k] << bits;
+        bits += widths[k];
+        while (bits >= 8)
+        {
+            data.Add((byte)acc);
+            acc >>= 8;
+            bits -= 8;
+        }
+    }
+
+    if (bits > 0)
+    {
+        data.Add((byte)acc);
+    }
+
+    var gif = new System.IO.MemoryStream();
+    gif.Write("GIF89a"u8);
+    gif.Write(new byte[] { 2, 0, 2, 0, 0x81, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255 });
+    for (int f = 0; f < 2; f++)
+    {
+        gif.Write(new byte[] { 0x21, 0xF9, 4, 4, 5, 0, 0, 0, 0x2C, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, (byte)data.Count });
+        gif.Write(data.ToArray());
+        gif.WriteByte(0);
+    }
+
+    gif.WriteByte(0x3B);
+    return gif.ToArray();
+}
 
 // A 40 x 40 point page that is one 2 x 2 RGB image (red, green / blue, white), as a scanner would produce.
 static byte[] ScannedPdf()

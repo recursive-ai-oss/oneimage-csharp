@@ -81,7 +81,7 @@ public enum BevelTechnique
 /// inner bevel, smooth, depth 1 (100 %), up, size 5, soften 0, light from 120° at 30°, highlight Screen white 75 %, shadow Multiply black 75 %.
 /// <para>
 /// The base <see cref="LayerEffect.Blend"/> and <see cref="LayerEffect.Color"/> are not used; <see cref="LayerEffect.Opacity"/> (default 1)
-/// scales both the highlight and the shadow. The bevel contour, texture and "use shape" options are not modelled, and the height is
+/// scales both the highlight and the shadow. The bevel contour, texture and "use shape" options are not modeled, and the height is
 /// the shape's edge distance, so the shading is a close match to Photoshop's rather than exact.
 /// </para>
 /// </summary>

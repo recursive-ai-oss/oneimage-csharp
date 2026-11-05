@@ -19,9 +19,9 @@ internal sealed class FxSource
 }
 
 /// <summary>
-/// Reads the layer-effects block (<c>lfx2</c>) into a <see cref="LayerStyle"/>. Effects it can reproduce are modelled; the others (gradient and
+/// Reads the layer-effects block (<c>lfx2</c>) into a <see cref="LayerStyle"/>. Effects it can reproduce are modeled; the others (gradient and
 /// pattern overlays or strokes, bevel and emboss, gradient glows, random-noise grain) are counted in <see cref="Result.Skipped"/> so the loader can
-/// say the style is not complete. Disabled effects are not modelled at all: they draw nothing, and the block is written back untouched.
+/// say the style is not complete. Disabled effects are not modeled at all: they draw nothing, and the block is written back untouched.
 /// </summary>
 internal static class EffectsCodec
 {
@@ -112,7 +112,7 @@ internal static class EffectsCodec
 
         void Take(Descriptor item, string kind, string key, int index)
         {
-            // Disabled effects are modelled too (as disabled ones) so a style survives a round trip as it was; they draw nothing, and one that cannot be
+            // Disabled effects are modeled too (as disabled ones) so a style survives a round trip as it was; they draw nothing, and one that cannot be
             // read, or that is past the cap, simply stays in the file.
             bool enabled = item.Get("enab") is true;
             if (!enabled)
@@ -539,7 +539,7 @@ internal static class EffectsCodec
                 return null;
         }
 
-        // The bevel contour ("use shape") and the texture are not modelled; the effect is drawn without them.
+        // The bevel contour ("use shape") and the texture are not modeled; the effect is drawn without them.
         if (d.Get("useShape") is true || d.Get("useTexture") is true)
         {
             approximated++;

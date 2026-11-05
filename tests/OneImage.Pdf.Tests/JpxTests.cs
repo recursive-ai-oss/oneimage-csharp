@@ -3,7 +3,7 @@ using System.Text;
 
 namespace OneImage.Pdf.Tests;
 
-/// <summary>JPEG 2000 images in a PDF: drawn through the decoder, with the colour space the file states, and left out when damaged.</summary>
+/// <summary>JPEG 2000 images in a PDF: drawn through the decoder, with the color space the file states, and left out when damaged.</summary>
 public class JpxTests
 {
     private static byte[] Data(string name) => File.ReadAllBytes(Path.Combine(TestPaths.RepoRoot, "testdata", "jpx", "gen", name));

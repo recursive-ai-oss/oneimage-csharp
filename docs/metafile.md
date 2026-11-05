@@ -34,7 +34,7 @@ Commands are records in `OneImage.Metafile`; each has a language-neutral `Name` 
 | `draw-text` | Text as UTF-16 with the resolved `FontSpec` (face, height, weight, flags, escapement), color, alignment, per-character advances when the record has them, and the opaque or clipped rectangle. Fonts are not resolved here: the renderer chooses the face. |
 | `comment` | A metafile comment (EMF+ records are interpreted, see below, and do not appear here). |
 | `clear`, `rendering-hints`, `draw-string`, `draw-glyphs`, `draw-image` | GDI+ only: clear the surface, the smoothing / compositing / pixel-offset / interpolation / text hints, a string in a layout rectangle, glyphs at positions, a bitmap in a parallelogram. |
-| `diagnostic` | Something the interpreter skipped or could not honour, with the record index, a severity and a message. |
+| `diagnostic` | Something the interpreter skipped or could not honor, with the record index, a severity and a message. |
 
 A walk is cheap: `MetafileDocument.Parse` interprets once; `Play` can be called any number of times. Geometry, pen widths and text stay in logical units under the current transform, as on a canvas, so a consumer that draws vectors (a PDF writer, say) keeps the picture resolution-independent. `MetafileReadOptions.MeasureText` lets the caller supply text widths for records that carry none (needed for text alignment and the update-current-position mode).
 
@@ -46,7 +46,7 @@ A walk is cheap: `MetafileDocument.Parse` interprets once; `Play` can be called 
 - **Anti-aliasing** is on by default and uses the drawing engine's exact-area coverage. `antialias: false` gives GDI-like hard edges, which is how the Windows comparison runs. Windows GDI itself does not anti-alias, so a default render differs from GDI along edges.
 - **Background** is transparent unless `background` is given. Raster operations that read the destination (XOR, `PATINVERT`, `SRCAND`...) treat a transparent destination as white.
 - **Fonts** come from `MetafileFontOptions`: your `FontCollection`, optionally installed system fonts, a substitution table (`Substitutions`), and a `DefaultFamily`. Common Windows faces (Arial, Segoe UI, Tahoma, Times New Roman, ...) map to similar installed families when not present. Text is drawn from outlines with the Text package; glyph positions come from the record's advances when present.
-- **Sampling.** Bitmaps are sampled bilinearly in `STRETCH_HALFTONE` mode only when the stretch shrinks the bitmap (as GDI does), and nearest-neighbour otherwise.
+- **Sampling.** Bitmaps are sampled bilinearly in `STRETCH_HALFTONE` mode only when the stretch shrinks the bitmap (as GDI does), and nearest-neighbor otherwise.
 
 ## Geometry conventions (measured from Windows output)
 

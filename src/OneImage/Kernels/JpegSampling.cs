@@ -163,7 +163,7 @@ internal static class JpegSampling
     }
 
     // ---------------------------------------------------------------------------------------------------------
-    // Upsampling. 'near' is the component row an output row sits closest to, 'far' the neighbouring row on the side
+    // Upsampling. 'near' is the component row an output row sits closest to, 'far' the neighboring row on the side
     // of the output row (the triangle filter weights them 3:1).
 
     /// <summary>Doubles a row horizontally with the triangle filter: out[2i] = (3 in[i] + in[i-1] + 1) / 4, out[2i+1] = (3 in[i] + in[i+1] + 2) / 4; the two end samples are copied.</summary>
@@ -205,7 +205,7 @@ internal static class JpegSampling
         dst[(2 * n) - 1] = src[n - 1];
     }
 
-    /// <summary>Doubles a row horizontally and vertically-weights it against the neighbouring row (3:1) in one step.</summary>
+    /// <summary>Doubles a row horizontally and vertically-weights it against the neighboring row (3:1) in one step.</summary>
     /// <param name="near">The closer component row.</param>
     /// <param name="far">The farther component row.</param>
     /// <param name="n">Number of real samples (at least 1).</param>
@@ -254,7 +254,7 @@ internal static class JpegSampling
         }
     }
 
-    /// <summary>Weights a row against its vertical neighbour 3:1 (no horizontal change).</summary>
+    /// <summary>Weights a row against its vertical neighbor 3:1 (no horizontal change).</summary>
     /// <param name="near">The closer row.</param>
     /// <param name="far">The farther row.</param>
     /// <param name="n">Samples.</param>

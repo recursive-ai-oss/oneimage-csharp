@@ -219,7 +219,7 @@ internal static class GateReport
         sb.Append(summary).AppendLine();
         if (args.Length > 5 && File.Exists(args[5]) && File.ReadLines(args[5]).Any(l => l.StartsWith("DELTAE", StringComparison.Ordinal)))
         {
-            sb.AppendLine("## CMYK JPEG to sRGB: colour accuracy").AppendLine();
+            sb.AppendLine("## CMYK JPEG to sRGB: color accuracy").AppendLine();
             sb.AppendLine("The bar for this task is Magick.NET and NetVips, which apply the embedded ICC profile, not ImageSharp, which skips the conversion (its row is information only). CIEDE2000 of each library's sRGB output against an ICC-correct reference: the CMYK samples from our decoder converted through the embedded profile with this library's exact-math (floating point, no lookup grid) conversion, relative colorimetric with black point compensation. Computed on a deterministic sample of the pixels (every 11th column of every 7th row).").AppendLine();
             sb.AppendLine("Magick.NET (relative colorimetric) and NetVips do not apply black point compensation unless asked; this library does by default, so its default output sits about 0.9 ΔE00 from theirs. The `oneimage-nobpc` row is this library with `blackPointCompensation: false` and matches them.").AppendLine();
             sb.AppendLine("The same output compared with the LittleCMS result (Magick.NET) as the reference is in the last two columns.").AppendLine();

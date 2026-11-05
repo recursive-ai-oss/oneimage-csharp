@@ -156,7 +156,7 @@ public sealed class PixelResizer : IDisposable
     /// <exception cref="ImageLimitException">A dimension exceeds 2^24, or the call would need more scratch than the limit.</exception>
     /// <exception cref="InvalidOperationException">Another call on this instance is running.</exception>
     /// <exception cref="ObjectDisposedException">The resizer was disposed.</exception>
-    /// <exception cref="OperationCanceledException">The token was cancelled; the destination is partly written.</exception>
+    /// <exception cref="OperationCanceledException">The token was canceled; the destination is partly written.</exception>
     public void Resize<TPixel>(
         ReadOnlySpan<TPixel> source,
         int sourceWidth,
@@ -209,7 +209,7 @@ public sealed class PixelResizer : IDisposable
     /// <exception cref="ImageOperationException">The format has more than four channels.</exception>
     /// <exception cref="InvalidOperationException">Another call on this instance is running.</exception>
     /// <exception cref="ObjectDisposedException">The resizer was disposed.</exception>
-    /// <exception cref="OperationCanceledException">The token was cancelled; the destination is partly written.</exception>
+    /// <exception cref="OperationCanceledException">The token was canceled; the destination is partly written.</exception>
     public void ResizeRaw(
         ReadOnlySpan<byte> source,
         PixelFormat format,

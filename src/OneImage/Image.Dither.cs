@@ -12,8 +12,8 @@ public sealed partial class Image
     /// <para><b>Error diffusion</b> (<see cref="Dither.FloydSteinberg"/>, <see cref="Dither.Atkinson"/>, <see cref="Dither.Burkes"/>,
     /// <see cref="Dither.JarvisJudiceNinke"/>, <see cref="Dither.Sierra2"/>, <see cref="Dither.Sierra3"/>, <see cref="Dither.SierraLite"/>,
     /// <see cref="Dither.StevensonArce"/>, <see cref="Dither.Stucki"/>): pixels are visited left to right, top to bottom. The difference between
-    /// a pixel and the palette color chosen for it, times <paramref name="scale"/>, is added to the not yet visited neighbours in proportion to
-    /// the kernel's weights; each neighbour is rounded back to 8 bits after every addition. The pass is inherently sequential, so it runs
+    /// a pixel and the palette color chosen for it, times <paramref name="scale"/>, is added to the not yet visited neighbors in proportion to
+    /// the kernel's weights; each neighbor is rounded back to 8 bits after every addition. The pass is inherently sequential, so it runs
     /// on one thread: the first tile request computes the whole frame in one forward pass over the input, in bounded memory apart from
     /// the result, and keeps the result. The output never depends on thread count or on which tile is asked for first.</para>
     /// <para><b>Ordered</b> (<see cref="Dither.Ordered"/> = <see cref="Dither.Bayer8x8"/>, <see cref="Dither.Bayer2x2"/>, <see cref="Dither.Ordered3x3"/>,

@@ -62,7 +62,7 @@ public class StrokeTests
         double area = BlackArea(Pix(pdf), 20, 0, 0, 20, 20);
         double exact = (6 * 6) + (Math.PI * 9);
         Assert.InRange(area, exact - 1.5, exact + 0.8);
-        // The centre of the cap is fully covered, a point just beyond the radius is not.
+        // The center of the cap is fully covered, a point just beyond the radius is not.
         Rgba32[] px = Pix(pdf);
         Pixel(px, 20, 5, 9, Black, Tol.Exact); // 1.5 beyond the end... inside the radius of 3
         Pixel(px, 20, 2, 9, Gray(1), Tol.Exact);

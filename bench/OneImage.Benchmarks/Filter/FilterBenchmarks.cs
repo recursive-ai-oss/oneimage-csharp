@@ -7,7 +7,7 @@ using VipsImage = NetVips.Image;
 namespace OneImage.Benchmarks.Filter;
 
 /// <summary>
-/// Neighbourhood filters and the histogram on 6000x4000 RGBA pixels already in memory. Every library gets the same bytes in its
+/// Neighborhood filters and the histogram on 6000x4000 RGBA pixels already in memory. Every library gets the same bytes in its
 /// own native form during setup and produces its whole result in memory (ours into a caller buffer). Kernel conventions differ
 /// and are noted in the row names: this library blurs in linear light by default ("encoded" rows pass linear: false, which is
 /// what the competitors do), uses radius ceil(3 sigma), and the competitors' sharpen operators are not the same operator (libvips sharpen is not benchmarked: it works on CIELAB L and does not run on these inputs).

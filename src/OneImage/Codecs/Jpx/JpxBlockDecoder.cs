@@ -64,7 +64,7 @@ internal sealed class JpxBlockDecoder
         false, false, false, false, false, false, false, false, false, false, false, false, false,
     ];
 
-    // Context label per neighbour-significance pattern (T.800 Table D.1) for the three sub-band classes.
+    // Context label per neighbor-significance pattern (T.800 Table D.1) for the three sub-band classes.
     private static readonly byte[] SigCtxLlLh = BuildSigContexts(0);
     private static readonly byte[] SigCtxHl = BuildSigContexts(1);
     private static readonly byte[] SigCtxHh = BuildSigContexts(2);
@@ -418,7 +418,7 @@ internal sealed class JpxBlockDecoder
                 int fi0 = ((y0 + 1) * s) + x + 1;
                 if (y0 + 4 <= h && ((flags[fi0] | flags[fi0 + s] | flags[fi0 + (2 * s)] | flags[fi0 + (3 * s)]) & NeighborMask) == 0)
                 {
-                    continue; // no sample of this stripe column has a significant neighbour: nothing to code
+                    continue; // no sample of this stripe column has a significant neighbor: nothing to code
                 }
 
                 for (int y = y0; y < yEnd; y++)

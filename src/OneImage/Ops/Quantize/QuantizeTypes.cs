@@ -15,7 +15,7 @@ public enum Dither
     /// <summary>Ordered dithering with an 8×8 Bayer matrix. Pixels are independent, so it has no sequential state and compresses better than error diffusion.</summary>
     Ordered = 2,
 
-    /// <summary>Atkinson error diffusion (divisor 8, six neighbours at weight 1: a quarter of the error is dropped, which keeps highlights and shadows clean).</summary>
+    /// <summary>Atkinson error diffusion (divisor 8, six neighbors at weight 1: a quarter of the error is dropped, which keeps highlights and shadows clean).</summary>
     Atkinson = 3,
 
     /// <summary>Burkes error diffusion (divisor 32, two rows).</summary>

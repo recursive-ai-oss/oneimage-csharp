@@ -93,7 +93,7 @@ if (blurred.ToArray<Rgba32>().Length != 60000 || wide.ToArray<Rgba32>().Length !
     return 1;
 }
 
-// Neighbourhood effects: mosaic, oil paint, radial overlays, bokeh, Gaussian sharpening, edge detectors, entropy crop.
+// Neighborhood effects: mosaic, oil paint, radial overlays, bokeh, Gaussian sharpening, edge detectors, entropy crop.
 Image effects = snapshot.Pixelate(5).OilPaint(8, 5).Vignette().Glow(new Rgba32(255, 255, 255, 255), 40).BokehBlur(4, 2, 3).GaussianSharpen(1.5);
 if (effects.ToArray<Rgba32>().Length != 60000 || snapshot.DetectEdges(EdgeDetector.Kirsch).ToArray<Gray8>().Length != 60000
     || snapshot.DetectEdges(EdgeDetector.Laplacian3x3, grayscale: false).ToArray<Rgba32>().Length != 60000 || snapshot.EntropyCrop().Width < 1)
@@ -930,7 +930,7 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
-// JPEG 2000: the internal decoder reads a one-pixel codestream (this keeps its code in the analysed set).
+// JPEG 2000: the internal decoder reads a one-pixel codestream (this keeps its code in the analyzed set).
 {
     byte[] j2k = Convert.FromBase64String("/0//UQApAAAAAAABAAAAAQAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAABBwEB/1IADAAAAAEAAAQEAAH/XAAEQED/ZAAlAAFDcmVhdGVkIGJ5IE9wZW5KUEVHIHZlcnNpb24gMi41LjT/kAAKAAAAAAASAAH/k8B0EAn/2Q==");
     OneImage.Codecs.Jpx.JpxImage jpx = OneImage.Codecs.Jpx.JpxCodec.Decode(j2k);

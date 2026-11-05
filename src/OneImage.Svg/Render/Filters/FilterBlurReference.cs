@@ -87,7 +87,7 @@ internal static class FilterBlurReference
         }
         else
         {
-            // Even size: one box centered between the pixel and its left neighbour, one between it and its right neighbour, then an odd box of d + 1.
+            // Even size: one box centered between the pixel and its left neighbor, one between it and its right neighbor, then an odd box of d + 1.
             boxes[0] = (d, d / 2);
             boxes[1] = (d, (d / 2) - 1);
             boxes[2] = (d + 1, d / 2);

@@ -2,7 +2,7 @@ using Xunit;
 
 namespace OneImage.Tests.Filter;
 
-/// <summary>A double-precision whole-image reference for the neighbourhood filters, written independently of the tiled implementation.</summary>
+/// <summary>A double-precision whole-image reference for the neighborhood filters, written independently of the tiled implementation.</summary>
 internal static class FilterReference
 {
     public static double Lin(double v) => v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);

@@ -114,7 +114,7 @@ internal sealed class Raster
     }
 }
 
-/// <summary>Resampling of RGBA pictures: area averaging for reduction, bilinear for enlargement. Color is weighted by alpha, so transparent pixels do not tint their neighbours.</summary>
+/// <summary>Resampling of RGBA pictures: area averaging for reduction, bilinear for enlargement. Color is weighted by alpha, so transparent pixels do not tint their neighbors.</summary>
 internal static class Resize
 {
     /// <summary>Area average to a smaller (or equal) size, streaming over the source rows in memory proportional to the destination row.</summary>

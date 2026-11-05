@@ -193,7 +193,7 @@ public class ShadingTests
     [Trait("Section", "8.7.4.5.3")]
     public void ShadingDomainRescalesT()
     {
-        // Type 2 does not normalise its input: y = C0 + x^N (C1 - C0) with x in [0 10], so C1 = 0.1 makes the ramp reach 1 at t = 10.
+        // Type 2 does not normalize its input: y = C0 + x^N (C1 - C0) with x in [0 10], so C1 = 0.1 makes the ramp reach 1 at t = 10.
         string f = "<< /FunctionType 2 /Domain [0 10] /C0 [0 0 0] /C1 [0.1 0.1 0.1] /N 1 >>";
         byte[] pdf = Sh(AxialDict("[0 0 20 0]", f, extra: "/Domain [0 10]"));
         Check(pdf, Paint((x, y) => Gray3(Axial(x, y, 0, 0, 20, 0))), Tol.One);

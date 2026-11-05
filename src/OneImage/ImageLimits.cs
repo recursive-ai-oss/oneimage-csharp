@@ -13,7 +13,11 @@ public sealed class ImageLimits
     /// <summary>Hard engine cap on the number of 128x128 tiles in one frame; applies even to <see cref="Unrestricted"/>.</summary>
     public const long EngineMaxTiles = 1 << 22;
 
-    /// <summary>Gets the default limits: 2^28 pixels per frame, 65,535 per dimension, 1,000 frames, 2^30 total pixels, 16 MB metadata, 1,100:1 expansion.</summary>
+    /// <summary>
+    /// Gets the default limits: 2^28 pixels per frame, 65,535 per dimension, 1,000 frames, 2^30 total pixels, 16 MB metadata, 1,100:1 expansion.
+    /// In the browser (WebAssembly) runtime the pixel bounds are lower, 2^26 per frame and 2^27 in total, because a tab has far less
+    /// memory than a server and large frames are decoded whole there (see docs/browser.md); pass your own <see cref="ImageLimits"/> to change them.
+    /// </summary>
     public static ImageLimits Default { get; } = new();
 
     /// <summary>Gets limits that accept everything except what the engine cannot represent.</summary>
@@ -27,8 +31,13 @@ public sealed class ImageLimits
         MaxExpansionRatio = double.PositiveInfinity,
     };
 
-    /// <summary>Gets the maximum width times height of one frame.</summary>
-    public long MaxPixelsPerFrame { get; init; } = 1L << 28;
+    // 2^26 pixels is an 8192 x 8192 frame: 256 MiB as Rgba8, and a decoded frame plus its output copy still fit a 32-bit WebAssembly heap.
+    internal static long DefaultMaxPixelsPerFrame(bool browser) => browser ? 1L << 26 : 1L << 28;
+
+    internal static long DefaultMaxTotalPixels(bool browser) => browser ? 1L << 27 : 1L << 30;
+
+    /// <summary>Gets the maximum width times height of one frame (default 2^28; 2^26 in the browser runtime).</summary>
+    public long MaxPixelsPerFrame { get; init; } = DefaultMaxPixelsPerFrame(OperatingSystem.IsBrowser());
 
     /// <summary>Gets the maximum width or height of a frame.</summary>
     public int MaxDimension { get; init; } = 65535;
@@ -36,8 +45,8 @@ public sealed class ImageLimits
     /// <summary>Gets the maximum number of frames in one image.</summary>
     public int MaxFrames { get; init; } = 1000;
 
-    /// <summary>Gets the maximum sum of pixels over all frames.</summary>
-    public long MaxTotalPixels { get; init; } = 1L << 30;
+    /// <summary>Gets the maximum sum of pixels over all frames (default 2^30; 2^27 in the browser runtime).</summary>
+    public long MaxTotalPixels { get; init; } = DefaultMaxTotalPixels(OperatingSystem.IsBrowser());
 
     /// <summary>Gets the maximum bytes of metadata blobs (ICC, EXIF, XMP, IPTC) in one image.</summary>
     public long MaxMetadataBytes { get; init; } = 16L * 1024 * 1024;

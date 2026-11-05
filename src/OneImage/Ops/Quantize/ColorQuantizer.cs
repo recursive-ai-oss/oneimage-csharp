@@ -10,7 +10,7 @@ namespace OneImage.Ops.Quantize;
 /// <remarks>
 /// Wu is used because it works from a fixed-size histogram, so cost depends on the pixel count only once (one pass, no sorting
 /// or per-pixel tree), and it is deterministic by construction. Differences from the textbook version: palette entries are
-/// the exact mean of the pixels in each box rather than the 5-bit cell centre, the cut search also covers alpha in
+/// the exact mean of the pixels in each box rather than the 5-bit cell center, the cut search also covers alpha in
 /// <see cref="QuantizeAlpha.Full"/> mode, and two weighted k-means passes over the populated histogram cells polish the result.
 /// If the input has no more distinct colors than requested the palette is exactly those colors in order of first appearance,
 /// so images that already fit are never altered.

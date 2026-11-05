@@ -379,7 +379,7 @@ Text, a 800 x 1000 page of 40 lines of `tspan`s (bold, colored, sized, kerned, s
 First run of the 154 rendered `paint-servers` tests passed 11; now 146 pass. The eight failures:
 
 - tile period (deliberate): resvg rounds a pattern tile up to whole pixels and repeats it at that period, so with a tile of 28.8 px its copies drift against the exact geometry; this renderer keeps the exact period, so the seams between tiles fall up to one pixel elsewhere (`pattern/invalid-patternUnits-and-patternContentUnits`, `self-recursive`, `self-recursive-on-child`, `pattern-on-child`: they pass with the rounded period; `out-of-order-referencing` and `recursive-on-child` differ by 2.4% even then, on nested tiles of a few pixels);
-- `pattern/transform-and-patternTransform`: a rotation cancelled by its opposite leaves a pattern that is axis-aligned up to rounding noise; the reference smooths its tile, this renderer snaps it (6%, edge pixels of the tile);
+- `pattern/transform-and-patternTransform`: a rotation canceled by its opposite leaves a pattern that is axis-aligned up to rounding noise; the reference smooths its tile, this renderer snaps it (6%, edge pixels of the tile);
 - `pattern/text-child`: text in a pattern (the text step);
 - `radialGradient/invalid-xlink-href` is excluded (external reference).
 

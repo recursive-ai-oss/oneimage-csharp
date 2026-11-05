@@ -152,7 +152,7 @@ internal static class PngFilter
         int n = row.Length;
         if (bpp == 4 || bpp == 3)
         {
-            // Keep the left neighbour in registers instead of re-reading it from the row.
+            // Keep the left neighbor in registers instead of re-reading it from the row.
             int a0 = 0, a1 = 0, a2 = 0, a3 = 0;
             int i = 0;
             if (bpp == 4)
@@ -206,7 +206,7 @@ internal static class PngFilter
     }
 
     // One pixel per step with the channels in the low lanes of a Vector128<short>. The recurrence runs through the left
-    // neighbour, so pixels cannot be done side by side; the win is that all channels of a pixel share one instruction stream
+    // neighbor, so pixels cannot be done side by side; the win is that all channels of a pixel share one instruction stream
     // and no per-channel branches or byte stores. Values stay in 0..255 after the mask, so 16-bit lanes never overflow
     // (|a+b-2c| <= 510).
     internal static void UnPaethVector(Span<byte> row, ReadOnlySpan<byte> prev, int bpp)
@@ -313,7 +313,7 @@ internal static class PngFilter
         }
     }
 
-    // PNG 3rd ed. 9.4: the predictor picks the neighbour closest to a + b - c, preferring a, then b, then c on ties.
+    // PNG 3rd ed. 9.4: the predictor picks the neighbor closest to a + b - c, preferring a, then b, then c on ties.
     internal static byte Paeth(int a, int b, int c)
     {
         int pa = b - c;

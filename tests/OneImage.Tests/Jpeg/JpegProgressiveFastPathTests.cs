@@ -165,7 +165,7 @@ public class JpegProgressiveFastPathTests
         var rnd = new Random(1234 + (sub * 10) + restart);
         var variants = new List<byte[]>();
 
-        // Truncations: at scan boundaries' neighbourhoods and evenly through the file.
+        // Truncations: at scan boundaries' neighborhoods and evenly through the file.
         for (int i = 1; i <= 60; i++)
         {
             variants.Add(jpeg.AsSpan(0, jpeg.Length * i / 61).ToArray());

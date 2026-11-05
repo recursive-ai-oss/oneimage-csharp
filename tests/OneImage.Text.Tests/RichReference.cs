@@ -84,7 +84,7 @@ internal sealed class GlyphLog : IGlyphRenderer
         Glyphs[^1] = g with { HasOutline = true };
     }
 
-    /// <summary>The decoration segments with neighbours that touch end to end on the same line merged, sorted by line, kind and start.</summary>
+    /// <summary>The decoration segments with neighbors that touch end to end on the same line merged, sorted by line, kind and start.</summary>
     public List<RefSegment> MergedSegments()
     {
         var merged = new List<RefSegment>();

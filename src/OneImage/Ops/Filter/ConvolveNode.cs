@@ -4,7 +4,7 @@ using OneImage.Kernels;
 
 namespace OneImage;
 
-/// <summary>The weights of a neighbourhood filter: a separable pair of 1-D kernels or one 2-D kernel, plus the optional unsharp step.</summary>
+/// <summary>The weights of a neighborhood filter: a separable pair of 1-D kernels or one 2-D kernel, plus the optional unsharp step.</summary>
 internal sealed class ConvolveSpec
 {
     /// <summary>Gets the horizontal radius (half the kernel width, rounded down).</summary>
@@ -44,7 +44,7 @@ internal sealed class ConvolveSpec
 /// </summary>
 internal static class FilterEdge
 {
-    /// <summary>Checks the edge mode a filter can honour; wrap would need pixels from the far side of the image, so it is refused.</summary>
+    /// <summary>Checks the edge mode a filter can honor; wrap would need pixels from the far side of the image, so it is refused.</summary>
     public static void Validate(EdgeMode mode)
     {
         if (mode is not (EdgeMode.Constant or EdgeMode.Clamp or EdgeMode.Mirror))

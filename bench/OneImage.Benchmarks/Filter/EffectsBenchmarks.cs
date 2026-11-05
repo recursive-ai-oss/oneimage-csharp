@@ -8,7 +8,7 @@ using IsRgba32 = SixLabors.ImageSharp.PixelFormats.Rgba32;
 namespace OneImage.Benchmarks.Filter;
 
 /// <summary>
-/// The neighbourhood effects against ImageSharp 3.1.12 on 1600x1200 RGBA pixels already in memory. Both libraries produce the
+/// The neighborhood effects against ImageSharp 3.1.12 on 1600x1200 RGBA pixels already in memory. Both libraries produce the
 /// whole result in memory. Ours runs at its default of min(4, cores) threads; ImageSharp is limited to the same 4 threads unless the
 /// environment variable ONEIMAGE_IS_DEGREE says otherwise (0 = all cores).
 /// Oil paint uses brush 15 here, which is a wider window in this library than in ImageSharp (see the OilPaint docs), and

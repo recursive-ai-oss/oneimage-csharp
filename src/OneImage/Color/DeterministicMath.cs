@@ -383,7 +383,7 @@ internal static class DeterministicMath
     // 2^n for -1022 <= n <= 1023, exactly.
     private static double Pow2(int n) => BitConverter.Int64BitsToDouble((long)(n + 1023) << 52);
 
-    // Round hi + lo to the nearest float without double rounding: make the double the odd neighbour when it is inexact.
+    // Round hi + lo to the nearest float without double rounding: make the double the odd neighbor when it is inexact.
     private static float ToSingle(double hi, double lo)
     {
         if (lo != 0 && !double.IsInfinity(hi) && hi != 0)

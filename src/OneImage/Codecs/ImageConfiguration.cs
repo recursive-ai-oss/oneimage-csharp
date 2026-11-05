@@ -189,6 +189,13 @@ public static class ImageEngine
     /// <summary>Resolves a per-call request (0 or less means default) to an effective degree, capped by <see cref="MaxDegree"/>.</summary>
     internal static int ResolveDegree(int requested)
     {
+        // The browser runtime has one thread: a task queued to the pool never runs while the caller waits for it, so every
+        // call there is sequential whatever MaxDegree says.
+        if (OperatingSystem.IsBrowser())
+        {
+            return 1;
+        }
+
         int d = requested > 0 ? requested : DefaultCallDegree;
         return Math.Clamp(d, 1, MaxDegree);
     }

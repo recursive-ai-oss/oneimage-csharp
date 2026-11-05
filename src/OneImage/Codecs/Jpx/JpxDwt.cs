@@ -189,7 +189,7 @@ internal static class JpxDwt
     // ---- reversible 5-3 ----
 
     // The row holds the low-pass samples first, then the high-pass ones. Both lifting steps work on those two runs directly
-    // (every neighbour of a low-pass sample is a high-pass sample and the other way round), so the steps are plain loops over
+    // (every neighbor of a low-pass sample is a high-pass sample and the other way round), so the steps are plain loops over
     // contiguous memory; only the final interleave is a strided copy.
     private static void HorizontalInt(Span<int> row, int[] tmp, int wLL, int pe)
     {
@@ -338,7 +338,7 @@ internal static class JpxDwt
         Span<float> low = row[..wLL];
         Span<float> high = row[wLL..];
 
-        // F.3.8.2: scaling, then four lifting steps, each reading the neighbours of the other parity.
+        // F.3.8.2: scaling, then four lifting steps, each reading the neighbors of the other parity.
         ScaleRow(low, K);
         ScaleRow(high, InvK);
         Step97(low, high, pe, Delta);

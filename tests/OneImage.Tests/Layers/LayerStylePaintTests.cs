@@ -196,7 +196,7 @@ public class LayerStylePaintTests
         PixelLayer layer = (PixelLayer)doc.Root.Children[0];
         long computed = doc.TilesComputed;
 
-        // A bite out of the box near the middle of its right edge: the bevel inside the box reaches 40 px around it, into the neighbouring tiles.
+        // A bite out of the box near the middle of its right edge: the bevel inside the box reaches 40 px around it, into the neighboring tiles.
         layer.Pixels.Fill(default(Rgba32), OneImage.Drawing.Path.Rectangle(480, 330, 20, 40), antialias: false, composition: AlphaComposition.Src);
         Rgba32[] incremental = Pixels(doc.Render());
         long recomputed = doc.TilesComputed - computed;

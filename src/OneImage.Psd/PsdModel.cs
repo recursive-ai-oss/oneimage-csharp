@@ -40,7 +40,7 @@ public enum PsdLayerKind
     /// <summary>A layer group.</summary>
     Group,
 
-    /// <summary>A solid color fill layer, modelled as a <see cref="FillLayer"/>.</summary>
+    /// <summary>A solid color fill layer, modeled as a <see cref="FillLayer"/>.</summary>
     SolidColorFill,
 
     /// <summary>An adjustment layer that the model reproduces (levels, curves, hue/saturation, ...).</summary>

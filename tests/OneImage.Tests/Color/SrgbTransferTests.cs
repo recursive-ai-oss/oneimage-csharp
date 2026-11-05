@@ -5,7 +5,7 @@ using OneImage.Kernels;
 namespace OneImage.Tests;
 
 /// <summary>
-/// The colour transfer tables and single-value functions must give the same bits on every platform, so the expected values here
+/// The color transfer tables and single-value functions must give the same bits on every platform, so the expected values here
 /// are hashes that every operating system and architecture in CI checks. They were taken from the Linux x64 results of 1.10.2,
 /// whose platform math library the tables are kept equal to.
 /// </summary>

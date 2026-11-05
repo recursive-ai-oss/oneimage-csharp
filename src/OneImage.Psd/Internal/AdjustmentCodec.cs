@@ -214,11 +214,11 @@ internal static class AdjustmentCodec
         int light = r.I16();
         if (colorize || sat is < -100 or > 100 || light is < -100 or > 100)
         {
-            // Colorize is not modelled, and a value outside Photoshop's -100..100 is a corrupt file: kept, not reproduced.
+            // Colorize is not modeled, and a value outside Photoshop's -100..100 is a corrupt file: kept, not reproduced.
             return null;
         }
 
-        // Per-range settings (the six hextants) are not modelled: a file that uses one is kept but not reproduced.
+        // Per-range settings (the six hextants) are not modeled: a file that uses one is kept but not reproduced.
         for (int i = 0; i < 6 && r.Remaining >= 14; i++)
         {
             r.Skip(8);

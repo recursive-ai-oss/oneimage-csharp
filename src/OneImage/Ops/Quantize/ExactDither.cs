@@ -253,7 +253,7 @@ internal sealed class DitherNode : Node
         {
             _matrix = DitherTables.Matrix(dither, out _matrixSize);
 
-            // The perturbation amplitude shrinks as the palette grows: one step between neighbouring levels of an evenly spread
+            // The perturbation amplitude shrinks as the palette grows: one step between neighboring levels of an evenly spread
             // palette, which has cbrt(count) levels per channel.
             int count = paletteRgba.Length / 4;
             float levels = DeterministicMath.CbrtF(count) - 1f;
@@ -474,7 +474,7 @@ internal sealed class DitherNode : Node
                                 continue;
                             }
 
-                            // Error in unit floats; a neighbour is re-quantized to 8 bits after each addition.
+                            // Error in unit floats; a neighbor is re-quantized to 8 bits after each addition.
                             Vector128<float> e = (DitherKernel.Unit(pixel) - palUnit[idx]) * vscale;
                             if (Vector128.EqualsAll(e, Vector128<float>.Zero))
                             {

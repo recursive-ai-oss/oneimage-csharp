@@ -6,7 +6,7 @@ namespace OneImage.Psd.Tests;
 
 internal static class Model
 {
-    /// <summary>Everything the file format holds about a document, as text: structure, every modelled property, kinds, blocks (by hash).</summary>
+    /// <summary>Everything the file format holds about a document, as text: structure, every modeled property, kinds, blocks (by hash).</summary>
     public static string Describe(PsdFile f)
     {
         var sb = new StringBuilder();

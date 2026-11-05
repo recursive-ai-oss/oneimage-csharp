@@ -56,7 +56,7 @@ internal static class Jbig2Generic
 
     /// <summary>
     /// Decodes a generic region with arithmetic coding (T.88 6.2.5): the bitmap is read pixel by pixel, each pixel
-    /// coded in the context of a template of already-decoded neighbours.
+    /// coded in the context of a template of already-decoded neighbors.
     /// </summary>
     /// <param name="work">Limits and cancellation.</param>
     /// <param name="mq">The arithmetic decoder.</param>
@@ -359,7 +359,7 @@ internal static class Jbig2Generic
                 int rx0 = x - referenceDx;
                 if (ltp != 0)
                 {
-                    // T.88 6.3.5.6 step 3 d: a pixel whose 3x3 reference neighbourhood is uniform takes that value.
+                    // T.88 6.3.5.6 step 3 d: a pixel whose 3x3 reference neighborhood is uniform takes that value.
                     int v = reference.Get(rx0, ry0);
                     bool uniform = true;
                     for (int j = -1; j <= 1 && uniform; j++)

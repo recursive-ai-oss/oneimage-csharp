@@ -501,7 +501,7 @@ internal sealed partial class SceneBuilder
     /// <summary>A decoration bar in the space of one cluster; <see cref="M"/> maps that space to the text element's.</summary>
     private readonly record struct Bar(Affine M, float X, float Y, float W, float H);
 
-    // Bars of neighbouring clusters that meet on one line are joined into one, so a decoration is a single rectangle (no seams, no strokes between glyphs).
+    // Bars of neighboring clusters that meet on one line are joined into one, so a decoration is a single rectangle (no seams, no strokes between glyphs).
     private static void Add(Dictionary<(TSpan, int), List<Bar>> runs, TSpan owner, int kind, Bar bar)
     {
         if (!runs.TryGetValue((owner, kind), out List<Bar>? list))

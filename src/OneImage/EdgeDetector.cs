@@ -12,7 +12,7 @@ public enum EdgeDetector
     /// <summary>3×3 Scharr: <c>sqrt(gx² + gy²)</c> with weights 3, 10, 3.</summary>
     Scharr = 2,
 
-    /// <summary>2×2 Roberts cross: <c>sqrt(gx² + gy²)</c> of the two diagonal differences. The window covers the pixel and its upper-left neighbours.</summary>
+    /// <summary>2×2 Roberts cross: <c>sqrt(gx² + gy²)</c> of the two diagonal differences. The window covers the pixel and its upper-left neighbors.</summary>
     RobertsCross = 3,
 
     /// <summary>3×3 Kayyali: <c>sqrt(gx² + gy²)</c> of the two diagonal kernels with weights 6.</summary>

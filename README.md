@@ -13,7 +13,7 @@ files are read through bounds-checked managed code.
 
 How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (wall-clock time, log scale, higher is better; a task
-where OneImage is slower shows as a bar to the left, a tie in grey):
+where OneImage is slower shows as a bar to the left, a tie in gray):
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/main/docs/img/oneimage-hero-dark.svg">
@@ -116,7 +116,7 @@ errors appear, how sources are held, limits and threading.
   layer effects (shadows, glows, strokes, overlays, satin) are drawn; text,
   smart objects and the other effects are kept as their stored pixels plus
   untouched blocks, and multichannel documents are refused. Edited layer
-  styles and fills are written back; the page lists what is modelled and the
+  styles and fills are written back; the page lists what is modeled and the
   known limitations.
 - **PDF pages:** [OneImage.Pdf](docs/pdf.md) (`RecursiveAI.OneImage.Pdf`)
   draws PDF pages as an image format, on demand per tile and at the size you
@@ -127,6 +127,8 @@ errors appear, how sources are held, limits and threading.
 - **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
   registers SVG and `.svgz` as an image format that is drawn at the size you
   ask for; it depends on the core package and OneImage.Text.
+- **Running in the browser:** [WebAssembly support](docs/browser.md): what runs
+  sequentially there, the lower default memory limits, and what CI tests.
 - **Choosing a library:** [how OneImage compares](docs/comparison.md),
   including where the others win.
 - **Evidence:** [benchmark tables](docs/performance.md#results-at-a-glance)

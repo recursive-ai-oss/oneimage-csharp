@@ -27,7 +27,7 @@ public sealed class RasterImage
     internal byte[] Rgba { get; }
 }
 
-/// <summary>How a pixel of an EMF+ image or texture brush is looked up (GDI+ <c>InterpolationMode</c>), reduced to what a renderer can honour.</summary>
+/// <summary>How a pixel of an EMF+ image or texture brush is looked up (GDI+ <c>InterpolationMode</c>), reduced to what a renderer can honor.</summary>
 public enum ImageInterpolation
 {
     /// <summary>Nearest pixel (GDI+ <c>NearestNeighbor</c> and <c>HighSpeed</c>).</summary>
@@ -72,7 +72,7 @@ public sealed record ClearCommand(Rgba32 Color) : DrawingCommand
 
 /// <summary>
 /// Sets the GDI+ rendering hints. They are part of the state that <see cref="SaveStateCommand"/> keeps. A renderer is free to ignore them; the
-/// built-in raster renderer honours <see cref="Smoothing"/> (anti-aliasing), <see cref="SourceCopy"/> and <see cref="PixelOffsetHalf"/>.
+/// built-in raster renderer honors <see cref="Smoothing"/> (anti-aliasing), <see cref="SourceCopy"/> and <see cref="PixelOffsetHalf"/>.
 /// </summary>
 /// <param name="Smoothing">Whether shapes are anti-aliased (GDI+ <c>SmoothingMode</c> other than None and HighSpeed).</param>
 /// <param name="SourceCopy">Whether fills replace the destination instead of blending over it (<c>CompositingMode.SourceCopy</c>).</param>

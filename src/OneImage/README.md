@@ -55,7 +55,7 @@ writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
 ## What was new in 1.10.4
 
-- **Fixed: 16-bit and floating-point images in linear light could still differ by one bit between platforms.** The remaining colour transfer tables and functions (16-bit decode, linear-to-8-bit, sRGB for 16-bit and float pixels, gamma, levels, ICC curves, the Lab cube root) no longer use the platform math library; they use our own correctly rounded power and cube root, so results are the same on every platform. Tables keep their 1.10.3 values; 16-bit and float results change on x64 by at most one unit in the last place in 0.002% of values, where the old math library rounded wrongly.
+- **Fixed: 16-bit and floating-point images in linear light could still differ by one bit between platforms.** The remaining color transfer tables and functions (16-bit decode, linear-to-8-bit, sRGB for 16-bit and float pixels, gamma, levels, ICC curves, the Lab cube root) no longer use the platform math library; they use our own correctly rounded power and cube root, so results are the same on every platform. Tables keep their 1.10.3 values; 16-bit and float results change on x64 by at most one unit in the last place in 0.002% of values, where the old math library rounded wrongly.
 
 ## What was new in 1.10.3
 

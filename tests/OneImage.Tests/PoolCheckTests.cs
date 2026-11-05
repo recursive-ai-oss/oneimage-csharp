@@ -346,8 +346,8 @@ public sealed class PoolCheckTests : IDisposable
             rents = check.Rents;
         }
 
-        TestContext.Current.SendDiagnosticMessage($"pool check: {combos.Length} combinations, {succeeded} identical results, {canceled} cancelled, {faulted} read failures, {rents} rents");
-        Assert.True(succeeded > rounds && canceled > 0 && faulted > 0, $"pool check: {combos.Length} combinations, {succeeded} identical results, {canceled} cancelled, {faulted} read failures");
+        TestContext.Current.SendDiagnosticMessage($"pool check: {combos.Length} combinations, {succeeded} identical results, {canceled} canceled, {faulted} read failures, {rents} rents");
+        Assert.True(succeeded > rounds && canceled > 0 && faulted > 0, $"pool check: {combos.Length} combinations, {succeeded} identical results, {canceled} canceled, {faulted} read failures");
         Assert.True(rents > 100, "the poisoning pools were not used");
         Assert.True(problems.IsEmpty, string.Join("\n---\n", problems.Take(5)));
         Assert.True(violations.Length == 0, string.Join("\n=====\n", violations));

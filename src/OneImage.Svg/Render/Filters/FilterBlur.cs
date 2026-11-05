@@ -95,7 +95,7 @@ internal static class FilterBlur
         }
         else
         {
-            // Even size: one box centered between the pixel and its left neighbour, one between it and its right neighbour, then an odd box of d + 1.
+            // Even size: one box centered between the pixel and its left neighbor, one between it and its right neighbor, then an odd box of d + 1.
             b0 = (d, d / 2);
             b1 = (d, (d / 2) - 1);
             b2 = (d + 1, d / 2);
@@ -169,7 +169,7 @@ internal static class FilterBlur
         int stride = w * 4;
         int lineLen = h * 4;
 
-        // Four neighbouring pixel columns at a time (one cache line per row) go through all three boxes in scratch of 4 x h pixels, read
+        // Four neighboring pixel columns at a time (one cache line per row) go through all three boxes in scratch of 4 x h pixels, read
         // from and written back to the buffer in place; a band of 16 columns is one unit of parallel work.
         const int BandPixels = 16;
         int bandCount = (w + BandPixels - 1) / BandPixels;

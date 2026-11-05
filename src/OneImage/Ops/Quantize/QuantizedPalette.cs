@@ -75,7 +75,7 @@ internal sealed class QuantizedPalette
         ushort v = _lut[cell];
         if (v == ushort.MaxValue)
         {
-            // Probe with the cell's centre so every color in a cell maps alike (deterministic and order-independent).
+            // Probe with the cell's center so every color in a cell maps alike (deterministic and order-independent).
             int cr = (r & ~7) | 4;
             int cg = (g & ~7) | 4;
             int cb = (b & ~7) | 4;
@@ -193,7 +193,7 @@ internal sealed class PaletteMapper
     }
 
     /// <summary>
-    /// The ordered-dither amplitude: the mean distance from an entry to its nearest neighbour, per channel. Noise of about one palette
+    /// The ordered-dither amplitude: the mean distance from an entry to its nearest neighbor, per channel. Noise of about one palette
     /// step is enough to hide banding; more only adds grain.
     /// </summary>
     private static int OrderedSpread(QuantizedPalette p)
@@ -316,7 +316,7 @@ internal sealed class PaletteMapper
                         continue;
                     }
 
-                    // Threshold in (-spread/2, spread/2), centred so flat colors keep their average.
+                    // Threshold in (-spread/2, spread/2), centerd so flat colors keep their average.
                     int t = _matrix is null
                         ? ((((s_bayer[((y & 7) * 8) + (x & 7)] * 2) + 1) - 64) * _spread) / 128
                         : ((((_matrix[((y % _matrixSize) * _matrixSize) + (x % _matrixSize)] * 2) + 1) - (_matrixSize * _matrixSize)) * _spread) / (2 * _matrixSize * _matrixSize);

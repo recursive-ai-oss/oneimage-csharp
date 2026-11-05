@@ -144,7 +144,7 @@ internal sealed class TileCache
 
     public static TileCache Global { get; } = new(256L * 1024 * 1024);
 
-    /// <summary>Gets the cache for tiles derived from streaming decodes: just enough to share tiles between neighbouring renders.</summary>
+    /// <summary>Gets the cache for tiles derived from streaming decodes: just enough to share tiles between neighboring renders.</summary>
     public static TileCache Streaming { get; } = new(8L * 1024 * 1024);
 
     public long Budget

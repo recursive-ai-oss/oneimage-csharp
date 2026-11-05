@@ -37,10 +37,10 @@ public sealed class ProcessingCommands
     /// <summary>Gets whether the image may be enlarged.</summary>
     public bool Upscale { get; internal set; }
 
-    /// <summary>Gets the colour that padding is filled with, or <see langword="null"/> for transparent.</summary>
+    /// <summary>Gets the color that padding is filled with, or <see langword="null"/> for transparent.</summary>
     public Rgba32? PadColor { get; internal set; }
 
-    /// <summary>Gets the colour transparent pixels are flattened onto, or <see langword="null"/> to flatten only when the output format needs it (onto <see cref="OneImageOptions.FlattenColor"/>).</summary>
+    /// <summary>Gets the color transparent pixels are flattened onto, or <see langword="null"/> to flatten only when the output format needs it (onto <see cref="OneImageOptions.FlattenColor"/>).</summary>
     public Rgba32? FlattenColor { get; internal set; }
 
     /// <summary>Gets the requested output format, or <see langword="null"/> to keep the source format when it is allowed and PNG otherwise.</summary>

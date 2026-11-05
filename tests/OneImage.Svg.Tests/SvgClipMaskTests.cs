@@ -333,9 +333,9 @@ public class SvgClipMaskTests
         sb.Append("</g></svg>");
         SvgScene scene = BuildScene(sb.ToString());
         const int Size = 1000;
-        var centre = new Capture(100, 100);
+        var center = new Capture(100, 100);
         long before = SceneRenderer.PathsDrawn;
-        SceneRenderer.Render(scene, Size, Size, new ImageRect(400, 400, 100, 100), centre, new SvgLimits(), CancellationToken.None);
+        SceneRenderer.Render(scene, Size, Size, new ImageRect(400, 400, 100, 100), center, new SvgLimits(), CancellationToken.None);
         Assert.Equal(0, SceneRenderer.PathsDrawn - before); // neither the clip nor the mask reaches the center: nothing is rasterized
 
         var corner = new Capture(100, 100);

@@ -23,7 +23,7 @@ namespace OneImage.Psd;
 /// <see cref="PsdLimits"/> throws <see cref="ImageLimitException"/> before the memory is allocated. A feature that can be left out without
 /// failing (a text engine, a layer style) never throws.
 /// </para>
-/// <para>See <c>docs/psd.md</c> for the table of what is modelled, kept opaque and dropped.</para>
+/// <para>See <c>docs/psd.md</c> for the table of what is modeled, kept opaque and dropped.</para>
 /// </remarks>
 public sealed partial class PsdFile : IDisposable
 {

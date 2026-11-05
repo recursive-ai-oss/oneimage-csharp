@@ -24,7 +24,7 @@ public class FilterLocalityStreamingTests
     [Fact]
     public void InteriorTileReadsOnlyItsRegionPlusTheMargin()
     {
-        // A margin that stays inside the neighbouring tiles: 3x3 tiles. A margin of 1 pixel already reaches the neighbours.
+        // A margin that stays inside the neighboring tiles: 3x3 tiles. A margin of 1 pixel already reaches the neighbors.
         CheckOneTile(i => i.GaussianBlur(3), 3, 3, 9);
         CheckOneTile(i => i.GaussianBlur(0.2), 3, 3, 9);
         CheckOneTile(i => i.Median(5), 3, 3, 9);

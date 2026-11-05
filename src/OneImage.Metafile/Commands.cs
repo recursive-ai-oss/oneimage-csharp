@@ -18,7 +18,7 @@ namespace OneImage.Metafile;
 /// </para>
 /// <para>
 /// Commands have language-neutral <see cref="Name"/>s and <see cref="Describe"/> their parameters as strings, so a stream can be logged or compared
-/// across implementations. Records the interpreter cannot honour appear as <see cref="DiagnosticCommand"/> at the point where they occurred.
+/// across implementations. Records the interpreter cannot honor appear as <see cref="DiagnosticCommand"/> at the point where they occurred.
 /// </para>
 /// </remarks>
 public abstract record DrawingCommand

@@ -28,10 +28,10 @@ internal sealed class Jbig2Page
     /// </summary>
     public byte[] Data { get; }
 
-    /// <summary>Gets the horizontal resolution in pixels per metre, or 0 when the stream does not say.</summary>
+    /// <summary>Gets the horizontal resolution in pixels per meter, or 0 when the stream does not say.</summary>
     public uint XResolution { get; }
 
-    /// <summary>Gets the vertical resolution in pixels per metre, or 0 when the stream does not say.</summary>
+    /// <summary>Gets the vertical resolution in pixels per meter, or 0 when the stream does not say.</summary>
     public uint YResolution { get; }
 }
 
@@ -40,13 +40,13 @@ internal sealed class Jbig2Page
 /// <c>/JBIG2Decode</c> images, and it is not part of the default <c>ImageConfiguration</c>.
 /// </summary>
 /// <remarks>
-/// <para>Supported: the embedded stream organisation of PDF (segments only, optionally preceded by a globals stream) and
-/// the standalone file organisations (sequential and random access). Generic regions (MMR; arithmetic templates 0 to 3
+/// <para>Supported: the embedded stream organization of PDF (segments only, optionally preceded by a globals stream) and
+/// the standalone file organizations (sequential and random access). Generic regions (MMR; arithmetic templates 0 to 3
 /// with typical prediction and any adaptive pixels), generic refinement regions, symbol dictionaries (arithmetic and
 /// Huffman, refinement/aggregate coding, retained contexts), text regions (arithmetic and Huffman, refinement, all
 /// reference corners and transposition), pattern dictionaries, halftone regions, custom and standard Huffman tables,
 /// intermediate and immediate regions, striped pages (also of unknown height) and every combination operator.</para>
-/// <para>Not supported: the extended generic template with twelve adaptive pixels (a later amendment), colour
+/// <para>Not supported: the extended generic template with twelve adaptive pixels (a later amendment), color
 /// extensions, and the lossless profile checks. Extension and profile segments are skipped.</para>
 /// <para>Every size is checked against <see cref="ImageLimits"/> and <see cref="Jbig2Limits"/> before it is allocated.
 /// Malformed data throws <see cref="ImageFormatException"/>; limits throw <see cref="ImageLimitException"/>.</para>
@@ -67,7 +67,7 @@ internal static class Jbig2Codec
     /// <returns>The first page of the stream.</returns>
     /// <exception cref="ImageFormatException">The data is malformed or has no page.</exception>
     /// <exception cref="ImageLimitException">A limit is exceeded.</exception>
-    /// <exception cref="OperationCanceledException">Cancelled.</exception>
+    /// <exception cref="OperationCanceledException">Canceled.</exception>
     public static Jbig2Page Decode(ReadOnlyMemory<byte> data, ReadOnlyMemory<byte> globals, ImageLimits? limits = null, Jbig2Limits? jbig2Limits = null, CancellationToken cancellationToken = default)
     {
         var session = new Jbig2Session(new Jbig2Work(limits ?? ImageLimits.Default, jbig2Limits ?? Jbig2Limits.Default, cancellationToken), 0);
@@ -81,7 +81,7 @@ internal static class Jbig2Codec
     }
 
     /// <summary>
-    /// Decodes one page of a standalone JBIG2 file (sequential or random-access organisation, with the file header).
+    /// Decodes one page of a standalone JBIG2 file (sequential or random-access organization, with the file header).
     /// </summary>
     /// <param name="file">The file.</param>
     /// <param name="pageNumber">The page to decode, starting at 1.</param>

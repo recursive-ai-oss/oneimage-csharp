@@ -227,7 +227,7 @@ internal sealed class Jbig2ImageDecoder : IPdfImageDecoder
 }
 
 /// <summary>
-/// OneImage's JPEG 2000 decoder behind OnePDF's decoder contract. Colour channels come out in the file's colour space converted to one PDF
+/// OneImage's JPEG 2000 decoder behind OnePDF's decoder contract. Color channels come out in the file's color space converted to one PDF
 /// can express (sYCC to RGB; ICC-described RGB, gray and CMYK are converted to sRGB or gray here, because OnePDF cannot be handed a profile);
 /// the opacity channel, if any, is last with <see cref="PdfDecodedImage.HasAlpha"/> set, and OnePDF applies <c>/SMaskInData</c>, <c>/Decode</c> and
 /// masks. A file that is damaged inside its tile data gives no image at all (null), like the other decoders, so the page carries on without it.
@@ -306,7 +306,7 @@ internal sealed class JpxImageDecoder : IPdfImageDecoder
         };
     }
 
-    /// <summary>Converts the colour channels of an ICC-described image to sRGB (or the gray profile), keeping the opacity channel as it is.</summary>
+    /// <summary>Converts the color channels of an ICC-described image to sRGB (or the gray profile), keeping the opacity channel as it is.</summary>
     private static (byte[] Samples, int Colors, int Bits) ConvertIcc(JpxImage image, byte[] samples, int bits, int colors, bool alpha, out PdfColorSpace? space)
     {
         space = null;

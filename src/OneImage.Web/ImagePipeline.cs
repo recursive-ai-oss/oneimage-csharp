@@ -53,7 +53,7 @@ internal static class ImagePipeline
 
     public static byte[] Encode(Image img, IImageFormat format, ProcessingCommands c, OneImageOptions o, ImageConfiguration config)
     {
-        // Formats without alpha get transparent pixels flattened onto a colour instead of whatever the encoder would do.
+        // Formats without alpha get transparent pixels flattened onto a color instead of whatever the encoder would do.
         if (img.Format.Alpha != AlphaMode.None && format.Name is "jpeg" or "bmp")
         {
             img = img.Flatten(c.FlattenColor ?? o.FlattenColor);

@@ -6,7 +6,7 @@ namespace OneImage.Pdf.Render;
 
 /// <summary>
 /// Converts PDF colors to 8-bit sRGB with OneImage's color engine. DeviceGray and DeviceRGB are taken as sRGB, as viewers do;
-/// DeviceCMYK goes through the generic CMYK profile; ICCBased spaces through their profile (sRGB profiles are recognised and left alone);
+/// DeviceCMYK goes through the generic CMYK profile; ICCBased spaces through their profile (sRGB profiles are recognized and left alone);
 /// CalGray, CalRGB and Lab through CIE XYZ with a Bradford adaptation of their white point to D65.
 /// </summary>
 internal static class PdfColors

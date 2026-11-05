@@ -1,4 +1,4 @@
-// Measures the deterministic colour-transfer functions against the platform math library and prints the hashes that
+// Measures the deterministic color-transfer functions against the platform math library and prints the hashes that
 // SrgbTransferTests checks, so a platform without a test runner (browser WebAssembly, for one) can be compared too.
 //
 //   dotnet run -c Release --project tools/TransferSweep -- hashes

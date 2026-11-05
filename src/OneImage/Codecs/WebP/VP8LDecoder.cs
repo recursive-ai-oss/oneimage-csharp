@@ -1162,7 +1162,7 @@ internal sealed class VP8LDecoder : IDisposable
     }
 
     // One predictor over pixels xs..xe-1 of a row (xs >= 1). The mode is a type argument so the loop has no per-pixel dispatch.
-    // The top-right neighbour of the last pixel in a row is the first pixel of the current row (RFC 9649 section 4.1).
+    // The top-right neighbor of the last pixel in a row is the first pixel of the current row (RFC 9649 section 4.1).
     private static void Run<TP>(ReadOnlySpan<uint> src, Span<uint> dst, ReadOnlySpan<uint> prev, int xs, int xe)
         where TP : struct, IPredictor
     {

@@ -302,7 +302,7 @@ public class ShapeTests
         Check(pdf, new Expected(20, 20).Rect(2, 2, 18, 18, Gray(0)).Rect(7, 7, 13, 13, Gray(1)), Tol.Exact);
     }
 
-    // A pentagram drawn in one stroke winds twice in the middle: non-zero fills it, even-odd leaves the centre empty.
+    // A pentagram drawn in one stroke winds twice in the middle: non-zero fills it, even-odd leaves the center empty.
     [Theory]
     [InlineData("f", true)]
     [InlineData("f*", false)]

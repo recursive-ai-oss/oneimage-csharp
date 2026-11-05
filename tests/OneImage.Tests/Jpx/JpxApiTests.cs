@@ -99,7 +99,7 @@ public class JpxApiTests
         byte[] cs = JpxTestStreams.Gen("rgb-default.j2k");
         JpxImage plain = JpxCodec.Decode(cs);
 
-        // Channel 0 is opacity, channel 1 is colour 3, channel 2 is colour 2.
+        // Channel 0 is opacity, channel 1 is color 3, channel 2 is color 2.
         byte[] cdef = JpxTestStreams.Box("cdef", JpxTestStreams.U16(3), JpxTestStreams.U16(0), JpxTestStreams.U16(1), JpxTestStreams.U16(0), JpxTestStreams.U16(1), JpxTestStreams.U16(0), JpxTestStreams.U16(3), JpxTestStreams.U16(2), JpxTestStreams.U16(0), JpxTestStreams.U16(2));
         byte[] jp2 = JpxTestStreams.Jp2(cs, 97, 61, 3, 8, 16, cdef);
         JpxImage image = JpxCodec.Decode(jp2);
@@ -107,8 +107,8 @@ public class JpxApiTests
         Assert.Equal(2, image.ColorChannelCount);
         Assert.Equal(2, image.AlphaChannel);
         Assert.False(image.AlphaPremultiplied);
-        Assert.Equal(plain.Planes[2], image.Planes[0]); // colour 2 came from channel 2
-        Assert.Equal(plain.Planes[1], image.Planes[1]); // colour 3 from channel 1
+        Assert.Equal(plain.Planes[2], image.Planes[0]); // color 2 came from channel 2
+        Assert.Equal(plain.Planes[1], image.Planes[1]); // color 3 from channel 1
         Assert.Equal(plain.Planes[0], image.Planes[2]); // opacity last
     }
 

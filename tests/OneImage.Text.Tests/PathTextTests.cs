@@ -125,7 +125,7 @@ public class PathTextTests
     public void ACircleOfSegmentsMatches()
     {
         // 120 segments of 5.2 px. Ten of the twelve glyphs agree to 0.001 px; two sit one segment step (3 degrees, up to 1.9 px at
-        // their far corners) from the reference, which picks a neighbouring segment there.
+        // their far corners) from the reference, which picks a neighboring segment there.
         Vector2[] circle = [.. Enumerable.Range(0, 120).Select(i => new Vector2(150 + (float)(100 * Math.Cos(i * Math.PI / 60)), 150 + (float)(100 * Math.Sin(i * Math.PI / 60))))];
         Check("circle", Straight, circle, true, tolerance: 2.0);
     }

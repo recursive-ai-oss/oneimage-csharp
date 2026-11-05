@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Compiles the library's colour-transfer sources directly so the same code can also be built for browser-wasm. -->
+  <!-- Compiles the library's color-transfer sources directly so the same code can also be built for browser-wasm. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>

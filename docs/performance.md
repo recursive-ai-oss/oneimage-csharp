@@ -89,7 +89,7 @@ in the last digit from a division of the rounded milliseconds below.
   profile; OneImage, NetVips and Magick.NET do. The fair bar is the
   libraries that convert: OneImage (243.4 ms, 2.2 MiB peak) is faster
   than NetVips (252.0 ms, 441.1 MiB) and Magick.NET (1015.9 ms,
-  159 MiB). The colour error shows what skipping the conversion costs:
+  159 MiB). The color error shows what skipping the conversion costs:
   mean CIEDE2000 against an ICC-correct reference is 0.190 for
   OneImage, 0.885 for NetVips, 0.889 for Magick.NET, 0.909 for
   SkiaSharp and 11.329 for ImageSharp (max 27.193).

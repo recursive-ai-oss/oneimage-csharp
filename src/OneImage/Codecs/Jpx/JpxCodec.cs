@@ -53,7 +53,7 @@ internal static class JpxCodec
     /// <param name="data">The file or codestream. The memory must not change during the call.</param>
     /// <param name="options">Options, or null for the defaults.</param>
     /// <param name="cancellationToken">Cancellation, checked between packets, code-blocks and wavelet levels.</param>
-    /// <returns>The channels, colour information and flags.</returns>
+    /// <returns>The channels, color information and flags.</returns>
     /// <exception cref="ImageFormatException">The data is not valid JPEG 2000 (or, with <see cref="JpxDecodeOptions.Strict"/>, is damaged).</exception>
     /// <exception cref="ImageLimitException">The image would exceed the limits.</exception>
     /// <exception cref="ArgumentException">The requested region lies outside the output.</exception>
@@ -329,7 +329,7 @@ internal static class JpxCodec
             }
         }
 
-        // Order colour channels first and the opacity channel last, per the channel definitions.
+        // Order color channels first and the opacity channel last, per the channel definitions.
         int n = channels.Count;
         var order = new List<int>();
         int alpha = -1;

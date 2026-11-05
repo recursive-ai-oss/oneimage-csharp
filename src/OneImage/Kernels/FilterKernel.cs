@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 namespace OneImage.Kernels;
 
 /// <summary>
-/// Weighted sums over float rows, the one primitive the neighbourhood filters are built from. Every output value is
+/// Weighted sums over float rows, the one primitive the neighborhood filters are built from. Every output value is
 /// <c>sum over taps of weight * source[offset + j]</c> accumulated in tap order with a separate multiply and add (never fused), and
 /// vector lanes are independent, so the vector and scalar paths give bit-identical results at any vector width.
 /// Callers pass tap offsets that index into <c>src</c>; each kernel checks once, before the loops, that every tap stays inside

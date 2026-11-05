@@ -97,7 +97,7 @@ internal sealed class PixelBrush : Brush
                 continue;
             }
 
-            // Interpolate premultiplied so a transparent pixel's color does not bleed into its neighbours.
+            // Interpolate premultiplied so a transparent pixel's color does not bleed into its neighbors.
             float inv = k / alpha;
             Put(
                 rgba,

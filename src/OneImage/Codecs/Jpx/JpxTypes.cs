@@ -1,6 +1,6 @@
 namespace OneImage.Codecs.Jpx;
 
-/// <summary>The colour space a JP2/JPX file states for its image (the enumerated values of the colour specification box).</summary>
+/// <summary>The color space a JP2/JPX file states for its image (the enumerated values of the color specification box).</summary>
 internal enum JpxColorSpace
 {
     /// <summary>The file states none (a raw codestream, or a method this decoder does not interpret).</summary>
@@ -9,7 +9,7 @@ internal enum JpxColorSpace
     /// <summary>sRGB (enumerated value 16).</summary>
     Srgb = 16,
 
-    /// <summary>Greyscale (17).</summary>
+    /// <summary>Grayscale (17).</summary>
     Gray = 17,
 
     /// <summary>sYCC (18): YCbCr with sRGB primaries. Converted to <see cref="Srgb"/> unless the caller asks otherwise.</summary>
@@ -27,20 +27,20 @@ internal enum JpxColorSpace
     /// <summary>ROMM-RGB (22).</summary>
     RommRgb = 22,
 
-    /// <summary>The colour space is described by an embedded ICC profile (see <see cref="JpxImage.IccProfile"/>).</summary>
+    /// <summary>The color space is described by an embedded ICC profile (see <see cref="JpxImage.IccProfile"/>).</summary>
     Icc = 1000,
 }
 
 /// <summary>What a channel carries after the channel-definition box (if any) has been applied.</summary>
 internal enum JpxChannelKind
 {
-    /// <summary>A colour channel.</summary>
+    /// <summary>A color channel.</summary>
     Color = 0,
 
     /// <summary>An opacity (alpha) channel, 0 = transparent.</summary>
     Opacity = 1,
 
-    /// <summary>An opacity channel whose colour channels are already multiplied by it.</summary>
+    /// <summary>An opacity channel whose color channels are already multiplied by it.</summary>
     PremultipliedOpacity = 2,
 
     /// <summary>A channel the file does not describe.</summary>
@@ -73,7 +73,7 @@ internal sealed class JpxDecodeOptions
 
     /// <summary>
     /// When false (the default), a codestream that is cut short or damaged inside tile data yields the part that decoded (the
-    /// rest stays at mid-grey or whatever the finished passes gave) and <see cref="JpxImage.Damaged"/> is set. When true any
+    /// rest stays at mid-gray or whatever the finished passes gave) and <see cref="JpxImage.Damaged"/> is set. When true any
     /// damage throws <see cref="ImageFormatException"/>. Damage in the main header always throws.
     /// </summary>
     public bool Strict { get; init; }
@@ -81,7 +81,7 @@ internal sealed class JpxDecodeOptions
     /// <summary>Convert sYCC images to sRGB (default true).</summary>
     public bool ConvertSycc { get; init; } = true;
 
-    /// <summary>Expand palette (pclr/cmap) images to their colour channels (default true).</summary>
+    /// <summary>Expand palette (pclr/cmap) images to their color channels (default true).</summary>
     public bool ApplyPalette { get; init; } = true;
 
     /// <summary>Most threads one decode may use. Output never depends on it. Default min(4, cores).</summary>
@@ -138,7 +138,7 @@ internal sealed class JpxInfo
     /// <summary>Quality layers of the main-header coding style.</summary>
     public int Layers { get; init; }
 
-    /// <summary>The colour space the file states.</summary>
+    /// <summary>The color space the file states.</summary>
     public JpxColorSpace ColorSpace { get; init; }
 
     /// <summary>Whether the file has a palette box.</summary>
@@ -152,7 +152,7 @@ internal sealed class JpxInfo
 /// A decoded JPEG 2000 image: one plane of unsigned 16-bit samples per output channel, all on the same grid.
 /// </summary>
 /// <remarks>
-/// <para>Channels are ordered colour first (in the order the colour space defines), then at most one opacity channel
+/// <para>Channels are ordered color first (in the order the color space defines), then at most one opacity channel
 /// (see <see cref="AlphaChannel"/>). Components that were subsampled in the codestream are replicated to the full grid.
 /// Signed components are shifted to unsigned by adding 2^(depth-1); <see cref="Signed"/> says which.</para>
 /// <para>A sample of channel <c>c</c> lies in <c>0 .. 2^BitDepths[c]-1</c>. Planes are row-major, <see cref="Width"/> samples
@@ -175,7 +175,7 @@ internal sealed class JpxImage
     /// <summary>Rows of the output.</summary>
     public int Height { get; }
 
-    /// <summary>Number of channels, colour plus opacity.</summary>
+    /// <summary>Number of channels, color plus opacity.</summary>
     public int ChannelCount => Planes.Length;
 
     /// <summary>Samples of each channel, row-major.</summary>
@@ -187,19 +187,19 @@ internal sealed class JpxImage
     /// <summary>True for channels whose samples were signed in the file (now offset to unsigned).</summary>
     public bool[] Signed { get; }
 
-    /// <summary>The colour space the file states, <see cref="JpxColorSpace.Unspecified"/> when none.</summary>
+    /// <summary>The color space the file states, <see cref="JpxColorSpace.Unspecified"/> when none.</summary>
     public JpxColorSpace ColorSpace { get; internal set; }
 
     /// <summary>The embedded ICC profile when <see cref="ColorSpace"/> is <see cref="JpxColorSpace.Icc"/>; otherwise empty.</summary>
     public ReadOnlyMemory<byte> IccProfile { get; internal set; }
 
-    /// <summary>Number of colour channels (the first <see cref="ColorChannelCount"/> planes).</summary>
+    /// <summary>Number of color channels (the first <see cref="ColorChannelCount"/> planes).</summary>
     public int ColorChannelCount { get; internal set; }
 
     /// <summary>Index of the opacity channel, or -1.</summary>
     public int AlphaChannel { get; internal set; } = -1;
 
-    /// <summary>True when the colour channels are already multiplied by the opacity channel.</summary>
+    /// <summary>True when the color channels are already multiplied by the opacity channel.</summary>
     public bool AlphaPremultiplied { get; internal set; }
 
     /// <summary>Resolution levels dropped from the full size.</summary>

@@ -267,7 +267,7 @@ internal sealed class JpegPipeline<T> : IDisposable
     /// <returns><see langword="false"/> when everything requested has been delivered.</returns>
     public bool EmitRow(int r)
     {
-        // Row r-1 can be emitted once r supplied its lower context; the last row has no lower neighbour.
+        // Row r-1 can be emitted once r supplied its lower context; the last row has no lower neighbor.
         if (r >= 1 && r - 1 >= _firstEmit && r - 1 <= _lastEmit)
         {
             Emit(r - 1);

@@ -150,7 +150,7 @@ internal sealed class Jbig2Session
 
     private static uint ReadU32(ReadOnlySpan<byte> b, int pos) => (uint)((b[pos] << 24) | (b[pos + 1] << 16) | (b[pos + 2] << 8) | b[pos + 3]);
 
-    /// <summary>Processes segments stored one after another (header, then data), the sequential and embedded organisations.</summary>
+    /// <summary>Processes segments stored one after another (header, then data), the sequential and embedded organizations.</summary>
     public void ProcessSequential(byte[] buf, int pos)
     {
         while (pos < buf.Length && !_pageDone)
@@ -181,7 +181,7 @@ internal sealed class Jbig2Session
         }
     }
 
-    /// <summary>Processes the random-access organisation: all segment headers first, then the data in the same order.</summary>
+    /// <summary>Processes the random-access organization: all segment headers first, then the data in the same order.</summary>
     public void ProcessRandomAccess(byte[] buf, int pos)
     {
         var headers = new List<Jbig2SegmentHeader>();

@@ -8,7 +8,7 @@ can reach it through core's internals, with core's limits, kernels and fuzz harn
 Entry points (`OneImage.Codecs.Jpx.JpxCodec`):
 
 - `Identify(data, options)`: reads the main header and the JP2 boxes; returns size, component count, bit depths, tile count,
-  the number of reduction levels available, layers and colour space. No tile data is read.
+  the number of reduction levels available, layers and color space. No tile data is read.
 - `Decode(data, options, cancellationToken)`: returns a `JpxImage` of 16-bit sample planes, one per channel, after the palette
   (`pclr`/`cmap`), channel definitions (`cdef`) and the sYCC to sRGB conversion.
 - `DecodeComponents(...)`: the raw component planes at their own sampling, for conformance testing.
@@ -23,7 +23,7 @@ Raw codestreams and JP2 files; all five progression orders and progression order
 layers; packed packet headers (PPM, PPT); SOP/EPH markers; all code-block styles (bypass, reset, terminate-each-pass, vertically
 causal, predictable termination, segmentation symbols); the reversible 5-3 and irreversible 9-7 wavelets; RCT and ICT;
 region-of-interest max-shift; 1 to 16 bits per sample, signed or not; sub-sampled components (replicated to the output grid, no
-interpolation); palettes, channel definitions, ICC and enumerated colour spaces. Part 2 extensions are ignored. More than 16 bits
+interpolation); palettes, channel definitions, ICC and enumerated color spaces. Part 2 extensions are ignored. More than 16 bits
 per sample and more than 30 magnitude bit-planes are refused with `ImageFormatException`.
 
 ## Behavior

@@ -42,7 +42,7 @@ internal static class JpxTestStreams
         return b;
     }
 
-    /// <summary>Wraps a raw codestream in a JP2 file with the given colour specification and optional extra header boxes.</summary>
+    /// <summary>Wraps a raw codestream in a JP2 file with the given color specification and optional extra header boxes.</summary>
     public static byte[] Jp2(byte[] codestream, int width, int height, int components, int bits, uint enumCs, params byte[][] extraHeaderBoxes)
     {
         byte[] ihdr = Box("ihdr", U32((uint)height), U32((uint)width), U16(components), [(byte)(bits - 1), 7, 0, 0]);

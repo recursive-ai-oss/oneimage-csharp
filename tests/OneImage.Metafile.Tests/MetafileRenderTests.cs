@@ -356,7 +356,7 @@ public sealed class MetafileRenderTests
         var emf = new EmfBuilder().CreatePen(1, 0, 1, Blue).Select(1).MoveTo(10, 50).LineTo(90, 50).Build();
         var (px, w, h) = Render(emf, width: 400, antialias: true);
         Assert.Equal(400, w);
-        // The line is centred on a pixel of the 100 px grid, which is not a pixel centre at 400 px, so its coverage may split over
+        // The line is centerd on a pixel of the 100 px grid, which is not a pixel center at 400 px, so its coverage may split over
         // two rows; its total thickness is still one pixel.
         double coverage = 0;
         for (int y = 0; y < h; y++)

@@ -83,7 +83,7 @@ public sealed class OneImageOptions
     /// <summary>Gets or sets whether the stored EXIF orientation is applied. Defaults to <see langword="true"/>. A request can say <c>orient=0</c>.</summary>
     public bool AutoOrient { get; set; } = true;
 
-    /// <summary>Gets or sets the colour that transparent pixels are flattened onto when the output format has no alpha (JPEG, BMP). Defaults to white.</summary>
+    /// <summary>Gets or sets the color that transparent pixels are flattened onto when the output format has no alpha (JPEG, BMP). Defaults to white.</summary>
     public Rgba32 FlattenColor { get; set; } = new(255, 255, 255, 255);
 
     /// <summary>Gets or sets a hook run after the commands were read from the query string and the signature was checked. It may add, change or remove commands in <see cref="ImageCommandContext.Commands"/> (keyed by the canonical names), for instance to choose WebP when the browser accepts it. If a hook varies its result by anything other than the URL, the response also needs a <c>Vary</c> header, set in <see cref="OnPrepareResponseAsync"/>.</summary>
