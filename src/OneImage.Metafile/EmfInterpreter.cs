@@ -233,7 +233,7 @@ internal sealed partial class EmfInterpreter
             }
             else
             {
-                Dispatch(type, rec);
+                DispatchGdi(type, rec);
             }
 
             seq++;
@@ -245,6 +245,7 @@ internal sealed partial class EmfInterpreter
             Diag(DiagnosticSeverity.Warning, "The file ended inside a path bracket.");
         }
 
+        PlusFinish();
         while (_saved.Count > 0)
         {
             // Leave the stream balanced for consumers.
@@ -260,10 +261,8 @@ internal sealed partial class EmfInterpreter
         if (_wmf is null && Info.HasEmfPlus)
         {
             Diag(
-                Info.IsEmfPlusOnly ? DiagnosticSeverity.Warning : DiagnosticSeverity.Info,
-                Info.IsEmfPlusOnly
-                    ? "The file holds EMF+ records only; they are not interpreted yet, so the picture is empty."
-                    : "The file holds EMF+ records and GDI fallback records; the GDI records are drawn and the EMF+ records are not interpreted yet.");
+                DiagnosticSeverity.Info,
+                "The file holds EMF+ records: they are interpreted, and the GDI records are played only inside GetDC sections.");
         }
     }
 

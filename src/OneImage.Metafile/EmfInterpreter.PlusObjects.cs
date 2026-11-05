@@ -213,7 +213,7 @@ internal sealed partial class EmfInterpreter
         }
     }
 
-    private BrushSpec ReadTextureBrush(ref PlusReader r)
+    private TextureBrushSpec ReadTextureBrush(ref PlusReader r)
     {
         uint flags = r.U32();
         EdgeWrap wrap = ToWrap(r.U32());
@@ -227,7 +227,7 @@ internal sealed partial class EmfInterpreter
         throw new PlusDataException("a texture brush needs a bitmap");
     }
 
-    private (float[] Positions, uint[] Colors) ReadBlendColors(ref PlusReader r)
+    private static (float[] Positions, uint[] Colors) ReadBlendColors(ref PlusReader r)
     {
         uint n = r.U32();
         if (n > 4096)
@@ -251,7 +251,7 @@ internal sealed partial class EmfInterpreter
         return (pos, col);
     }
 
-    private (float[] Positions, float[] Factors) ReadBlendFactors(ref PlusReader r)
+    private static (float[] Positions, float[] Factors) ReadBlendFactors(ref PlusReader r)
     {
         uint n = r.U32();
         if (n > 4096)
@@ -282,7 +282,7 @@ internal sealed partial class EmfInterpreter
         return new Rgba32(L(a.R, b.R), L(a.G, b.G), L(a.B, b.B), L(a.A, b.A));
     }
 
-    private BrushSpec ReadLinearGradient(ref PlusReader r)
+    private static LinearGradientBrushSpec ReadLinearGradient(ref PlusReader r)
     {
         uint flags = r.U32();
         EdgeWrap wrap = ToWrap(r.U32());
@@ -338,7 +338,7 @@ internal sealed partial class EmfInterpreter
         return new LinearGradientBrushSpec(new Vector2(x, y), new Vector2(x + w, y), stops, wrap, m);
     }
 
-    private BrushSpec ReadPathGradient(ref PlusReader r)
+    private PathGradientBrushSpec ReadPathGradient(ref PlusReader r)
     {
         uint flags = r.U32();
         EdgeWrap wrap = ToWrap(r.U32());
@@ -781,7 +781,7 @@ internal sealed partial class EmfInterpreter
         return (PlusImageObj)ReadImageBody(ref r);
     }
 
-    private PlusObj ReadImageBody(ref PlusReader r)
+    private PlusImageObj ReadImageBody(ref PlusReader r)
     {
         r.U32(); // version
         uint type = r.U32();
@@ -986,7 +986,7 @@ internal sealed partial class EmfInterpreter
 
     // ---- fonts, string formats, attributes ----------------------------------------------------------------------------
 
-    private PlusFontObj ParseFontObject(ReadOnlyMemory<byte> data)
+    private static PlusFontObj ParseFontObject(ReadOnlyMemory<byte> data)
     {
         var r = new PlusReader(data);
         r.U32();
@@ -1005,7 +1005,7 @@ internal sealed partial class EmfInterpreter
         return new PlusFontObj(name, em, unit, style);
     }
 
-    private PlusFormatObj ParseFormatObject(ReadOnlyMemory<byte> data)
+    private static PlusFormatObj ParseFormatObject(ReadOnlyMemory<byte> data)
     {
         var r = new PlusReader(data);
         r.U32();
@@ -1026,7 +1026,7 @@ internal sealed partial class EmfInterpreter
             trail);
     }
 
-    private PlusAttributesObj ParseAttributesObject(ReadOnlyMemory<byte> data)
+    private static PlusAttributesObj ParseAttributesObject(ReadOnlyMemory<byte> data)
     {
         var r = new PlusReader(data);
         r.U32();

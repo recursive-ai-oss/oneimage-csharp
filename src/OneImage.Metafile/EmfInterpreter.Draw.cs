@@ -1487,6 +1487,12 @@ internal sealed partial class EmfInterpreter
             }
         }
 
+        if (kind == CommentKind.EmfPlus)
+        {
+            PlusComment(data);
+            return;
+        }
+
         Emit(new CommentCommand(kind, data));
     }
 }
