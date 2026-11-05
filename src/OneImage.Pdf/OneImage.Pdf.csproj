@@ -4,6 +4,7 @@
     <AssemblyName>$(LibName).Pdf</AssemblyName>
     <RootNamespace>$(LibName).Pdf</RootNamespace>
     <PackageId>$(PackagePrefix)$(LibName).Pdf</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
     <Description>PDF support for OneImage: renders PDF pages as an image format, drawn on demand per tile from OnePDF display lists.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>

@@ -4,6 +4,7 @@
     <AssemblyName>$(LibName).Text</AssemblyName>
     <RootNamespace>$(LibName).Text</RootNamespace>
     <PackageId>$(PackagePrefix)$(LibName).Text</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
     <Description>Fonts and text for OneImage: loads TrueType, OpenType (CFF), TrueType Collection, WOFF and WOFF2 fonts, measures and lays out text, and draws it onto images and canvases through the vector drawing layer.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>

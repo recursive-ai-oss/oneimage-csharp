@@ -4,6 +4,7 @@
     <AssemblyName>$(LibName).Psd</AssemblyName>
     <RootNamespace>$(LibName).Psd</RootNamespace>
     <PackageId>$(PackagePrefix)$(LibName).Psd</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
     <Description>Photoshop PSD and PSB support for OneImage: reads the merged composite as an image format, loads and saves the layer tree as a OneImage layered document.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>

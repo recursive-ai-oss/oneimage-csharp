@@ -4,6 +4,7 @@
     <AssemblyName>$(LibName).Svg</AssemblyName>
     <RootNamespace>$(LibName).Svg</RootNamespace>
     <PackageId>$(PackagePrefix)$(LibName).Svg</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
     <Description>SVG support for OneImage: reads static SVG (shapes, paths, gradients, patterns, clipping, masks, markers, filters and text) as an image format, rendered directly at the requested output size.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>

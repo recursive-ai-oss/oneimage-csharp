@@ -4,6 +4,7 @@
     <AssemblyName>$(LibName).Web</AssemblyName>
     <RootNamespace>$(LibName).Web</RootNamespace>
     <PackageId>$(PackagePrefix)$(LibName).Web</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
     <Description>ASP.NET Core middleware for on-the-fly image processing and caching: resize, crop, convert and recompress images through URL commands, with a disk cache, conditional requests, signed URLs and request limits. Built on the OneImage library.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>
