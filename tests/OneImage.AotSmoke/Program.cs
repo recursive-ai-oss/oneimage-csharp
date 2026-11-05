@@ -905,6 +905,19 @@ foreach (bool lossless in new[] { true, false })
     }
 }
 
+// Metafile: a placeable WMF (a red box on a 100-unit page) through WmfFormat.
+{
+    var wmfConfig = new ImageConfiguration().Add(OneImage.Metafile.WmfFormat.Instance);
+    byte[] wmf = Convert.FromBase64String("183GmgAAAAAAAGQAZABgAAAAAABxVwEACQAAAygAAAABAAcAAAAAAAUAAAALAgAAAAAFAAAADAJkAGQABwAAAPwCAAD/AAAAAAAEAAAALQEAAAcAAAAbBFoAWgAKAAoAAwAAAAAA");
+    ImageInfo wmfInfo = Image.Identify(wmf, new LoadOptions { Configuration = wmfConfig });
+    Rgba32[] wmfPixels = Image.Load(wmf, new LoadOptions { Configuration = wmfConfig }).ToArray<Rgba32>();
+    if (wmfInfo.Width != 100 || wmfInfo.Format.Name != "wmf" || wmfPixels[(50 * 100) + 50] != new Rgba32(255, 0, 0, 255))
+    {
+        Console.Error.WriteLine("wmf smoke failed");
+        return 1;
+    }
+}
+
 // JPEG 2000: the internal decoder reads a one-pixel codestream (this keeps its code in the analysed set).
 {
     byte[] j2k = Convert.FromBase64String("/0//UQApAAAAAAABAAAAAQAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAABBwEB/1IADAAAAAEAAAQEAAH/XAAEQED/ZAAlAAFDcmVhdGVkIGJ5IE9wZW5KUEVHIHZlcnNpb24gMi41LjT/kAAKAAAAAAASAAH/k8B0EAn/2Q==");

@@ -355,10 +355,11 @@ public sealed class WmfTests
         Is(At(r, 15, 45), Red);
     }
 
+    // A bottom-up DIB counts its source rows from the bottom, so ySrc 1 of 2 is the top row (red, green).
     [Fact]
     public void StretchDibTakesASourceRectangle()
     {
-        var r = Render(Picture().StretchDib(0, 0, 20, 20, 1, 0, 1, 1, 0x00CC0020, Quad()).Build());
+        var r = Render(Picture().StretchDib(0, 0, 20, 20, 1, 1, 1, 1, 0x00CC0020, Quad()).Build());
         Is(At(r, 10, 10), Green);
     }
 
@@ -444,7 +445,7 @@ public sealed class WmfTests
     [Fact]
     public void RegionFillPaintAndInvert()
     {
-        byte[] wmf = Picture().CreateBrush(0, Red).CreateRegion((10, 10, 40, 20), (10, 20, 20, 40)).Select(0).FillRegion(2, 1).PaintRegion(2).Build();
+        byte[] wmf = Picture().CreateBrush(0, Red).CreateRegion((10, 10, 40, 20), (10, 20, 20, 40)).Select(1).FillRegion(2, 1).PaintRegion(2).Build();
         var r = Render(wmf);
         Is(At(r, 15, 15), Red);
         Is(At(r, 15, 30), Red);

@@ -1,12 +1,12 @@
 # Metafiles (`RecursiveAI.OneImage.Metafile`)
 
-The package reads Windows Enhanced Metafiles (EMF) two ways: as an image format that is drawn at the requested size, and as a stream of device-independent drawing commands. It is clean-room: written from [MS-EMF] only, and checked against Windows GDI output made by us. EMF+ and WMF are not interpreted yet (see Gaps).
+The package reads Windows Enhanced Metafiles (EMF) and Windows Metafiles (WMF) two ways: as an image format that is drawn at the requested size, and as a stream of device-independent drawing commands. It is clean-room: written from [MS-EMF] and [MS-WMF] only, and checked against Windows GDI output made by us. EMF+ records are not interpreted yet (see Gaps).
 
 ## Two layers
 
 ```csharp
 // 1. Image format: Image.Load(emf) rasterizes at the final size.
-var config = new ImageConfiguration().Add(MetafileFormat.Instance);
+var config = new ImageConfiguration().Add(MetafileFormat.Instance).Add(WmfFormat.Instance); // WMF is its own format
 Image.Load("a.emf", new LoadOptions { Configuration = config }).Resize(width: 800).Save("a.png");
 
 // 2. Command stream: the same interpreter, without rasterizing.
@@ -45,7 +45,7 @@ A walk is cheap: `MetafileDocument.Parse` interprets once; `Play` can be called 
 - **Anti-aliasing** is on by default and uses the drawing engine's exact-area coverage. `antialias: false` gives GDI-like hard edges, which is how the Windows comparison runs. Windows GDI itself does not anti-alias, so a default render differs from GDI along edges.
 - **Background** is transparent unless `background` is given. Raster operations that read the destination (XOR, `PATINVERT`, `SRCAND`...) treat a transparent destination as white.
 - **Fonts** come from `MetafileFontOptions`: your `FontCollection`, optionally installed system fonts, a substitution table (`Substitutions`), and a `DefaultFamily`. Common Windows faces (Arial, Segoe UI, Tahoma, Times New Roman, ...) map to similar installed families when not present. Text is drawn from outlines with the Text package; glyph positions come from the record's advances when present.
-- **Sampling.** Bitmaps are sampled bilinearly in `STRETCH_HALFTONE` mode and nearest-neighbour in the others.
+- **Sampling.** Bitmaps are sampled bilinearly in `STRETCH_HALFTONE` mode only when the stretch shrinks the bitmap (as GDI does), and nearest-neighbour otherwise.
 
 ## Geometry conventions (measured from Windows output)
 
@@ -55,6 +55,7 @@ Where [MS-EMF] does not say how GDI behaves, the renderer follows what Windows G
 - **Strokes** are placed so that a one-pixel pen on integer coordinates fills one row or column of pixels: the geometry is shifted half a reference-device pixel, and box outlines are drawn half a pixel inside the box edge. `PS_INSIDEFRAME` insets by half the pen width.
 - **Pens.** A legacy pen of width 0 or 1 is cosmetic (one device pixel, ignores the transform); wider legacy pens are geometric with round caps and joins. Extended pens follow `PS_COSMETIC`/`PS_GEOMETRIC`. Cosmetic dash patterns are 18/6 (dash), 3/3 (dot), 9/6/3/6 (dash-dot) and 9/3/3/3/3/3 (dash-dot-dot) pixels. A geometric pen counts in pen widths: dash 3 on 1 off, dot 1 on 1 off, dash-dot 3 1 1 1, dash-dot-dot 3 1 1 1 1 1; with round or square caps the cap belongs to the dash, so a round-capped dot is a disc the width of the pen every two widths. User-style dash lengths are in logical units.
 - **Hatch brushes** are 8x8 cells in output pixels (they do not scale with the picture), anchored at the brush origin, which is also not scaled: the horizontal line is on row 3 and the vertical line on column 4 of the cell, the forward diagonal is x = y and the backward diagonal x + y = 7.
+- **Region fills.** `FrameRegion` paints inside the region's edge. A raster operation other than copy keeps the brush out from under the overlap of a wide pen.
 - **Region data** (clip regions) is in logical units, per the specification.
 - **Gradient fills** ignore the vertex alpha.
 - **`SelectClipPath` with an empty path** leaves the clip unchanged (GDI fails the call; this happens for a bracket that held only text drawn with a bitmap font).
@@ -78,9 +79,51 @@ All record types 1–122 of [MS-EMF] 2.1.1 are dispatched.
 
 Binary raster operations (`SETROP2`, 16 modes) and ternary operations (the 256 `BITBLT` codes) are computed per pixel by a pass over the covered area.
 
+## WMF
+
+`WmfFormat` (name `wmf`, `.wmf`, `image/wmf`) registers next to `MetafileFormat`; `MetafileDocument.Parse`/`Load`/`Identify` accept both and `MetafileDocument.IsWmf` tells them apart. Placeable (APM header) and non-placeable files are read.
+
+**Approach.** Each WMF record is translated in memory to the equivalent EMF record and played by the EMF interpreter (Windows itself converts the same way), so every convention above applies and the command stream is unchanged. Diagnostics name the WMF record index and function. WMF specifics:
+
+- **Objects.** Slots are allocated lowest-free as GDI does (an EMF handle is slot + 1). Palettes and regions are tracked by the converter; regions become inline region data.
+- **Size.** A placeable file is its bounding box divided by units-per-inch, at 96 px per inch. Without a header: the first `SetWindowExt` in pixels, else the bounds of the drawn coordinates, else 256x256. The reference device is a synthetic 96 dpi 1024x768 display. Until the file sets them, the mapping is anisotropic with window = bounding box and viewport = the whole picture.
+- **Boxes** are right/bottom exclusive as written; the EMF inclusive expansion is not applied.
+- **Embedded EMF.** A file carrying `META_ESCAPE` / `ENHANCED_METAFILE` comment chunks is reassembled (at most `MetafileLimits.MaxEmbeddedEmfBytes`, 64 MiB, checked against the declared size before allocating) and played through the EMF interpreter instead of the WMF records, unless `MetafileReadOptions.PreferEmbeddedEmf` is false. A damaged embedded EMF falls back to the WMF records with a diagnostic. `Identify` still reports the WMF header's size.
+- **Pseudo-records** for window/viewport offsets and text character extra are internal.
+
+| Area | WMF functions |
+|---|---|
+| State | `SaveDC`, `RestoreDC`, `SetMapMode`, `SetWindowOrg/Ext`, `SetViewportOrg/Ext`, `OffsetWindowOrg`, `OffsetViewportOrg`, `ScaleWindowExt`, `ScaleViewportExt`, `SetBkMode`, `SetBkColor`, `SetTextColor`, `SetTextAlign`, `SetTextJustification`, `SetTextCharExtra`, `SetPolyFillMode`, `SetROP2`, `SetStretchBltMode`, `SetMapperFlags` (ignored), `SetRelAbs` (ignored) |
+| Objects | `CreatePenIndirect`, `CreateBrushIndirect` (solid, hollow, hatch, DIB pattern), `DibCreatePatternBrush`, `CreatePatternBrush`, `CreateFontIndirect`, `CreateRegion`, `CreatePalette`, `SelectObject`, `DeleteObject`, `SelectPalette` |
+| Drawing | `MoveTo`, `LineTo`, `Polyline`, `Polygon`, `PolyPolygon`, `Rectangle`, `RoundRect`, `Ellipse`, `Arc`, `Pie`, `Chord`, `SetPixel` |
+| Text | `TextOut`, `ExtTextOut` (cp1252; the charset is not applied; character widths are used) |
+| Bitmaps | `BitBlt`, `StretchBlt`, `DibBitBlt`, `DibStretchBlt`, `StretchDIB`, `SetDIBitsToDevice`, `PatBlt`; the forms without a bitmap are pattern fills |
+| Clipping and regions | `IntersectClipRect`, `ExcludeClipRect`, `OffsetClipRgn`, `SelectClipRegion` (an index naming no region resets), `FillRegion`, `FrameRegion`, `InvertRegion`, `PaintRegion` |
+| Escapes | embedded EMF (above); the rest are ignored (printing control records are silent) |
+| Skipped with a diagnostic | `FloodFill`, `ExtFloodFill`, palette changes that don't affect RGB (silent), bitmaps of 4 and 8 bpp in `Bitmap16`, `DIB_PAL_COLORS` |
+
+For a bottom-up DIB the source rows of `StretchDIB` count from the bottom (as GDI). `Bitmap16` is read at 1, 16, 24 and 32 bpp; 1 bpp is black and white.
+
+### WMF checked against Windows
+
+The same 15 drawings were recorded as WMF (placeable and non-placeable, identical results) and played by `PlayMetaFile` at 256x256 into a white bitmap; `WmfReferenceTests` uses the same pixel comparison as for EMF (per-case floor 95%, text_styled 90%).
+
+| Case | 256 px | Case | 256 px |
+|---|---|---|---|
+| arcs | 99.29 | rop2 | 98.61 |
+| clip_rect | 100.00 | state_stack | 99.22 |
+| dib_pattern | 99.90 | stock_objects | 96.43 |
+| hatch | 99.90 | stretchdibits | 99.25 |
+| lines_pens | 99.80 | text_basic | 96.54 |
+| pixels_misc | 99.27 | text_styled | 91.75 |
+| polys | 99.66 | rect_basic | 99.64 |
+| regions | 99.64 | | |
+
+The remaining differences are the same as for EMF; text_styled is lowest because of the font faces GDI used.
+
 ## Gaps (each produces a diagnostic)
 
-`WIDENPATH`, `SETMETARGN`, `EXTFLOODFILL`, text inside a path bracket, glyph-index text (treated as code points), vertical advances in `ExtTextOut` (`PDY`), the `XformSrc` of blits, `DIB_PAL_COLORS` bitmaps, JPEG or PNG compressed DIBs, right-to-left layout, EMF+ records, and WMF (planned). Skipped records never stop the interpretation.
+`WIDENPATH`, `SETMETARGN`, `EXTFLOODFILL`, text inside a path bracket, glyph-index text (treated as code points), vertical advances in `ExtTextOut` (`PDY`), the `XformSrc` of blits, `DIB_PAL_COLORS` bitmaps, JPEG or PNG compressed DIBs, right-to-left layout, and EMF+ records. Skipped records never stop the interpretation.
 
 ## Limits and safety
 
@@ -94,11 +137,11 @@ Binary raster operations (`SETROP2`, 16 modes) and ternary operations (the 256 `
 |---|---|---|---|---|---|
 | alphablend | 100.00 | 100.00 | polys | 99.20 | 99.68 |
 | arcs | 99.22 | 99.69 | rect_basic | 99.60 | 99.72 |
-| beziers | 99.77 | 99.86 | regions | 98.16 | 98.41 |
-| bitblt_dc | 99.84 | 99.87 | rop2 | 96.04 | 95.92 |
+| beziers | 99.77 | 99.86 | regions | 99.24 | 99.29 |
+| bitblt_dc | 99.84 | 99.87 | rop2 | 99.36 | 98.95 |
 | clip_path | 99.82 | 99.70 | state_stack | 99.10 | 99.33 |
 | clip_rect | 99.95 | 99.98 | stock_objects | 95.80 | 98.61 |
-| dib_pattern | 98.86 | 99.38 | stretchdibits | 97.48 | 98.02 |
+| dib_pattern | 98.86 | 99.38 | stretchdibits | 99.16 | 99.68 |
 | geom_pens | 99.66 | 99.79 | text_basic | 98.12 | 98.73 |
 | gradient | 99.77 | 99.97 | text_styled | 97.41 | 97.35 |
 | hatch | 97.35 | 99.05 | world_xform | 99.05 | 99.28 |
@@ -106,4 +149,4 @@ Binary raster operations (`SETROP2`, 16 modes) and ternary operations (the 256 `
 | mmtext_raw | 98.50 | 99.38 | paths | 97.29 | 97.28 |
 | pixels_misc | 99.58 | 99.65 | | | |
 
-The pictures are 384 px wide at their natural size, so both comparison sizes are fractional scales, and GDI rounds shape corners to its own grid: most of the remaining differences are one-pixel edge placement. The rest: text in fonts other than Arial (the system raster fonts and Arial itself are not available to the renderer), the smoothing GDI applies to stretched bitmaps, `WidenPath` and text in paths (not interpreted), and ROP2 modes other than copy where GDI does not apply a fill under a wide pen's overlap twice (`rop2`).
+The pictures are 384 px wide at their natural size, so both comparison sizes are fractional scales, and GDI rounds shape corners to its own grid: most of the remaining differences are one-pixel edge placement. The rest: text in fonts other than Arial (the system raster fonts and Arial itself are not available to the renderer), the smoothing GDI applies to stretched bitmaps, `WidenPath` and text in paths (not interpreted).
