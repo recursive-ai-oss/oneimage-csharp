@@ -1,0 +1,10 @@
+primary screen bounds (logical px, this process): 1664x1109
+video mode (physical): 2496x1664
+system dpi: 144 (scaling 150%)
+registry LogPixels: 96; Win8DpiScaling: 0
+FontSmoothing: 2; FontSmoothingType: 2 (2 = ClearType on, 1 = standard)
+os: Microsoft Windows 11 Home 10.0.26300
+dotnet sdk: 9.0.101
+run (UTC): 2026-11-05T19:56:35.0502837Z
+note: "primary screen bounds" was read before the process declared itself DPI-aware, so it is logical pixels at 150%; the reference device in out/manifest.txt matches it (HORZRES=1664 VERTRES=1109, LOGPIXELSX=96).
+run: GdiOracle unmodified except TargetFramework net9.0-windows (SDK 9.0.101), dotnet run -c Release -- out, in the signed-in user's interactive session (scheduled task, not a service session); no --gdi-only. GDI+ case g_pageunits failed in both modes ("Parameter is not valid"); every other case ran. See run.log.

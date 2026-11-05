@@ -1,0 +1,4 @@
+os=Microsoft Windows NT 10.0.26300.0 runtime=9.0.0
+reference device: HORZSIZE=317mm VERTSIZE=211mm HORZRES=1664 VERTRES=1109 LOGPIXELSX=96 LOGPIXELSY=96 BITSPIXEL=32
+GDI+ FAIL g_pageunits plusonly: Parameter is not valid.
+GDI+ FAIL g_pageunits dual: Parameter is not valid.

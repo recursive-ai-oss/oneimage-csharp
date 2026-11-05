@@ -241,6 +241,40 @@ internal sealed partial class EmfInterpreter
         return (Math.Abs(x), Math.Abs(y));
     }
 
+    /// <summary>
+    /// GDI writes the bounding box of a shape inclusive of its far edges (a Rectangle(10, 10, 45, 80) call is recorded as 10, 10, 44, 79) and
+    /// plays it back covering that last pixel, so the far device edges move out by one device pixel. Measured from Windows output.
+    /// </summary>
+    private void ExpandBox(ref double l, ref double t, ref double rr, ref double b)
+    {
+        Mat m = Ctm();
+        if (!m.IsInvertible || !m.IsAxisAligned)
+        {
+            return;
+        }
+
+        (double ix, double iy) = m.InverseVector(1, 1);
+        ix = Math.Abs(ix);
+        iy = Math.Abs(iy);
+        if (m.M11 > 0)
+        {
+            rr += ix;
+        }
+        else
+        {
+            l -= ix;
+        }
+
+        if (m.M22 > 0)
+        {
+            b += iy;
+        }
+        else
+        {
+            t -= iy;
+        }
+    }
+
     private void Box(ReadOnlyMemory<byte> r, string name, int kind)
     {
         // Box: Left, Top, Right, Bottom (and for a rounded rectangle the corner size)
@@ -252,6 +286,7 @@ internal sealed partial class EmfInterpreter
         double l = Math.Min(Int(r, 8), Int(r, 16)), rr = Math.Max(Int(r, 8), Int(r, 16));
         double t = Math.Min(Int(r, 12), Int(r, 20)), b = Math.Max(Int(r, 12), Int(r, 20));
         double cw = kind == 2 ? Int(r, 24) : 0, ch = kind == 2 ? Int(r, 28) : 0;
+        ExpandBox(ref l, ref t, ref rr, ref b);
         var fill = new MetafilePathBuilder(64);
         var stroke = new MetafilePathBuilder(64);
         PenSpec? pen = _inPath ? null : CurrentPen();
@@ -738,6 +773,14 @@ internal sealed partial class EmfInterpreter
 
         if (TakePath(out MetafilePath path))
         {
+            if (path.IsEmpty)
+            {
+                // GDI's SelectClipPath fails on a path without figures (for instance one that only held text drawn with a bitmap font)
+                // and leaves the clip as it was; Windows output shows the unclipped drawing that follows.
+                Diag(DiagnosticSeverity.Info, "SelectClipPath with an empty path leaves the clip unchanged.");
+                return;
+            }
+
             Emit(new ClipCommand(RegionMode(mode), path, PolyRule()));
         }
     }

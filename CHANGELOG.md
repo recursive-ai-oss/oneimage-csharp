@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `RecursiveAI.OneImage.Metafile`, a new package for Windows Enhanced Metafiles (EMF): `MetafileFormat` registers `.emf` as an image format drawn at the requested size, and `MetafileDocument` interprets a file into a public stream of device-independent drawing commands (paths with brushes and pens, bitmaps, gradients, text, clips) that other renderers can walk. All records of the format are dispatched; what is not interpreted (EMF+, `WidenPath`, a few rarely used records) is reported as diagnostics. Sizes are checked against `MetafileLimits` before allocation. See `docs/metafile.md`. WMF and EMF+ follow.
+
 ## [1.10.5] - 2026-11-05
 
 ### Fixed

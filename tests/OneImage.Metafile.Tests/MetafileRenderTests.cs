@@ -48,9 +48,9 @@ public sealed class MetafileRenderTests
     }
 
     [Fact]
-    public void RectangleHasABorderOfPenWidthAndExcludesRightAndBottom()
+    public void RectangleRecordCoversItsFarEdgePixelsWithTheBorder()
     {
-        var emf = new EmfBuilder().CreatePen(1, 0, 1, Blue).CreateBrush(2, 0, Red).Select(1).Select(2).Rectangle(10, 10, 50, 40).Build();
+        var emf = new EmfBuilder().CreatePen(1, 0, 1, Blue).CreateBrush(2, 0, Red).Select(1).Select(2).Rectangle(10, 10, 49, 39).Build(); // GDI records the far edges inclusive: Rectangle(10, 10, 50, 40) is written as 10, 10, 49, 39
         var r = Render(emf);
         Is(At(r, 30, 25), 255, 0, 0);
         Is(At(r, 10, 25), 0, 0, 255);
@@ -65,7 +65,7 @@ public sealed class MetafileRenderTests
     [Fact]
     public void NullPenFillsTheWholeBox()
     {
-        var emf = new EmfBuilder().SelectStock(8).CreateBrush(1, 0, Red).Select(1).Rectangle(20, 20, 30, 30).Build();
+        var emf = new EmfBuilder().SelectStock(8).CreateBrush(1, 0, Red).Select(1).Rectangle(20, 20, 29, 29).Build();
         var r = Render(emf);
         Is(At(r, 20, 20), 255, 0, 0);
         Is(At(r, 29, 29), 255, 0, 0);
@@ -279,9 +279,10 @@ public sealed class MetafileRenderTests
     {
         var emf = new EmfBuilder().SelectStock(8).CreateBrush(1, 2, EmfBuilder.Rgb(0, 0, 0), 0).Select(1).SetBkMode(2).SetBkColor(EmfBuilder.Rgb(255, 255, 255)).Rectangle(0, 0, 40, 40).Build();
         var r = Render(emf);
-        Is(At(r, 10, 4), 0, 0, 0);
-        Is(At(r, 10, 12), 0, 0, 0);
-        Is(At(r, 10, 5), 255, 255, 255);
+        // Windows draws the horizontal hatch on row 3 of its 8x8 cell (measured from GDI output).
+        Is(At(r, 10, 3), 0, 0, 0);
+        Is(At(r, 10, 11), 0, 0, 0);
+        Is(At(r, 10, 4), 255, 255, 255);
     }
 
     [Fact]

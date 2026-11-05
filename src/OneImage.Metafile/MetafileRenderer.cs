@@ -132,11 +132,11 @@ internal sealed class MetafileRenderer : DrawingCommandVisitor
                 {
                     c[y, x] = kind switch
                     {
-                        HatchKind.Horizontal => y == 4,
+                        HatchKind.Horizontal => y == 3,
                         HatchKind.Vertical => x == 4,
                         HatchKind.ForwardDiagonal => x == y,
                         HatchKind.BackwardDiagonal => x + y == 7,
-                        HatchKind.Cross => y == 4 || x == 4,
+                        HatchKind.Cross => y == 3 || x == 4,
                         _ => x == y || x + y == 7,
                     };
                 }
