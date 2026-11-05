@@ -61,7 +61,9 @@ internal static class PngImageReader
         }
 
         int rawRowLen = (int)rawRowMax + 1;
-        bool pipelined = !st.Interlaced && (long)Math.Min(h, rowsWanted) * rawRowLen >= PipelineMinBytes;
+        // The browser runtime has one thread and cannot block on a task, so the inflate-ahead task would never run and waiting for it
+        // throws; decode the batches in order there (same pixels).
+        bool pipelined = !OperatingSystem.IsBrowser() && !st.Interlaced && (long)Math.Min(h, rowsWanted) * rawRowLen >= PipelineMinBytes;
         int batchRows = Math.Max(1, (pipelined ? PipelineBatchBytes : BatchBytes) / rawRowLen);
         batchRows = Math.Min(batchRows, h);
         int outRowMax = checked(w * outBpp);

@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- Decoding a PNG of one megapixel or more failed in the browser (WebAssembly) runtime with `PlatformNotSupportedException: Cannot wait on monitors on this runtime`. The decoder inflated the next batch of rows on a pool task while unfiltering the current one, and the browser runtime has a single thread, so the task never ran and waiting for it is not allowed. The browser now decodes the batches in order; the pixels are the same, and other hosts are unchanged.
+
 ### Added
 
 - A browser smoke test for WebAssembly (`tests/OneImage.WasmSmoke`, run by the `wasm` CI job in headless Chrome, trimmed Release and Debug on the Mono interpreter). It renders scanned-style PDF pages to RGBA, converts colour, applies tone operations and draws an SVG with filters on the browser-wasm runtime, and fails on any exception or runtime assertion.

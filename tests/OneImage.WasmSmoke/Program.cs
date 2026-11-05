@@ -73,6 +73,28 @@ Step("pdf: 1-bit stencil scan", () =>
     return page.ToArray<Rgba32>().Length == 64 * 64;
 });
 
+// Frames of one megapixel or more take the multi-threaded decode paths on a normal host; the browser runtime has one thread.
+foreach (IImageFormat format in new IImageFormat[] { PngFormat.Instance, JpegFormat.Instance, WebPFormat.Instance, TiffFormat.Instance })
+{
+    IImageFormat f = format;
+    Step($"codec: {f.Name} round trip of a 1.2 MP image", () =>
+    {
+        const int w = 1200, h = 1000;
+        var px = new Rgba32[w * h];
+        for (int i = 0; i < px.Length; i++)
+        {
+            px[i] = new Rgba32((byte)((i % w) / 5), (byte)((i / w) / 4), (byte)(i % 251), 255);
+        }
+
+        using var ms = new System.IO.MemoryStream();
+        Image.FromPixels<Rgba32>(px, w, h).Save(ms, f);
+        Image back = Image.Load(ms.ToArray());
+        Rgba32[] outPx = back.ToArray<Rgba32>();
+        Rgba32[] part = back.Crop(100, 100, 300, 300).Resize(width: 150).ToArray<Rgba32>();
+        return back.Width == w && back.Height == h && outPx.Length == px.Length && part.Length == 150 * 150;
+    });
+}
+
 Step("pdf: calibrated gray fill", () =>
 {
     string content = "/CS0 cs 0.5 sc 0 0 20 20 re f";
