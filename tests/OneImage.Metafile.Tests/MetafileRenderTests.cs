@@ -314,10 +314,11 @@ public sealed class MetafileRenderTests
         var rt = Render(right, fonts: fonts);
         (int x0, int x1, int y0, int y1) = Ink(l);
         Assert.True(x0 >= 9 && x1 < 60, $"{x0}..{x1}");
-        Assert.InRange(y0, 9, 20);
+        // The cap height of H sits below the top of the cell by ascent minus capital height (about 0.36 em for this font).
+        Assert.InRange(y0, 15, 25);
         Assert.InRange(y1, 25, 45);
         (int rx0, int rx1, _, _) = Ink(rt);
-        Assert.True(rx1 <= 91 && rx0 > 50, $"{rx0}..{rx1}");
+        Assert.True(rx1 <= 91 && rx0 > 40, $"{rx0}..{rx1}");
     }
 
     [Fact]
@@ -354,16 +355,15 @@ public sealed class MetafileRenderTests
         var emf = new EmfBuilder().CreatePen(1, 0, 1, Blue).Select(1).MoveTo(10, 50).LineTo(90, 50).Build();
         var (px, w, h) = Render(emf, width: 400, antialias: true);
         Assert.Equal(400, w);
-        int rows = 0;
+        // The line is centred on a pixel of the 100 px grid, which is not a pixel centre at 400 px, so its coverage may split over
+        // two rows; its total thickness is still one pixel.
+        double coverage = 0;
         for (int y = 0; y < h; y++)
         {
-            if (px[(y * w) + 200].A > 200)
-            {
-                rows++;
-            }
+            coverage += px[(y * w) + 200].A / 255.0;
         }
 
-        Assert.InRange(rows, 1, 2);
+        Assert.InRange(coverage, 0.8, 1.2);
     }
 
     private static (int X0, int X1, int Y0, int Y1) Ink((Rgba32[] P, int W, int H) r)

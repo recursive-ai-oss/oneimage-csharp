@@ -1161,7 +1161,7 @@ internal sealed partial class EmfInterpreter
                     (byte)(BinaryPrimitives.ReadUInt16LittleEndian(s[(o + 8)..]) >> 8),
                     (byte)(BinaryPrimitives.ReadUInt16LittleEndian(s[(o + 10)..]) >> 8),
                     (byte)(BinaryPrimitives.ReadUInt16LittleEndian(s[(o + 12)..]) >> 8),
-                    (byte)(BinaryPrimitives.ReadUInt16LittleEndian(s[(o + 14)..]) >> 8)));
+                    255)); // GDI's GradientFill paints opaque colors; the vertex alpha is not used.
         }
 
         var idx = new int[nTri * per];

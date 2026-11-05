@@ -87,7 +87,8 @@ public sealed class MetafileCommandTests
         Assert.Null(text.Background);
         Assert.Equal(new Vector2(10, 70), text.Origin);
         int textIndex = rec.All.IndexOf(text);
-        Assert.Contains(rec.All.Take(textIndex).OfType<SetTransformCommand>(), t => t.Transform.IsIdentity);
+        // The restore brings the identity back by itself; no further set-transform is needed between it and the text.
+        Assert.DoesNotContain(rec.All.Skip(save + 5).Take(textIndex - save - 5).OfType<SetTransformCommand>(), t => !t.Transform.IsIdentity);
 
         ClipCommand clip = rec.All.OfType<ClipCommand>().Single();
         Assert.Equal(ClipMode.Intersect, clip.Mode);
@@ -295,7 +296,7 @@ public sealed class MetafileCommandTests
     {
         // EMR_EXTSELECTCLIPRGN with a region of 100,000 rectangles declared but not present.
         var body = new byte[8 + 32];
-        BinaryPrimitives.WriteInt32LittleEndian(body, 40);
+        BinaryPrimitives.WriteInt32LittleEndian(body, 32);
         BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(4), 2);
         BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(8), 32);
         BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(12), 1);

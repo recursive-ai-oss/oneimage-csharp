@@ -175,6 +175,13 @@ public readonly record struct RectD(double Left, double Top, double Right, doubl
 
     /// <summary>Gets the rectangle with its edges put in order.</summary>
     public RectD Normalized => new(Math.Min(Left, Right), Math.Min(Top, Bottom), Math.Max(Left, Right), Math.Max(Top, Bottom));
+
+    // The generated printer would include the derived properties, and Normalized would print itself forever.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append(System.FormattableString.Invariant($"Left = {Left}, Top = {Top}, Right = {Right}, Bottom = {Bottom}"));
+        return true;
+    }
 }
 
 /// <summary>What the header of a metafile says about the picture, in the units the drawing commands use.</summary>

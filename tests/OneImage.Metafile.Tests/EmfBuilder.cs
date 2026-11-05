@@ -276,9 +276,9 @@ internal sealed class EmfBuilder
         BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(12), escapement);
         BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(16), escapement);
         BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(20), weight);
-        body[26] = (byte)(underline ? 1 : 0);
+        body[25] = (byte)(underline ? 1 : 0);
         body[28] = 1;
-        Encoding.Unicode.GetBytes(face, 0, Math.Min(face.Length, 31), body, 36);
+        Encoding.Unicode.GetBytes(face, 0, Math.Min(face.Length, 31), body, 32);
         return Raw(82, body);
     }
 
