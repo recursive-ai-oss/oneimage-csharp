@@ -537,15 +537,14 @@ internal sealed partial class EmfInterpreter
         r.U32(); // the brush's version
         BrushSpec brush = ReadBrushBody(ref r, 0);
 
-        // The line style names a preset pattern, in units of the pen width.
+        // The line style names a preset pattern, in units of the pen width; a custom one is the dash data.
         double[]? pattern = style switch
         {
             1 => [3, 1],
             2 => [1, 1],
             3 => [3, 1, 1, 1],
             4 => [3, 1, 1, 1, 1, 1],
-            5 => dashes,
-            _ => null,
+            _ => dashes, // GDI+ writes a custom pattern without a line style flag
         };
         if (pattern is { Length: 0 } || (pattern is not null && pattern.Any(v => !(v > 0))))
         {
@@ -806,6 +805,12 @@ internal sealed partial class EmfInterpreter
         int w = r.I32(), h = r.I32(), stride = r.I32();
         uint fmt = r.U32();
         uint kind = r.U32();
+        if (kind == 1)
+        {
+            // A compressed bitmap is a whole image file; its size comes from the file, checked against the limits when it is decoded.
+            return DecodeCompressed(r.Bytes(r.Remaining));
+        }
+
         if (w <= 0 || h <= 0 || (long)w * h > _lim.MaxBitmapPixels)
         {
             throw new PlusDataException("the bitmap size is out of range");
@@ -818,10 +823,6 @@ internal sealed partial class EmfInterpreter
         }
 
         AddWork(((long)w * h) >> 6);
-        if (kind == 1)
-        {
-            return DecodeCompressed(r.Bytes(r.Remaining));
-        }
 
         int bpp = (int)((fmt >> 8) & 0xFF);
         bool indexed = (fmt & 0x00010000) != 0;
@@ -962,6 +963,13 @@ internal sealed partial class EmfInterpreter
                 throw new PlusDataException("the embedded image size is out of range");
             }
 
+            _bitmapPixels += (long)w * h;
+            if (_bitmapPixels > _lim.MaxTotalBitmapPixels)
+            {
+                throw new ImageLimitException("The metafile's bitmaps hold more pixels than the limit allows.");
+            }
+
+            AddWork(((long)w * h) >> 6);
             Rgba32[] px = img.ToArray<Rgba32>();
             var rgba = new byte[px.Length * 4];
             for (int i = 0; i < px.Length; i++)

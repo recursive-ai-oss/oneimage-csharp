@@ -208,6 +208,15 @@ internal sealed partial class MetafileRenderer
         double asc = fm.Ascender * k, desc = Math.Abs(fm.Descender) * k, lineH = asc + desc + (fm.LineGap * k);
         double mL = c.Format.LeadingMargin * em, mR = c.Format.TrailingMargin * em;
         RectD lay = c.Layout;
+        Matrix3x2 lm = Matrix3x2.Identity;
+        if (c.Format.Vertical)
+        {
+            // Vertical lines run top to bottom with the glyph tops to the right: lay the text out sideways, then turn it a quarter turn
+            // clockwise about the first line's top edge, which is the right edge of the rectangle (or one line height right of its origin).
+            double ox = c.Layout.Width > 0 ? c.Layout.Right : c.Layout.Left + lineH;
+            lm = new Matrix3x2(0, 1, -1, 0, (float)ox, (float)c.Layout.Top);
+            lay = new RectD(0, 0, c.Layout.Height, c.Layout.Width);
+        }
         double avail = lay.Width > 0 && !c.Format.NoWrap ? lay.Width - mL - mR : double.PositiveInfinity;
 
         List<(string Text, double Width)> lines = BreakLines(c.Text, font, avail);
@@ -264,14 +273,14 @@ internal sealed partial class MetafileRenderer
         IntersectionRule savedRule = _clipRule;
         if (!c.Format.NoClip && lay.Width > 0 && lay.Height > 0)
         {
-            CorePath q = CorePath.Rectangle((float)lay.Left, (float)lay.Top, (float)lay.Width, (float)lay.Height).Transform(Xf);
+            CorePath q = CorePath.Rectangle((float)c.Layout.Left, (float)c.Layout.Top, (float)c.Layout.Width, (float)c.Layout.Height).Transform(Xf);
             _clip = _clip is null ? q : _clip.Intersect(q, _clipRule, IntersectionRule.NonZero);
             _clipRule = IntersectionRule.NonZero;
         }
 
         try
         {
-            _canvas.Fill(brush, b.Build(), _aaOption && c.Font.Quality != 3, IntersectionRule.NonZero, 1f, BlendMode.Normal, Composition, false, Xf, _clip, _clipRule);
+            _canvas.Fill(brush, b.Build(), _aaOption && c.Font.Quality != 3, IntersectionRule.NonZero, 1f, BlendMode.Normal, Composition, false, lm * Xf, _clip, _clipRule);
         }
         finally
         {

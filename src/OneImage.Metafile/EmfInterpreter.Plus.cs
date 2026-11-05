@@ -157,7 +157,7 @@ internal sealed partial class EmfInterpreter
             case 0x401E: _gs.Smooth = (flags & 1) != 0; EmitHints(); break;
             case 0x401F: _gs.TextHint = flags & 0xFF; EmitHints(); break;
             case 0x4020: _gs.TextContrast = flags & 0xFFF; EmitHints(); break;
-            case 0x4021: _gs.Interp = (flags & 0xFF) is 0 or 1 or 5 ? ImageInterpolation.Nearest : ImageInterpolation.Bilinear; EmitHints(); break;
+            case 0x4021: _gs.Interp = (flags & 0xFF) is 1 or 5 ? ImageInterpolation.Nearest : ImageInterpolation.Bilinear; EmitHints(); break;
             case 0x4022: _gs.PixelHalf = (flags & 0xFF) is 3 or 4; EmitHints(); break;
             case 0x4023: _gs.SourceCopy = (flags & 0xFF) == 1; EmitHints(); break;
             case 0x4024: _gs.CompQuality = flags & 0xFF; EmitHints(); break;

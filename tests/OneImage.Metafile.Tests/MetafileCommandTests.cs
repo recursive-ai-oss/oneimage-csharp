@@ -137,7 +137,8 @@ public sealed class MetafileCommandTests
         byte[] emf = new EmfBuilder().Comment("EMF+", plus).Rectangle(1, 1, 5, 5).Build();
         MetafileDocument doc = MetafileDocument.Parse(emf);
         Assert.True(doc.Info.HasEmfPlus);
-        Assert.Contains(doc.Commands, c => c is CommentCommand { Kind: CommentKind.EmfPlus });
+        // EMF+ records are interpreted, not passed through as comments.
+        Assert.DoesNotContain(doc.Commands, c => c is CommentCommand { Kind: CommentKind.EmfPlus });
         Assert.Contains(doc.Diagnostics, d => d.Message.Contains("EMF+"));
     }
 
