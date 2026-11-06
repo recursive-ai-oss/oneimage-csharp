@@ -36,7 +36,7 @@
     <Version>1.11.0</Version>
     <!-- Packages compare their public API with the published packages of this version when packed (EnablePackageValidation in each
          package project), so a pack fails on an unintended breaking change. Raise it to each new release once it is on NuGet. -->
-    <PackageValidationBaselineVersion>1.10.5</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>1.11.0</PackageValidationBaselineVersion>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/recursive-ai-oss/$(LibName.ToLowerInvariant())-csharp</RepositoryUrl>
     <PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>

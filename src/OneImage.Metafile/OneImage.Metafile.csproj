@@ -5,8 +5,6 @@
     <RootNamespace>$(LibName).Metafile</RootNamespace>
     <PackageId>$(PackagePrefix)$(LibName).Metafile</PackageId>
     <EnablePackageValidation>true</EnablePackageValidation>
-    <!-- Not published yet, so there is no earlier package to compare with; remove this line after the first release. -->
-    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
     <Description>Windows metafile support for OneImage: reads EMF as an image format, rendered at the requested size, and exposes the pictures as a documented, device-independent stream of drawing commands.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>
