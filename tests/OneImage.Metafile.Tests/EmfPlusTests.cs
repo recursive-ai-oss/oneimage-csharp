@@ -484,6 +484,17 @@ public class EmfPlusTests
     }
 
     [Fact]
+    public void ExtremeIntegersInPensAndBitmapStridesAreToleratedNotOverflowed()
+    {
+        // int.MinValue has no positive int: a pen of that width and a bitmap of that stride both used to throw OverflowException.
+        byte[] gdi = new EmfBuilder().CreatePen(1, 0, int.MinValue, EmfBuilder.Rgb(255, 0, 0)).Select(1).MoveTo(1, 1).LineTo(50, 50).Build();
+        Assert.NotNull(Parse(gdi));
+        var bitmap = new Data().U32(0xDBC01002).U32(1).U32(2).U32(2).U32(0x80000000).U32(0x0026200A).U32(0).Append(new Data().U32(0).U32(0));
+        MetafileDocument doc = Parse(new EmfPlusBuilder().Object(5, 3, bitmap).Build());
+        Assert.Contains(doc.Diagnostics, d => d.Message.Contains("damaged", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void WrongPointCountsAndMissingObjectsAreReportedAndSkipped()
     {
         var d = new Data().U32(0xFFFFFFFF).U32(2).F32(0).F32(0).F32(2).F32(2).U32(2).I16(0).I16(0).I16(1).I16(1);

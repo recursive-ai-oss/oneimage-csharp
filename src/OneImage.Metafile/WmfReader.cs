@@ -197,7 +197,7 @@ internal static class WmfReader
             }
         }
 
-        return new Layout(ox, oy, ex, ey, Math.Abs(ex) * scale, Math.Abs(ey) * scale, s.Records);
+        return new Layout(ox, oy, ex, ey, Math.Abs((double)ex) * scale, Math.Abs((double)ey) * scale, s.Records);
     }
 
     public static MetafileInfo Identify(ReadOnlySpan<byte> d, MetafileLimits limits)

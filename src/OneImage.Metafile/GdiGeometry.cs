@@ -89,7 +89,7 @@ internal static class ArcGeometry
         }
 
         int n = (int)Math.Ceiling(Math.Abs(sweep) / (Math.PI / 2) - 1e-9);
-        n = Math.Max(n, 1);
+        n = Math.Clamp(n, 1, 64); // a sweep is at most a few turns; the clamp also covers NaN and overflow of the cast
         double step = sweep / n;
         double k = 4.0 / 3.0 * Math.Tan(step / 4);
         double a = start;

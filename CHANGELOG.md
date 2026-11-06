@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- `RecursiveAI.OneImage.Metafile`: a crafted EMF could make `MetafileDocument.Parse` throw an untyped `OverflowException` (a `CREATEPEN` record whose width is `int.MinValue`, because `Math.Abs` of an `int` throws for it). The width is now taken as a magnitude, as GDI does. An audit of every record handler for the same class of bug fixed the same pattern in EMF+ bitmap strides, and removed other arithmetic that could overflow or throw on hostile input: the bitmap size computation in the DIB decoder, bit-mask scaling, the isotropic mapping-mode sign, WMF window extents and arc segment counts.
+
 ## [1.11.0] - 2026-11-06
 
 ### Added

@@ -850,20 +850,20 @@ internal sealed partial class EmfInterpreter
         }
 
         long rowBytes = (((long)w * bpp) + 7) / 8;
-        int absStride = Math.Abs(stride);
+        long absStride = Math.Abs((long)stride);
         if (absStride < rowBytes)
         {
             throw new PlusDataException("the stride is smaller than a row");
         }
 
         // The pixel data is checked against what is left before the output is allocated.
-        r.Need((long)absStride * (h - 1) + rowBytes, 1);
-        ReadOnlyMemory<byte> pixels = r.Bytes((int)Math.Min((long)absStride * h, r.Remaining));
+        r.Need(absStride * (h - 1) + rowBytes, 1);
+        ReadOnlyMemory<byte> pixels = r.Bytes((int)Math.Min(absStride * h, r.Remaining));
         var rgba = new byte[(long)w * h * 4];
         ReadOnlySpan<byte> px = pixels.Span;
         for (int y = 0; y < h; y++)
         {
-            int rowStart = y * absStride;
+            int rowStart = (int)(y * absStride); // at most the bytes checked above
             for (int x = 0; x < w; x++)
             {
                 int o = ((y * w) + x) * 4;

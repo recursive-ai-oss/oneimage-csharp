@@ -332,8 +332,8 @@ internal sealed partial class EmfInterpreter
         {
             // Isotropic: both axes use the smaller scale, keeping each sign.
             double m = Math.Min(Math.Abs(sx), Math.Abs(sy));
-            sx = Math.Sign(sx == 0 ? 1 : sx) * m;
-            sy = Math.Sign(sy == 0 ? 1 : sy) * m;
+            sx = (sx < 0 ? -1 : 1) * m;
+            sy = (sy < 0 ? -1 : 1) * m;
         }
 
         Mat page = d.World;
@@ -722,7 +722,8 @@ internal sealed partial class EmfInterpreter
         }
 
         uint style = UInt(r, 12);
-        double width = Math.Abs(Int(r, 16));
+        // GDI takes the magnitude of the width; Math.Abs on an int throws for int.MinValue, so widen first.
+        double width = Math.Abs((double)Int(r, 16));
         StoreObject(UInt(r, 8), new PenObj(style, width, Color(UInt(r, 24)), true, null, null));
     }
 

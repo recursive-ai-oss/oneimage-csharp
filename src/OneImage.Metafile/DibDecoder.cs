@@ -133,7 +133,12 @@ internal static class DibDecoder
     public static byte[] Decode(DeviceIndependentBitmap dib, bool useAlpha, uint[] palette, uint[] masks)
     {
         int w = dib.Width, h = dib.Height;
-        var rgba = new byte[checked(w * h * 4)];
+        if ((long)w * h * 4 > int.MaxValue)
+        {
+            throw new ImageLimitException("The bitmap is too large to decode.");
+        }
+
+        var rgba = new byte[w * h * 4];
         ReadOnlySpan<byte> bits = dib.Bits.Span;
         if (dib.Compression is 1 or 2)
         {
@@ -235,7 +240,7 @@ internal static class DibDecoder
         int shift = System.Numerics.BitOperations.TrailingZeroCount(mask);
         uint field = (v & mask) >> shift;
         uint max = mask >> shift;
-        return (byte)((field * 255 + (max / 2)) / max);
+        return (byte)((field * 255UL + (max / 2)) / max);
     }
 
     private static void Put(Span<byte> dst, int x, byte r, byte g, byte b, byte a)
