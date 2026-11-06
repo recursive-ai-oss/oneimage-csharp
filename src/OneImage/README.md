@@ -13,9 +13,9 @@ How many times faster OneImage is than ImageSharp 3.1.12 on each
 benchmark task (log scale, higher is better; slower tasks and ties are
 marked):
 
-![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.11.0/docs/img/oneimage-hero-light.svg)
+![Bar chart: how many times faster OneImage is than ImageSharp on each benchmark task, log scale, higher is better. Almost every bar is a win; one task is a tie and one, where ImageSharp skips the ICC color conversion, is slower.](https://raw.githubusercontent.com/recursive-ai-oss/oneimage-csharp/v1.11.1/docs/img/oneimage-hero-light.svg)
 
-[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/performance.md)
+[Full results, with memory, the losses and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/performance.md)
 
 ## Install
 
@@ -49,7 +49,11 @@ Image.Load("in.png").Save("out.jpg", new SaveOptions { EncoderOptions = new Jpeg
 The format of `Save` follows the file extension. For streams and buffer
 writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
-## What is new in 1.11.0
+## What is new in 1.11.1
+
+- **Fixed: crafted metafiles could throw `OverflowException`.** An EMF pen record with an extreme width, and a few other extreme integer fields in EMF, EMF+ and WMF records, threw an untyped exception instead of drawing or reporting a damaged object. They are now handled as Windows does, and damaged data fails with the library's typed errors.
+
+## What was new in 1.11.0
 
 - **New package: `RecursiveAI.OneImage.Metafile`.** Reads Windows metafiles (EMF, EMF+ including dual files, and WMF) as images drawn at the requested size, and exposes each picture as a documented, device-independent stream of drawing commands for vector output. Checked against renders from Windows GDI and GDI+.
 - **Browser (WebAssembly):** work always runs on the calling thread there, so raising the degree of parallelism no longer fails, and the default pixel limits are lower in the browser. See the browser page in the docs.
@@ -100,22 +104,22 @@ writers, name it: `image.Save(stream, PngFormat.Instance)`.
 
 ## Learn more
 
-- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/guide.md): the lazy model, errors, operations,
+- [Guide](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/guide.md): the lazy model, errors, operations,
   `Canvas`, metadata, color, animation, limits, AOT and trimming.
-- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/layers.md): layered documents that render on demand, with
+- [Layers](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/layers.md): layered documents that render on demand, with
   incremental re-rendering and an optional disk-spill store. Photoshop files
   load into them through the separate `RecursiveAI.OneImage.Psd` package
-  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/psd.md)).
-- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/migrating.md)
-- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/comparison.md), including where the
+  ([PSD page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/psd.md)).
+- [Migrating from ImageSharp and System.Drawing](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/migrating.md)
+- [How OneImage compares](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/comparison.md), including where the
   others are the better fit
-- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/performance.md)
-- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/CHANGELOG.md) and
-  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/SECURITY.md)
+- [Benchmarks and the method](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/docs/performance.md)
+- [Changelog](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/CHANGELOG.md) and
+  [security policy](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/SECURITY.md)
 
 ## License
 
-Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/LICENSE-MIT) or
-[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/LICENSE-APACHE) at your option.
+Licensed under either of [MIT](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/LICENSE-MIT) or
+[Apache-2.0](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.1/LICENSE-APACHE) at your option.
 
 Copyright (c) Recursive AI, LLC.

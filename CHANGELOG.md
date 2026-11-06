@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-11-06
+
 ### Fixed
 
 - `RecursiveAI.OneImage.Metafile`: a crafted EMF could make `MetafileDocument.Parse` throw an untyped `OverflowException` (a `CREATEPEN` record whose width is `int.MinValue`, because `Math.Abs` of an `int` throws for it). The width is now taken as a magnitude, as GDI does. An audit of every record handler for the same class of bug fixed the same pattern in EMF+ bitmap strides, and removed other arithmetic that could overflow or throw on hostile input: the bitmap size computation in the DIB decoder, bit-mask scaling, the isotropic mapping-mode sign, WMF window extents and arc segment counts.
@@ -256,7 +258,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.1...HEAD
+[1.11.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.5...v1.11.0
 [1.10.5]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.4...v1.10.5
 [1.10.4]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.3...v1.10.4
