@@ -1,6 +1,6 @@
 # RecursiveAI.OneImage.Metafile
 
-Windows metafile support for [OneImage](https://github.com/recursive-ai-oss/oneimage-csharp/blob/main/README.md).
+Windows metafile support for [OneImage](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/README.md).
 
 - **EMF and WMF as image formats.** `new ImageConfiguration().Add(MetafileFormat.Instance).Add(WmfFormat.Instance)` lets `Image.Load` read `.emf` and `.wmf` files (placeable or not; a WMF that embeds an EMF plays the EMF). The picture is drawn at the size you ask for (`Resize`/`Thumbnail` rasterize at the final size instead of scaling pixels), with the drawing engine's anti-aliasing.
 - **A drawing-command stream.** `MetafileDocument.Parse(bytes)` resolves every record (mapping modes, world transforms, objects, paths, regions, raster operations) into a short list of device-independent commands: fill a path, stroke a path, draw a bitmap, draw text, change the clip. Walk it with a `DrawingCommandVisitor` to convert a picture to another vector format or to your own renderer.
@@ -16,6 +16,6 @@ doc.Play(new MyVisitor());
 
 Text needs fonts: pass a `MetafileFontOptions` (your own `FontCollection`, system fonts, substitutions) to `MetafileFormat`. The package depends on `RecursiveAI.OneImage` and `RecursiveAI.OneImage.Text` at exactly the same version.
 
-See [docs/metafile.md](https://github.com/recursive-ai-oss/oneimage-csharp/blob/main/docs/metafile.md) for the command model, the record coverage and the known gaps.
+See [docs/metafile.md](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.11.0/docs/metafile.md) for the command model, the record coverage and the known gaps.
 
 Licensed under MIT OR Apache-2.0.

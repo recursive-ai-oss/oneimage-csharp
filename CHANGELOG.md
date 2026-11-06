@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-06
+
 ### Added
 
 - `RecursiveAI.OneImage.Metafile`, a new package for Windows Enhanced Metafiles (EMF): `MetafileFormat` registers `.emf` as an image format drawn at the requested size, and `MetafileDocument` interprets a file into a public stream of device-independent drawing commands (paths with brushes and pens, bitmaps, gradients, text, clips) that other renderers can walk. All records of the format are dispatched; what is not interpreted (EMF+, `WidenPath`, a few rarely used records) is reported as diagnostics. Sizes are checked against `MetafileLimits` before allocation. See `docs/metafile.md`. EMF+ follows.
@@ -250,7 +252,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.5...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.5...v1.11.0
 [1.10.5]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.4...v1.10.5
 [1.10.4]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.3...v1.10.4
 [1.10.3]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.2...v1.10.3

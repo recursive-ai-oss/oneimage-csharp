@@ -124,6 +124,11 @@ errors appear, how sources are held, limits and threading.
   (`RecursiveAI.OnePdf`), and JPEG, JPEG 2000 and JBIG2 images are decoded by
   OneImage itself. The page describes how it is checked against the
   specification and lists the known limitations.
+- **Windows metafiles:** [OneImage.Metafile](docs/metafile.md)
+  (`RecursiveAI.OneImage.Metafile`) reads EMF, EMF+ and WMF as images drawn at
+  the size you ask for, and exposes each picture as a documented stream of
+  drawing commands for vector output. The page lists the records covered, how
+  it compares with Windows GDI and GDI+ output, and the known gaps.
 - **Reading SVG:** [OneImage.Svg](docs/svg.md) (`RecursiveAI.OneImage.Svg`)
   registers SVG and `.svgz` as an image format that is drawn at the size you
   ask for; it depends on the core package and OneImage.Text.
