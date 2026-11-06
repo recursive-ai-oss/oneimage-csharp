@@ -1,6 +1,6 @@
 # Metafiles (`RecursiveAI.OneImage.Metafile`)
 
-The package reads Windows Enhanced Metafiles (EMF) and Windows Metafiles (WMF) two ways: as an image format that is drawn at the requested size, and as a stream of device-independent drawing commands. It is clean-room: written from [MS-EMF] and [MS-WMF] only, and checked against Windows GDI output made by us. EMF+ records are not interpreted yet (see Gaps).
+The package reads Windows Enhanced Metafiles (EMF) and Windows Metafiles (WMF) two ways: as an image format that is drawn at the requested size, and as a stream of device-independent drawing commands. EMF+ records (the GDI+ drawing inside EMF files, including dual files) are interpreted into the same command stream; see [EMF+ (GDI+)](#emf-gdi). It is clean-room: written from [MS-EMF], [MS-EMFPLUS] and [MS-WMF] only, and checked against Windows GDI and GDI+ output made by us. The known gaps are listed under "Gaps in GDI records" and at the end of the EMF+ section.
 
 ## Two layers
 
@@ -122,9 +122,9 @@ The same 15 drawings were recorded as WMF (placeable and non-placeable, identica
 
 The remaining differences are the same as for EMF; text_styled is lowest because of the font faces GDI used.
 
-## Gaps (each produces a diagnostic)
+## Gaps in GDI records (each produces a diagnostic)
 
-`WIDENPATH`, `SETMETARGN`, `EXTFLOODFILL`, text inside a path bracket, glyph-index text (treated as code points), vertical advances in `ExtTextOut` (`PDY`), the `XformSrc` of blits, `DIB_PAL_COLORS` bitmaps, JPEG or PNG compressed DIBs, right-to-left layout, and EMF+ records. Skipped records never stop the interpretation.
+`WIDENPATH`, `SETMETARGN`, `EXTFLOODFILL`, text inside a path bracket, glyph-index text (treated as code points), vertical advances in `ExtTextOut` (`PDY`), the `XformSrc` of blits, `DIB_PAL_COLORS` bitmaps, JPEG or PNG compressed DIBs, and right-to-left layout. Skipped records never stop the interpretation. EMF+ gaps are listed at the end of the next section: triangle, anchor and custom line caps, compound pens, image effects and color matrices, path gradient blend ramps, `EmfPlusStrokeFillPath`, multi-format records, glyph-index driver strings, and approximated hatch styles.
 
 ## EMF+ (GDI+)
 
