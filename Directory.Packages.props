@@ -3,11 +3,11 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <!-- The PDF bridge builds against OnePDF 1.2 or later. -->
-    <!-- Text builds on OneFont 1.2.0 or later (shaping, bidi, segmentation, font tables). -->
-    <PackageVersion Include="RecursiveAI.OneFont" Version="1.2.0" />
-    <PackageVersion Include="RecursiveAI.OnePdf" Version="1.2.0" />
-    <PackageVersion Include="RecursiveAI.OnePdf.Fonts" Version="1.2.0" />
+    <!-- These versions are also the minimums the packages declare, so they are the versions everything is built and tested against:
+         the PDF bridge on OnePDF 1.18.0, Text on OneFont 1.4.0. Raise them together when a newer sister release is adopted. -->
+    <PackageVersion Include="RecursiveAI.OneFont" Version="1.4.0" />
+    <PackageVersion Include="RecursiveAI.OnePdf" Version="1.18.0" />
+    <PackageVersion Include="RecursiveAI.OnePdf.Fonts" Version="1.18.0" />
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <!-- Reference and competitor libraries, used only by the tests and benchmarks. The library itself depends on nothing. -->

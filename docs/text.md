@@ -1,6 +1,6 @@
 # Text
 
-Fonts and text for `Image` and `Canvas`, in the separate package `RecursiveAI.OneImage.Text` (namespace `OneImage.Text`, one dependency besides OneImage, the font library [`RecursiveAI.OneFont`](https://www.nuget.org/packages/RecursiveAI.OneFont) 1.2 or later, which has none of its own). Text is drawn through the vector drawing layer: the laid-out text becomes one `Path` of glyph outlines, filled with a `Brush` and/or stroked with a `Pen` like any other path. See [drawing.md](drawing.md) for brushes, pens, blend modes and anti-aliasing.
+Fonts and text for `Image` and `Canvas`, in the separate package `RecursiveAI.OneImage.Text` (namespace `OneImage.Text`, one dependency besides OneImage, the font library [`RecursiveAI.OneFont`](https://www.nuget.org/packages/RecursiveAI.OneFont) 1.4 or later, which has none of its own). Text is drawn through the vector drawing layer: the laid-out text becomes one `Path` of glyph outlines, filled with a `Brush` and/or stroked with a `Pen` like any other path. See [drawing.md](drawing.md) for brushes, pens, blend modes and anti-aliasing.
 
 ```csharp
 using OneImage;

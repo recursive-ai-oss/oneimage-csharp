@@ -13,6 +13,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- `RecursiveAI.OneImage.Pdf` now requires `RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts` 1.18.0 or later, and `RecursiveAI.OneImage.Text` requires `RecursiveAI.OneFont` 1.4.0 or later. The packages are built and tested against these versions; the earlier minimum of 1.2.0 let a new project resolve releases that are much older than anything the packages were checked with.
 - In the browser (WebAssembly) runtime the default `ImageLimits.MaxPixelsPerFrame` is 2²⁶ (8192 × 8192) and `MaxTotalPixels` is 2²⁷, instead of 2²⁸ and 2³⁰, because frames of 16 MiB or more are decoded whole there and a tab has far less memory than a server. Other hosts are unchanged; pass your own `ImageLimits` to change it. See `docs/browser.md`.
 - British spellings in the documentation and XML comments are now American (color, behavior, neighbor).
 
