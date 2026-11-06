@@ -1,6 +1,6 @@
 # PDF
 
-`RecursiveAI.OneImage.Pdf` (namespace `OneImage.Pdf`) draws PDF pages as an ordinary image format. It parses and interprets with [OnePDF](https://www.nuget.org/packages/RecursiveAI.OnePdf) (`RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts`, 1.2.0 or later) and draws on OneImage's drawing engine, so a page is an `Image` like any other: it can be resized, cropped, converted and saved, and only the part of the page that is asked for is drawn.
+`RecursiveAI.OneImage.Pdf` (namespace `OneImage.Pdf`) draws PDF pages as an ordinary image format. It parses and interprets with [OnePDF](https://www.nuget.org/packages/RecursiveAI.OnePdf) (`RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts`, 1.18.0 or later) and draws on OneImage's drawing engine, so a page is an `Image` like any other: it can be resized, cropped, converted and saved, and only the part of the page that is asked for is drawn.
 
 ```csharp
 var config = new ImageConfiguration().Add(new PdfFormat(new PdfRenderOptions { Dpi = 150 }));

@@ -6,7 +6,7 @@ PDF page rendering for [OneImage](https://github.com/recursive-ai-oss/oneimage-c
 dotnet add package RecursiveAI.OneImage.Pdf
 ```
 
-This installs `RecursiveAI.OneImage` and OnePDF (`RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts`, 1.2.0 or later). The package depends on the exact core version it was built with.
+This installs `RecursiveAI.OneImage` and OnePDF (`RecursiveAI.OnePdf` and `RecursiveAI.OnePdf.Fonts`, 1.18.0 or later). The package depends on the exact core version it was built with.
 
 ```csharp
 using OneImage;
