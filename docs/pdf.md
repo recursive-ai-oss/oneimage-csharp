@@ -46,9 +46,14 @@ pdf.Frames[0].ToImage().Resize(width: 400).Save("thumb.webp");   // drawn at 400
 | `MaxClipDepth` | 4,096 | `ImageLimitException` |
 | `MaxPatternTileSide` | 2,048 | the cell is drawn at a lower resolution |
 | `MaxPatternCopies` | 64 | further copies are not drawn into the tile |
-| `MaxCachedPixels` | 2²⁶ | pictures beyond the budget are rebuilt when needed instead of kept |
+| `MaxCachedPixels` | 2²⁶ | finished pictures (images as drawn, pattern tiles) kept for the page; past the budget the least recently used image picture is dropped and rebuilt if needed again. A single image picture is never larger than half the budget (at least 1 Mpx): a larger one is built at that size, a little softer, once and shared. An image's decoded samples are never kept once its picture is built |
+| `MaxDecodedImagePixels` | 2²⁹ | the most image pixels one read of a page (a whole render or a region) may decode in total, counted per read (an image counts each time it is decoded); beyond it the read throws `ImageLimitException` naming the limit |
 
 A pattern that paints with itself is bounded by the nesting limit. The tests build one hostile file per row (`tests/OneImage.Pdf.Tests/LimitTests.cs`), including the allocation made before a refusal.
+
+### Images and memory
+
+An image is decoded once per page read and shared by every place that draws it: an XObject is identified by its object, an inline image by its bytes and dictionary (so a form or Type 3 glyph that holds an inline image and is run thousands of times decodes it once). Inline images that name a color space of the resources of the stream they sit in are not shared, because the same bytes can mean different colors in two streams; they are decoded for each draw. The decoded samples are released as soon as the picture is built, and an image that cannot be decoded (for example past the document's `MaxDecodedStreamBytes`) is remembered, so each cell of the page does not try again. Large images shown much smaller than they are are reduced row by row while they are converted, so the full-size picture never exists. What a page keeps is bounded by `MaxCachedPixels` (an image picture larger than half of it is built reduced to that size, so a 1200 dpi page with huge images near native size draws, slightly softer, with one decode per image rather than one per cell), and the work of one read by `MaxDecodedImagePixels`, which each read counts for itself; peak memory while drawing is the transient decode of the images being drawn at that moment plus whatever the garbage collector has not yet reclaimed. `tests/OneImage.Pdf.Tests/ImageMemoryTests.cs` has the hostile pages.
 
 ## Fuzzing
 

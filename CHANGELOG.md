@@ -4,6 +4,16 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `PdfRenderLimits.MaxDecodedImagePixels` (default 2^29, about 537 million pixels): the most image pixels one read of a page may decode in total. A page that shows more fails with `ImageLimitException` instead of spending minutes decoding, and normal documents are far below it.
+
+### Fixed
+
+- `RecursiveAI.OneImage.Pdf`: a small PDF could exhaust memory while one page was drawn, because every decoded image stayed alive until the page ended. An inline image inside a form or Type 3 glyph that is run thousands of times was decoded again for every run and every copy was kept (files of a few KB reached several GB); twelve different 6000 x 6000 images on one page also reached about 4 GB. Images are now decoded once per page read and shared by all their draws (an XObject by its object, an inline image by its bytes and dictionary), their decoded samples are released as soon as the picture is built, and large images drawn small are reduced while they are converted. Drawing the cases above now takes under 100 MB, or 1 GB for the twelve large images, and pixels are unchanged.
+- `PdfRenderLimits.MaxCachedPixels` now bounds what its documentation says: the pictures a page keeps. Before, pictures beyond the budget were still held through the page's display list. When the pictures of a page exceed it, the least recently used is dropped and rebuilt on demand, and a single image picture larger than half the budget (for example a very large image at a high dpi) is built at a reduced size, so it is slightly softer but decoded once and shared instead of once per 128-pixel cell.
+- An image that is left out because it exceeds the document's `MaxDecodedStreamBytes` was decoded up to the limit again by every 128-pixel cell of the page, so a low limit made drawing slower and allocate far more than a high one; the failure is now remembered for the page read.
+
 ## [1.11.1] - 2026-11-06
 
 ### Fixed

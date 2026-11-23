@@ -46,8 +46,23 @@ public sealed class PdfRenderLimits
     public int MaxPatternCopies { get; init; } = 64;
 
     /// <summary>
-    /// Gets the largest number of pixels of intermediate pictures (decoded and reduced images, pattern tiles) kept alive for one page
-    /// while it is drawn. Pictures beyond the budget are rebuilt when needed instead of kept. Default 2^26.
+    /// Gets the largest number of pixels of finished pictures (images as drawn, possibly reduced, and pattern tiles) kept for one page
+    /// so that every part of the page that needs them shares them. When the pictures of a page together exceed the budget, the one used
+    /// least recently is dropped and built again if it is needed later, which costs time but not memory. The decoded samples of an
+    /// image are never kept once its picture is built, so this bound is what the page holds on to between draws.
+    /// A single image picture is never larger than half the budget (at least 1,048,576 pixels): one that the page would show larger is
+    /// built at that size, so it is a little softer but is decoded once and shared by every part of the page, instead of being decoded
+    /// again for each 128-pixel cell that touches it. Pages whose images are shown below that size are not changed. Default 2^26.
     /// </summary>
     public long MaxCachedPixels { get; init; } = 1L << 26;
+
+    /// <summary>
+    /// Gets the largest number of image pixels that one read of a page (a whole render or a region) may decode in total. An image is
+    /// counted each time it is decoded: once when it is shared by all its draws, and again whenever a picture dropped to stay
+    /// within <see cref="MaxCachedPixels"/> is rebuilt. The count belongs to the read, so reads running at the same time do not share it. A read that goes past the limit fails with <see cref="ImageLimitException"/>, which
+    /// stops a small file that shows thousands of large images from costing minutes of decoding. The decoded samples are released after
+    /// each picture is built, so this bounds time; memory is bounded separately by <see cref="MaxCachedPixels"/> and
+    /// <see cref="MaxImagePixels"/>. Default 2^29 (about 537 million pixels, for example 44 photographs of 12 megapixels on one page).
+    /// </summary>
+    public long MaxDecodedImagePixels { get; init; } = 1L << 29;
 }

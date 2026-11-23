@@ -19,6 +19,7 @@ namespace OneImage.Pdf.Render;
 internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
 {
     private readonly PageRender _page;
+    private readonly ReadBudget _budget;
     private readonly PdfMatrix _view;
     private readonly Canvas _root;
     private readonly int _w, _h;
@@ -33,9 +34,10 @@ internal sealed partial class CanvasDevice : IPdfDevice, IDisposable
     private PathBuilder? _textClip;
     private bool _disposed;
 
-    public CanvasDevice(PageRender page, in PdfMatrix view, Canvas root, int depth, Rgba32? tint, CancellationToken ct)
+    public CanvasDevice(PageRender page, ReadBudget budget, in PdfMatrix view, Canvas root, int depth, Rgba32? tint, CancellationToken ct)
     {
         _page = page;
+        _budget = budget;
         _view = view;
         _root = root;
         _target = root;

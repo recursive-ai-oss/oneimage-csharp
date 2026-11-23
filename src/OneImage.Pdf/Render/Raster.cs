@@ -86,6 +86,39 @@ internal sealed class Raster
         return raster;
     }
 
+    /// <summary>
+    /// Builds the picture of an opaque color image already reduced to <paramref name="width"/> x <paramref name="height"/> by area
+    /// averaging, converting one row at a time so that the full-size picture (four bytes a pixel) is never held. The result equals
+    /// reducing the output of <see cref="FromData"/>. Returns null when the image is not of that simple kind (a stencil, or one with an
+    /// opacity plane), and the caller then takes the general path.
+    /// </summary>
+    public static Raster? FromDataReduced(PdfImageData data, int width, int height, CancellationToken ct)
+    {
+        PdfColorSpace? space = data.ColorSpace;
+        if (!data.IsDecoded || data.IsStencil || space is null || data.Alpha is not null || data.Width < 1 || data.Height < 1)
+        {
+            return null;
+        }
+
+        int w = data.Width, h = data.Height;
+        int n = space.ComponentCount;
+        ReadOnlyMemory<byte> samples = data.Samples;
+        if (samples.Length < (long)w * h * n)
+        {
+            return null;
+        }
+
+        Rgba32[] row = new Rgba32[w];
+        Rgba32[] reduced = Resize.Area(
+            y =>
+            {
+                PdfColors.ConvertRow(space, samples.Span.Slice(y * w * n, w * n), row.AsSpan(0, w), w);
+                return row.AsSpan(0, w);
+            },
+            w, h, width, height, false, ct);
+        return new Raster(width, height, reduced, stencil: false);
+    }
+
     /// <summary>Combines the color pixels with a soft mask that may have another size: both are brought to the larger of the two sizes.</summary>
     private Raster WithAlpha(PdfImageAlpha alpha)
     {
@@ -118,7 +151,17 @@ internal sealed class Raster
 internal static class Resize
 {
     /// <summary>Area average to a smaller (or equal) size, streaming over the source rows in memory proportional to the destination row.</summary>
-    public static Rgba32[] Area(Rgba32[] src, int sw, int sh, int dw, int dh, bool stencil, CancellationToken ct)
+    public static Rgba32[] Area(Rgba32[] src, int sw, int sh, int dw, int dh, bool stencil, CancellationToken ct) =>
+        Area(y => src.AsSpan(y * sw, sw), sw, sh, dw, dh, stencil, ct);
+
+    /// <summary>Supplies one source row; the span is valid until the next call.</summary>
+    public delegate ReadOnlySpan<Rgba32> RowSource(int y);
+
+    /// <summary>
+    /// Area average of a picture given row by row, so the full-size picture never has to exist in memory. Rows are asked for in order,
+    /// each once.
+    /// </summary>
+    public static Rgba32[] Area(RowSource rows, int sw, int sh, int dw, int dh, bool stencil, CancellationToken ct)
     {
         var dst = new Rgba32[(long)dw * dh];
         float[] rowAcc = Pools<float>.Pool.Rent(dw * 4);
@@ -138,7 +181,7 @@ internal static class Resize
                     ct.ThrowIfCancellationRequested();
                 }
 
-                HorizontalRow(src.AsSpan(y * sw, sw), rowAcc, dw, xScale);
+                HorizontalRow(rows(y), rowAcc, dw, xScale);
                 double top = y * yScale, bottom = (y + 1) * yScale;
                 int d0 = Math.Min((int)top, dh - 1);
                 int d1 = Math.Min((int)(bottom - 1e-9), dh - 1);

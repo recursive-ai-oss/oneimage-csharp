@@ -26,15 +26,9 @@ internal sealed partial class CanvasDevice
             return;
         }
 
-        PdfImageData? data = _page.GetImageData(image, _ct);
-        if (data is null || !data.IsDecoded)
-        {
-            return;
-        }
-
         double devW = Math.Sqrt((m.A * m.A) + (m.B * m.B)), devH = Math.Sqrt((m.C * m.C) + (m.D * m.D));
         int dw = (int)Math.Clamp(Math.Ceiling(devW), 1, 1 << 20), dh = (int)Math.Clamp(Math.Ceiling(devH), 1, 1 << 20);
-        Raster? raster = _page.GetRaster(data, dw, dh, _ct);
+        Raster? raster = _page.GetPicture(image, dw, dh, _budget, out bool interpolate, _ct);
         if (raster is null)
         {
             return;
@@ -42,7 +36,7 @@ internal sealed partial class CanvasDevice
 
         // 8.9.5.3: interpolation is off by default, so a picture shown larger than its samples keeps square pixels unless it sets
         // /Interpolate true. A reduced picture was already area-averaged to the device size and is sampled bilinearly.
-        bool magnified = (devW > raster.Width || devH > raster.Height) && !data.Interpolate;
+        bool magnified = (devW > raster.Width || devH > raster.Height) && !interpolate;
 
         // Picture pixel (column, row) to the unit square: x = column / width, and row 0 is the top, at y = 1.
         var toUnit = new PdfMatrix(1.0 / raster.Width, 0, 0, -1.0 / raster.Height, 0, 1);

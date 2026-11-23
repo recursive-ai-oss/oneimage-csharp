@@ -254,7 +254,7 @@ internal sealed partial class CanvasDevice
                 }
 
                 PdfBounds cull = inv.TransformBounds(new PdfBounds(-1.5, -1.5, tw + 1.5, th + 1.5));
-                var device = new CanvasDevice(_page, copyView, canvas, _depth + _frames.Count + 1, tint, _ct);
+                var device = new CanvasDevice(_page, _budget, copyView, canvas, _depth + _frames.Count + 1, tint, _ct);
                 try
                 {
                     pattern.Cell!.Replay(device, cull);

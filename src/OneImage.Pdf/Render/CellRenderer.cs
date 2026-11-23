@@ -15,6 +15,7 @@ internal static class CellRenderer
     public static void Render(PageRender page, int targetWidth, int targetHeight, ImageRect region, IRowSink sink, CancellationToken ct)
     {
         page.Prepare(ct);
+        var budget = new ReadBudget();
         PdfPageInfo info = page.Info;
         double sx = targetWidth / info.Width, sy = targetHeight / info.Height;
         int firstCol = region.X / Cell, lastCol = (region.Right - 1) / Cell;
@@ -31,7 +32,7 @@ internal static class CellRenderer
                 for (int col = firstCol; col <= lastCol; col++)
                 {
                     int cx = col * Cell;
-                    DrawCell(page, sx, sy, cx, cy, cell, ct);
+                    DrawCell(page, budget, sx, sy, cx, cy, cell, ct);
                     int x0 = Math.Max(cx, region.X), x1 = Math.Min(cx + Cell, region.Right);
                     int bytes = (x1 - x0) * 4;
                     for (int r = 0; r < rows; r++)
@@ -51,7 +52,7 @@ internal static class CellRenderer
     }
 
     /// <summary>Draws the cell whose top-left pixel is (<paramref name="cx"/>, <paramref name="cy"/>) into <paramref name="output"/> (128 x 128 straight RGBA).</summary>
-    internal static void DrawCell(PageRender page, double sx, double sy, int cx, int cy, byte[] output, CancellationToken ct)
+    internal static void DrawCell(PageRender page, ReadBudget budget, double sx, double sy, int cx, int cy, byte[] output, CancellationToken ct)
     {
         // A pixel of slack on every side keeps anti-aliased edges of items just outside the cell.
         var cull = new PdfBounds((cx - 1.5) / sx, (cy - 1.5) / sy, (cx + Cell + 1.5) / sx, (cy + Cell + 1.5) / sy);
@@ -63,7 +64,7 @@ internal static class CellRenderer
             canvas.Clear(bg);
         }
 
-        var device = new CanvasDevice(page, view, canvas, depth: 0, tint: null, ct);
+        var device = new CanvasDevice(page, budget, view, canvas, depth: 0, tint: null, ct);
         try
         {
             page.List.Replay(device, cull);
