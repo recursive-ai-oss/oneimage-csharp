@@ -4,9 +4,15 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-11-23
+
 ### Added
 
 - `PdfRenderLimits.MaxDecodedImagePixels` (default 2^29, about 537 million pixels): the most image pixels one read of a page may decode in total. A page that shows more fails with `ImageLimitException` instead of spending minutes decoding, and normal documents are far below it.
+
+### Changed
+
+- `RecursiveAI.OneImage.Pdf`: the picture of one image on a page is now at most half of `PdfRenderLimits.MaxCachedPixels` (32 million pixels by default), so every part of the page shares a single decode of it. A very large image drawn at an extreme resolution therefore comes out slightly softer than before; raise `MaxCachedPixels` (to more than twice the image's size on the page, in pixels) to draw it at full resolution.
 
 ### Fixed
 
@@ -268,7 +274,8 @@ First release, published on NuGet as `RecursiveAI.OneImage` (namespace `OneImage
 - Depends only on the .NET base class library; NativeAOT- and trim-compatible.
 - Documentation: a guide, a migration guide from ImageSharp and System.Drawing, a comparison with other libraries, and a [performance page](https://github.com/recursive-ai-oss/oneimage-csharp/blob/v1.0.0/docs/performance.md) with the benchmark method and every loss.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.1...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.2...HEAD
+[1.11.2]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.5...v1.11.0
 [1.10.5]: https://github.com/recursive-ai-oss/oneimage-csharp/compare/v1.10.4...v1.10.5
